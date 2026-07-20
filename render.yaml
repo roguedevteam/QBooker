@@ -1,4 +1,4 @@
-services:
+﻿services:
   - type: web
     name: qbooker-marketing
     runtime: static
@@ -71,3 +71,8 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
