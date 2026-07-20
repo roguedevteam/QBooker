@@ -1,23 +1,5 @@
 services:
   - type: web
-    name: qbooker-api
-    runtime: node
-    rootDir: server
-    buildCommand: npm install
-    startCommand: npm start
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SYSTEM_ADMIN_PASSWORD_HASH
-        sync: false
-      - key: CORS_ORIGIN
-        sync: false
-      - key: PORT
-        value: 4000
-
-  - type: web
     name: qbooker-marketing
     runtime: static
     rootDir: marketing
@@ -89,8 +71,3 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        sync: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
