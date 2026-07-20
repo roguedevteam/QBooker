@@ -4,6 +4,7 @@ import { query, pool } from "../db/pool.js";
 import { signSession } from "../lib/auth.js";
 import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { createLocationCode } from "../lib/codes.js";
 
 const router = Router();
 
@@ -51,7 +52,8 @@ router.post("/signup", asyncHandler(async (req, res) => {
         `insert into locations (tenant_id, name, address) values ($1,$2,$3) returning *`,
         [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || ""]
       );
-      locationRows.push(r.rows[0]);
+      const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
+      locationRows.push({ ...r.rows[0], code });
     }
 
     // Seed one starter service per location so the account isn't empty.

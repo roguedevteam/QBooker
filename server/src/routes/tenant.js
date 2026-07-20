@@ -3,6 +3,7 @@ import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { createLocationCode } from "../lib/codes.js";
 import {
   getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
 } from "../lib/scheduling.js";
@@ -68,7 +69,12 @@ router.patch("/plan", adminOnly, asyncHandler(async (req, res) => {
 
 // --- Locations ---------------------------------------------------------------
 router.get("/locations", asyncHandler(async (req, res) => {
-  const result = await query(`select * from locations where tenant_id=$1 order by created_at`, [req.tenant.id]);
+  const result = await query(
+    `select l.*, lc.code from locations l
+     left join location_codes lc on lc.location_id = l.id
+     where l.tenant_id=$1 order by l.created_at`,
+    [req.tenant.id]
+  );
   res.json({ locations: result.rows });
 }));
 
@@ -76,13 +82,14 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: "Name required." });
   const loc = await query(`insert into locations (tenant_id, name) values ($1,$2) returning *`, [req.tenant.id, name.trim()]);
+  const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
   const chargeNote = req.tenant.payment_method === "invoice"
     ? `£${req.tenant.price_per_location} added to next invoice`
     : `£${req.tenant.price_per_location} charged to card on file`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Bought an additional location "${name.trim()}" — ${chargeNote}`]);
-  res.json({ location: loc.rows[0], charge: { amount: req.tenant.price_per_location, note: chargeNote } });
+  res.json({ location: { ...loc.rows[0], code }, charge: { amount: req.tenant.price_per_location, note: chargeNote } });
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {

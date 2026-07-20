@@ -14,8 +14,10 @@ async function request(path, { method = "GET", body } = {}) {
 export const api = {
   getClock: () => request("/api/public/clock"),
 
+  // Resolves a QR/wa.me location code to its tenant + location — the real entry point.
+  lookupCode: (code) => request(`/api/public/code/${encodeURIComponent(code)}`),
+
   getInfo: (tenantId) => request(`/api/public/tenant/${tenantId}/info`),
-  getLocations: (tenantId) => request(`/api/public/tenant/${tenantId}/locations`),
   getServices: (tenantId) => request(`/api/public/tenant/${tenantId}/services`),
   getAvailability: (tenantId, serviceId, date, clockMinutes) =>
     request(`/api/public/tenant/${tenantId}/services/${serviceId}/availability?date=${date}&clockMinutes=${clockMinutes}`),
