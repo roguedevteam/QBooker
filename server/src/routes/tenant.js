@@ -226,6 +226,34 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
   res.json({ ok: true, count: applied, skipped: (toDates || []).length - applied });
 }));
 
+// Clears hours across the entire paid period in one call. For today specifically, the
+// client tells us which blocks have already passed (it knows the real time; the server
+// only knows the date) so they're preserved rather than wiped.
+router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(async (req, res) => {
+  const { keepHoursForToday } = req.body;
+  const window = getPlanWindow(req.tenant);
+  if (!window) return res.json({ ok: true, count: 0 });
+  const today = getToday();
+  let applied = 0;
+  let d = window.start;
+  let guard = 0;
+  while (d <= window.end && guard < 400) {
+    if (!isDateFullyPast(d)) {
+      const hours = d === today ? (keepHoursForToday || []) : [];
+      await query(
+        `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
+         values ($1,$2,$3,2,1)
+         on conflict (service_id, date) do update set hours = excluded.hours`,
+        [req.params.id, d, hours]
+      );
+      applied++;
+    }
+    d = addDays(d, 1);
+    guard++;
+  }
+  res.json({ ok: true, count: applied });
+}));
+
 // --- Tickets ----------------------------------------------------------------------
 router.get("/tickets", asyncHandler(async (req, res) => {
   const { date } = req.query;

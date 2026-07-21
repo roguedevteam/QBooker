@@ -48,6 +48,7 @@ export const api = {
   getDailyConfig: (serviceId, from, to) => request(`/api/tenant/services/${serviceId}/daily-config?from=${from}&to=${to}`),
   putDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config`, { method: "PUT", body: payload }),
   copyDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config/copy`, { method: "POST", body: payload }),
+  clearAllDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config/clear-all`, { method: "POST", body: payload }),
 
   getTickets: (date) => request(`/api/tenant/tickets?date=${date}`),
   updateTicket: (id, patch) => request(`/api/tenant/tickets/${id}`, { method: "PATCH", body: patch }),

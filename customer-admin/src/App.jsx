@@ -201,7 +201,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [services, setServices] = useState([]);
   const [expandedLocations, setExpandedLocations] = useState({});
   const [addingServiceFor, setAddingServiceFor] = useState(null);
-  const [newServiceDraft, setNewServiceDraft] = useState("");
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
@@ -276,7 +275,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="row">
-                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setNewServiceDraft(""); setExpandedLocations((prev) => ({ ...prev, [loc.id]: true })); }}>Add service</button>
+                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setExpandedLocations((prev) => ({ ...prev, [loc.id]: true })); }}>Add service</button>
                     <button
                       className="btn-outline"
                       onClick={async () => {
@@ -292,31 +291,12 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                 </div>
 
                 {addingHere && (
-                  <div className="stack" style={{ position: "relative" }}>
-                    <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
-                      <span className="muted" style={{ fontSize: 12 }}>New service at {loc.name}</span>
-                      <div className="row">
-                        <input
-                          className="input" autoFocus placeholder="Service name" value={newServiceDraft}
-                          onChange={(e) => setNewServiceDraft(e.target.value)}
-                          onKeyDown={async (e) => {
-                            if (e.key === "Enter" && newServiceDraft.trim()) {
-                              await api.addService(newServiceDraft, loc.id);
-                              setAddingServiceFor(null); setNewServiceDraft(""); refreshCore();
-                            }
-                            if (e.key === "Escape") { setAddingServiceFor(null); setNewServiceDraft(""); }
-                          }}
-                        />
-                        <button
-                          className="btn" disabled={!newServiceDraft.trim()}
-                          onClick={async () => { await api.addService(newServiceDraft, loc.id); setAddingServiceFor(null); setNewServiceDraft(""); refreshCore(); }}
-                        >
-                          Add
-                        </button>
-                        <button className="btn-outline" onClick={() => { setAddingServiceFor(null); setNewServiceDraft(""); }}>Cancel</button>
-                      </div>
-                    </div>
-                  </div>
+                  <ServiceWizard
+                    locationId={loc.id}
+                    setError={setError}
+                    onCancel={() => setAddingServiceFor(null)}
+                    onDone={() => { setAddingServiceFor(null); refreshCore(); }}
+                  />
                 )}
 
                 {isOpen && (
@@ -491,6 +471,39 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
 
 function ServiceEditor({ service, onChange, setError }) {
   const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="card stack">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <strong>{service.name}</strong>
+          <span className="badge badge-blue" style={{ textTransform: "capitalize" }}>{service.mode}</span>
+          {service.mode !== "queue" && <span className="muted" style={{ fontSize: 12 }}>{service.slot_minutes} min slots</span>}
+        </div>
+        <div className="row">
+          <button className="btn-outline" onClick={async () => { if (confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); } }}>Delete</button>
+          <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
+            {expanded ? "▾" : "▸"}
+          </button>
+        </div>
+      </div>
+
+      {service.mode === "queue" && (
+        <div className="row">
+          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
+            {service.queue_paused ? "Resume" : "Pause (busy)"}
+          </button>
+          <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
+        </div>
+      )}
+
+      {expanded && <ServiceCalendar service={service} setError={setError} />}
+    </div>
+  );
+}
+
+// Shared by ServiceEditor (post-setup editing) and ServiceWizard (step 2, right after creation).
+function ServiceCalendar({ service, setError }) {
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(todayIso()));
   const [monthConfigs, setMonthConfigs] = useState({});
@@ -529,7 +542,6 @@ function ServiceEditor({ service, onChange, setError }) {
   }, [service.id]);
 
   async function loadMonth(monthStart) {
-    if (!expanded) return;
     const monthEnd = addDaysIso(addMonthsIso(monthStart, 1), -1);
     try {
       const r = await api.getDailyConfig(service.id, monthStart, monthEnd);
@@ -539,7 +551,7 @@ function ServiceEditor({ service, onChange, setError }) {
       setPlanWindow(r.window);
     } catch (err) { setError(err.message); }
   }
-  useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth, expanded]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const entry = monthConfigs[selectedDate];
@@ -612,6 +624,21 @@ function ServiceEditor({ service, onChange, setError }) {
     }
   }
 
+  async function clearAllDays() {
+    if (!planWindow) return;
+    if (!confirm("Clear hours for every day in your paid period? Already-passed hours today are kept — everything else is wiped. This can't be undone.")) return;
+    try {
+      let todayHours = monthConfigs[todayIso()]?.hours;
+      if (todayHours === undefined) {
+        const r = await api.getDailyConfig(service.id, todayIso(), todayIso());
+        todayHours = r.dailyConfig[0]?.hours || [];
+      }
+      const keep = todayHours.filter((h) => h < currentMinutes);
+      await api.clearAllDailyConfig(service.id, { keepHoursForToday: keep });
+      await loadMonth(calendarMonth);
+    } catch (err) { setError(err.message); }
+  }
+
   async function copyToWeek() {
     const idx = weekdayIndex(selectedDate);
     const monday = addDaysIso(selectedDate, -idx);
@@ -634,140 +661,184 @@ function ServiceEditor({ service, onChange, setError }) {
   }
 
   const calendarWeeks = buildCalendarWeeks(calendarMonth);
-  const configuredCount = Object.values(monthConfigs).filter((c) => c.hours?.length > 0).length;
 
   return (
-    <div className="card stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <input className="input" style={{ maxWidth: 220 }} value={service.name} onChange={async (e) => { await api.updateService(service.id, { name: e.target.value }); }} />
-        {!expanded && <span className="muted" style={{ fontSize: 12 }}>{configuredCount} day(s) with hours this month</span>}
-        <div className="row">
-          <button className="btn-outline" onClick={async () => { await api.deleteService(service.id); onChange(); }}>Delete</button>
-          <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
-            {expanded ? "▾" : "▸"}
-          </button>
+    <div className="stack">
+      <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+        <div className="card" style={{ minWidth: 220 }}>
+          <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+            <button className="btn-outline" disabled={planWindow && calendarMonth <= firstOfMonth(planWindow.start)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
+            <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
+            <button className="btn-outline" disabled={planWindow && calendarMonth >= firstOfMonth(planWindow.end)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
+          </div>
+          <table>
+            <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
+            <tbody>
+              {calendarWeeks.map((week, wi) => (
+                <tr key={wi}>
+                  {week.map((d, di) => {
+                    if (!d) return <td key={di} />;
+                    const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
+                    const past = isDatePastClient(d);
+                    const count = monthConfigs[d]?.hours?.length || 0;
+                    const isSelected = d === selectedDate;
+                    const isToday = d === todayIso();
+                    return (
+                      <td key={di} style={{ padding: 2 }}>
+                        <button
+                          onClick={() => inWindow && setSelectedDate(d)}
+                          disabled={!inWindow}
+                          title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
+                          style={{
+                            width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
+                            background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
+                            color: isSelected ? "#fff" : !inWindow ? "#DCE4EA" : "#1B2733",
+                            opacity: inWindow ? 1 : 0.4,
+                          }}
+                        >
+                          {Number(d.slice(8, 10))}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
 
-      <div className="wrap">
-        <span className="muted">Booking type:</span>
-        {["queue", "appointment", "hybrid"].map((m) => (
-          <button key={m} className={service.mode === m ? "btn" : "btn-outline"} onClick={async () => { await api.updateService(service.id, { mode: m }); onChange(); }}>{m}</button>
-        ))}
-        <span className="muted">Slot length:</span>
-        <select value={service.slot_minutes} onChange={async (e) => { await api.updateService(service.id, { slotMinutes: Number(e.target.value) }); onChange(); }}>
-          {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-        </select>
-      </div>
-
-      {service.mode === "queue" && (
-        <div className="row">
-          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
-            {service.queue_paused ? "Resume" : "Pause (busy)"}
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
-        </div>
-      )}
-
-      {expanded && (
-        <div className="stack">
-          <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-            <div className="card" style={{ minWidth: 220 }}>
-              <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-                <button className="btn-outline" disabled={planWindow && calendarMonth <= firstOfMonth(planWindow.start)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
-                <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
-                <button className="btn-outline" disabled={planWindow && calendarMonth >= firstOfMonth(planWindow.end)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
-              </div>
-              <table>
-                <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
-                <tbody>
-                  {calendarWeeks.map((week, wi) => (
-                    <tr key={wi}>
-                      {week.map((d, di) => {
-                        if (!d) return <td key={di} />;
-                        const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
-                        const past = isDatePastClient(d);
-                        const count = monthConfigs[d]?.hours?.length || 0;
-                        const isSelected = d === selectedDate;
-                        const isToday = d === todayIso();
-                        return (
-                          <td key={di} style={{ padding: 2 }}>
-                            <button
-                              onClick={() => inWindow && setSelectedDate(d)}
-                              disabled={!inWindow}
-                              title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
-                              style={{
-                                width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
-                                background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
-                                color: isSelected ? "#fff" : !inWindow ? "#DCE4EA" : "#1B2733",
-                                opacity: inWindow ? 1 : 0.4,
-                              }}
-                            >
-                              {Number(d.slice(8, 10))}
-                            </button>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="stack" style={{ flex: 1, minWidth: 260 }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong style={{ fontSize: 13 }}>
-                  {selectedDate}
-                  {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
-                  {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
-                </strong>
-                {!selectedIsPast && (
-                  <div className="row">
-                    <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                    <button className="btn-outline" onClick={clearDay}>Clear day</button>
-                  </div>
-                )}
-              </div>
-              <div className="wrap" style={{ userSelect: "none" }}>
-                {GRID_HOURS.map((h) => {
-                  const open = draftHours.includes(h);
-                  const editable = isBlockEditable(h);
-                  return (
-                    <span
-                      key={h}
-                      onMouseDown={() => beginPaint(h)}
-                      onMouseEnter={() => continuePaint(h)}
-                      className="badge"
-                      title={!editable && selectedIsToday ? "Already passed" : undefined}
-                      style={{ cursor: editable ? "pointer" : "default", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: editable ? 1 : 0.5 }}
-                    >
-                      {formatTime(h)}
-                    </span>
-                  );
-                })}
-              </div>
+        <div className="stack" style={{ flex: 1, minWidth: 260 }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <strong style={{ fontSize: 13 }}>
+              {selectedDate}
+              {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
+              {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
+            </strong>
+            {!selectedIsPast && (
               <div className="row">
-                <span className="muted">Staff:</span>
-                <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
-                {service.mode === "hybrid" && (
-                  <>
-                    <span className="muted">On bookings:</span>
-                    <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
-                  </>
-                )}
+                <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
+                <button className="btn-outline" onClick={clearDay}>Clear day</button>
               </div>
-              {!selectedIsPast && (
-                <div className="wrap">
-                  <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
-                  <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
-                  <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
-                  <button className="btn-outline" onClick={copyToWholePeriod}>Whole paid period</button>
-                </div>
-              )}
+            )}
+          </div>
+          <div className="wrap" style={{ userSelect: "none" }}>
+            {GRID_HOURS.map((h) => {
+              const open = draftHours.includes(h);
+              const editable = isBlockEditable(h);
+              return (
+                <span
+                  key={h}
+                  onMouseDown={() => beginPaint(h)}
+                  onMouseEnter={() => continuePaint(h)}
+                  className="badge"
+                  title={!editable && selectedIsToday ? "Already passed" : undefined}
+                  style={{ cursor: editable ? "pointer" : "default", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: editable ? 1 : 0.5 }}
+                >
+                  {formatTime(h)}
+                </span>
+              );
+            })}
+          </div>
+          <div className="row">
+            <span className="muted">Staff:</span>
+            <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
+            {service.mode === "hybrid" && (
+              <>
+                <span className="muted">On bookings:</span>
+                <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
+              </>
+            )}
+          </div>
+          {!selectedIsPast && (
+            <div className="wrap">
+              <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
+              <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
+              <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
+              <button className="btn-outline" onClick={copyToWholePeriod}>Whole paid period</button>
             </div>
+          )}
+          <div className="wrap">
+            <span className="muted" style={{ fontSize: 12 }}>Danger zone:</span>
+            <button className="btn-outline" style={{ color: "#C22A1E" }} onClick={clearAllDays}>Clear all days</button>
           </div>
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+const SERVICE_MODE_INFO = [
+  { id: "queue", label: "Queue", text: "Walk-ins only. Customers join a live queue and get called forward in order — no fixed appointment times." },
+  { id: "appointment", label: "Appointment", text: "Bookable time slots only. Customers pick a specific time in advance — no walk-ins." },
+  { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
+];
+
+function ServiceWizard({ locationId, onDone, onCancel, setError }) {
+  const [step, setStep] = useState(1);
+  const [name, setName] = useState("");
+  const [mode, setMode] = useState("hybrid");
+  const [slotMinutes, setSlotMinutes] = useState(15);
+  const [creating, setCreating] = useState(false);
+  const [createdService, setCreatedService] = useState(null);
+
+  const needsSlotLength = mode === "appointment" || mode === "hybrid";
+
+  async function next() {
+    setCreating(true);
+    try {
+      const r = await api.addService(name, locationId);
+      const updated = await api.updateService(r.service.id, { mode, slotMinutes: needsSlotLength ? slotMinutes : 15 });
+      setCreatedService(updated.service);
+      setStep(2);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (step === 1) {
+    return (
+      <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 2</div>
+        <input className="input" autoFocus placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="stack">
+          {SERVICE_MODE_INFO.map((m) => (
+            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "#0F5FBF" : undefined }}>
+              <input type="radio" name="mode" checked={mode === m.id} onChange={() => setMode(m.id)} style={{ marginTop: 3 }} />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</div>
+                <div className="muted" style={{ fontSize: 12 }}>{m.text}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+        {needsSlotLength && (
+          <div className="row">
+            <span className="muted">Slot length:</span>
+            <select value={slotMinutes} onChange={(e) => setSlotMinutes(Number(e.target.value))}>
+              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </div>
+        )}
+        <div className="muted" style={{ fontSize: 11 }}>The name, type, and slot length can't be changed after this step — delete and recreate the service if you need to change them later.</div>
+        <div className="row">
+          <button className="btn" disabled={!name.trim() || creating} onClick={next}>{creating ? "Creating…" : "Next: set hours →"}</button>
+          <button className="btn-outline" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: set hours for "{createdService.name}"</div>
+      </div>
+      <ServiceCalendar service={createdService} setError={setError} />
+      <div className="row">
+        <button className="btn" onClick={() => onDone(createdService)}>Done</button>
+      </div>
     </div>
   );
 }
