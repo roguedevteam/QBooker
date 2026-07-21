@@ -33,6 +33,7 @@ export const api = {
   me: () => request("/api/tenant/me"),
   getPlan: () => request("/api/tenant/plan"),
   reschedulePlan: (payload) => request("/api/tenant/plan", { method: "PATCH", body: payload }),
+  extendPlan: () => request("/api/tenant/plan/extend", { method: "POST" }),
 
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name) => request("/api/tenant/locations", { method: "POST", body: { name } }),

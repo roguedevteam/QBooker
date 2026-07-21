@@ -193,8 +193,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [tab, setTab] = useState("locations");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
-  const [buyingLocation, setBuyingLocation] = useState(false);
-  const [newLocationName, setNewLocationName] = useState("");
   const [expandedLocations, setExpandedLocations] = useState({});
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [newServiceDraft, setNewServiceDraft] = useState("");
@@ -233,9 +231,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   return (
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
-      <PlanBanner tenant={tenant} setError={setError} />
       <div className="wrap">
-        {["locations", "dashboard", "audit"].map((t) => (
+        {["locations", "billing", "dashboard", "audit"].map((t) => (
           <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
@@ -256,21 +253,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
           </div>
           <div className="card row" style={{ justifyContent: "space-between" }}>
             <span>You're on <strong>{locations.length}</strong> location{locations.length === 1 ? "" : "s"}, paid as part of your {tenant.plan_label?.toLowerCase()}.</span>
-            {!buyingLocation && <button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button>}
+            <span className="muted" style={{ fontSize: 12 }}>Buy more locations from the Billing tab.</span>
           </div>
-          {buyingLocation && (
-            <div className="card stack" style={{ background: "#E4F0FB" }}>
-              <div style={{ fontSize: 13 }}>
-                Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
-                {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
-              </div>
-              <div className="row">
-                <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
-                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName); setNewLocationName(""); setBuyingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Buy &amp; add</button>
-                <button className="btn-outline" onClick={() => { setBuyingLocation(false); setNewLocationName(""); }}>Cancel</button>
-              </div>
-            </div>
-          )}
           {locations.map((loc) => {
             const locServices = services.filter((s) => s.location_id === loc.id);
             const isOpen = !!expandedLocations[loc.id];
@@ -341,6 +325,10 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
         </div>
       )}
 
+      {tab === "billing" && (
+        <BillingTab tenant={tenant} locations={locations} setError={setError} onLocationsChanged={refreshCore} />
+      )}
+
       {tab === "dashboard" && (
         <div className="stack">
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
@@ -385,6 +373,112 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
           {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
         </div>
       )}
+    </div>
+  );
+}
+
+function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
+  const [buyingLocation, setBuyingLocation] = useState(false);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [extending, setExtending] = useState(false);
+  const [confirmingExtend, setConfirmingExtend] = useState(false);
+
+  function downloadReceipt() {
+    const lines = [
+      "QBOOKER — RECEIPT",
+      "==================",
+      "",
+      `Business: ${tenant.business_name}`,
+      `Account reference: ${tenant.id}`,
+      `Plan: ${tenant.plan_label}`,
+      `Locations: ${tenant.location_count}`,
+      `Price per location: £${tenant.price_per_location}`,
+      `Total: £${tenant.price}`,
+      `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
+      tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
+      tenant.invoice_email ? `Billing email: ${tenant.invoice_email}` : null,
+      `Status: ${tenant.status === "active" ? "Active" : "Payment pending"}`,
+      "",
+      `Issued: ${new Date().toLocaleDateString()}`,
+    ].filter(Boolean);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qbooker-receipt-${tenant.id.slice(0, 8)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function extendPlan() {
+    setExtending(true);
+    try {
+      await api.extendPlan();
+      setConfirmingExtend(false);
+      window.location.reload(); // simplest way to refresh the tenant + plan banner together
+    } catch (err) {
+      setError(err.message);
+      setExtending(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <PlanBanner tenant={tenant} setError={setError} />
+
+      <div className="card stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>What you're paying for</div>
+        <div className="wrap">
+          <div><span className="muted">Plan:</span> {tenant.plan_label}</div>
+          <div><span className="muted">Locations:</span> {tenant.location_count}</div>
+          <div><span className="muted">Price per location:</span> £{tenant.price_per_location}</div>
+          <div><span className="muted">Total:</span> £{tenant.price}</div>
+          <div><span className="muted">Payment method:</span> {tenant.payment_method === "invoice" ? "Invoice" : "Card"}</div>
+          {tenant.invoice_po && <div><span className="muted">PO number:</span> {tenant.invoice_po}</div>}
+        </div>
+        <div className="row">
+          <button className="btn-outline" onClick={downloadReceipt}>Download receipt</button>
+        </div>
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Buy another location</div>
+        {!buyingLocation && <div><button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button></div>}
+        {buyingLocation && (
+          <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 13 }}>
+              Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
+              {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
+            </div>
+            <div className="row">
+              <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
+              <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName); setNewLocationName(""); setBuyingLocation(false); onLocationsChanged(); } catch (err) { setError(err.message); } }}>Buy &amp; add</button>
+              <button className="btn-outline" onClick={() => { setBuyingLocation(false); setNewLocationName(""); }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Extend your package</div>
+        <div className="muted" style={{ fontSize: 12 }}>
+          Renew for another {tenant.plan_label?.toLowerCase()} at the same price — starts right after your current period ends
+          (or today, if it's already expired), so you never lose paid-for time.
+        </div>
+        {!confirmingExtend && <div><button className="btn-outline" onClick={() => setConfirmingExtend(true)}>Extend package</button></div>}
+        {confirmingExtend && (
+          <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 13 }}>
+              This will renew your {tenant.plan_label?.toLowerCase()} for another full period — <strong>£{tenant.price}</strong>
+              {tenant.payment_method === "invoice" ? " added to your next invoice." : " charged to your card on file."}
+            </div>
+            <div className="row">
+              <button className="btn" disabled={extending} onClick={extendPlan}>{extending ? "Extending…" : "Confirm & extend"}</button>
+              <button className="btn-outline" onClick={() => setConfirmingExtend(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

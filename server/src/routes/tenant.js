@@ -8,6 +8,7 @@ import {
   getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
 } from "../lib/scheduling.js";
 import { isDateLocked, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
+import { getToday } from "../lib/clock.js";
 
 const router = Router();
 
@@ -65,6 +66,34 @@ router.patch("/plan", adminOnly, asyncHandler(async (req, res) => {
     return res.json({ tenant: r.rows[0] });
   }
   res.status(400).json({ error: "Unknown plan type." });
+}));
+
+// Renew for another full period of the same length, charged at the tenant's existing
+// price. Starts the day after the current window ends if it hasn't expired yet, or today
+// if it already has — so renewing early never loses paid-for time.
+router.post("/plan/extend", adminOnly, asyncHandler(async (req, res) => {
+  const tenant = req.tenant;
+  const today = getToday();
+
+  if (tenant.plan_id === "day") {
+    const newDate = tenant.active_date && tenant.active_date >= today ? addDays(tenant.active_date, 1) : today;
+    const r = await query(`update tenants set active_date=$1 where id=$2 returning *`, [newDate, tenant.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — new day pass for ${newDate}, £${tenant.price} charged`]);
+    return res.json({ tenant: r.rows[0] });
+  }
+  if (tenant.plan_id === "week") {
+    const currentEnd = tenant.week_start_date ? addDays(tenant.week_start_date, 6) : null;
+    const newStart = currentEnd && currentEnd >= today ? addDays(currentEnd, 1) : today;
+    const r = await query(`update tenants set week_start_date=$1 where id=$2 returning *`, [newStart, tenant.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — another week from ${newStart}, £${tenant.price} charged`]);
+    return res.json({ tenant: r.rows[0] });
+  }
+  // month / year / custom
+  const newStart = tenant.end_date && tenant.end_date >= today ? addDays(tenant.end_date, 1) : today;
+  const newEnd = addDays(newStart, tenant.plan_days - 1);
+  const r = await query(`update tenants set start_date=$1, end_date=$2 where id=$3 returning *`, [newStart, newEnd, tenant.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended to ${newEnd} — £${tenant.price} charged`]);
+  res.json({ tenant: r.rows[0] });
 }));
 
 // --- Locations ---------------------------------------------------------------

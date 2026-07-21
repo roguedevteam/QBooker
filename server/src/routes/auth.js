@@ -27,8 +27,8 @@ router.post("/signup", asyncHandler(async (req, res) => {
   if (!email || !businessName || !planId || !locationNames?.length) {
     return res.status(400).json({ error: "Missing required signup fields." });
   }
-  if (!invoicePO?.trim()) {
-    return res.status(400).json({ error: "A PO / reference number is required." });
+  if (paymentMethod === "invoice" && !invoicePO?.trim()) {
+    return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
 
   let client;

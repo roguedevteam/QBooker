@@ -150,20 +150,22 @@ function Signup({ onDone, setError }) {
       {locationNames.map((n, i) => (
         <input key={i} className="input" placeholder={`Location ${i + 1} name`} value={n} onChange={(e) => setLocationNames((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))} />
       ))}
-      <div>
-        <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
-        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required — your internal purchase order or reference number for this account.</div>
-      </div>
       <div className="wrap">
         <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
         <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
       </div>
       {paymentMethod === "invoice" && (
-        <input className="input" placeholder="Billing email" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
+        <div className="stack">
+          <input className="input" placeholder="Billing email" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
+          <div>
+            <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
+            <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required for invoice payment — your internal purchase order or reference number.</div>
+          </div>
+        </div>
       )}
       <div className="row" style={{ justifyContent: "space-between" }}>
         <span>Total: <strong>£{total}</strong></span>
-        <button className="btn" disabled={submitting || !businessName || !email || !poNumber.trim()} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+        <button className="btn" disabled={submitting || !businessName || !email || (paymentMethod === "invoice" && !poNumber.trim())} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
       </div>
     </div>
   );
