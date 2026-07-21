@@ -7,7 +7,7 @@ import { createLocationCode } from "../lib/codes.js";
 import {
   getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
 } from "../lib/scheduling.js";
-import { isDateLocked, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
+import { isDateLocked, isDateFullyPast, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
 import { getToday } from "../lib/clock.js";
 
 const router = Router();
@@ -193,7 +193,7 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
   if (window && (date < window.start || date > window.end)) {
     return res.status(409).json({ error: "That date is outside your paid access window." });
   }
-  if (isDateLocked(date)) return res.status(409).json({ error: "That date has already started, so it's locked." });
+  if (isDateFullyPast(date)) return res.status(409).json({ error: "That date has already passed." });
   const result = await query(
     `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
      values ($1,$2,$3,$4,$5)
@@ -212,7 +212,7 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
   const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1 };
   let applied = 0;
   for (const date of toDates || []) {
-    if (isDateLocked(date)) continue;
+    if (isDateFullyPast(date)) continue;
     if (window && (date < window.start || date > window.end)) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
@@ -368,19 +368,15 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
   const service = svcResult.rows[0];
 
-  if (service.mode === "queue") {
-    if (service.queue_paused) return res.json({ open: false, reason: "paused" });
-    const cfg = { slotMinutes: service.slot_minutes, staffCount: service.queue_staff_count, bookingStaffCount: 0, hours: allDayBlocks() };
-    const waitingCount = await countWaiting(req.tenant.id, service.id, date);
-    const status = walkInStatusNow(cfg, waitingCount, Number(clockMinutes));
-    return res.json({ open: true, walkIn: status, bookableSlots: [] });
-  }
+  // Pause/Resume is a live override that sits on top of the scheduled hours below —
+  // it doesn't replace the schedule, it just short-circuits it when active.
+  if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
 
   const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
   const day = dayResult.rows[0];
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
 
-  const bookingStaffCount = service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
+  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
   const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, hours: day.hours };
 
   const blockCountResult = await query(
@@ -390,6 +386,10 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   );
   const walkInCountInBlock = Number(blockCountResult.rows[0]?.count || 0);
   const walkIn = walkInStatusNow(cfg, walkInCountInBlock, Number(clockMinutes));
+
+  if (service.mode === "queue") {
+    return res.json({ open: true, walkIn, bookableSlots: [] });
+  }
 
   const bookedResult = await query(
     `select slot_time, count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' group by slot_time`,
@@ -401,19 +401,6 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
 
   res.json({ open: true, walkIn, bookableSlots });
 }));
-
-function allDayBlocks() {
-  const hours = [];
-  for (let h = 0; h < 24 * 60; h += 30) hours.push(h);
-  return hours;
-}
-async function countWaiting(tenantId, serviceId, date) {
-  const r = await query(
-    `select count(*) from tickets where tenant_id=$1 and service_id=$2 and visit_date=$3 and type='walk_in' and status='waiting'`,
-    [tenantId, serviceId, date]
-  );
-  return Number(r.rows[0]?.count || 0);
-}
 
 router.post("/services/:id/tickets", asyncHandler(async (req, res) => {
   const { type, slotTime, hourBlock, date } = req.body;

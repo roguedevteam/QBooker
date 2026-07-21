@@ -14,6 +14,17 @@ export function isDateLocked(dateStr) {
   return target <= today;
 }
 
+// Stricter than isDateLocked: true only for dates that have fully passed (yesterday or
+// earlier), not today. Used for hour-editing, where today should stay editable for its
+// remaining (not-yet-passed) hours — unlike isDateLocked, which is used for whole-plan
+// rescheduling and correctly treats today as already locked for that purpose.
+export function isDateFullyPast(dateStr) {
+  if (!dateStr) return false;
+  const today = toDateOnly(getToday());
+  const target = toDateOnly(dateStr);
+  return target < today;
+}
+
 // Returns { start, end } (both 'YYYY-MM-DD') for the tenant's current access window, or null.
 export function getPlanWindow(tenant) {
   if (tenant.plan_id === "day") return tenant.active_date ? { start: tenant.active_date, end: tenant.active_date } : null;

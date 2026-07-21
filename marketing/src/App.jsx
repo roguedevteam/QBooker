@@ -236,7 +236,14 @@ function Signup({ onDone, setError }) {
         <div className="row"><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
       )}
       {planId === "day" && (
-        <div className="row"><span className="muted">Which date?</span><input className="input" type="date" min={todayIso()} value={activeDate} onChange={(e) => setActiveDate(e.target.value)} /></div>
+        <div>
+          <div className="row"><span className="muted">Which date?</span><input className="input" type="date" min={todayIso()} value={activeDate} onChange={(e) => setActiveDate(e.target.value)} /></div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            {activeDate === todayIso()
+              ? "Covers today, until midnight — you can start setting up and go live right away."
+              : "Covers the date you choose, until midnight."}
+          </div>
+        </div>
       )}
       {planId === "week" && (
         <div className="row"><span className="muted">Week starting:</span><input className="input" type="date" min={todayIso()} value={weekStartDate} onChange={(e) => setWeekStartDate(e.target.value)} /></div>

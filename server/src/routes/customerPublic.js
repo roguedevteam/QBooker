@@ -45,24 +45,13 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
   const service = svcResult.rows[0];
 
-  if (service.mode === "queue") {
-    if (service.queue_paused) return res.json({ open: false, reason: "paused" });
-    const hours = [];
-    for (let h = 0; h < 24 * 60; h += 30) hours.push(h);
-    const cfg = { slotMinutes: service.slot_minutes, staffCount: service.queue_staff_count, bookingStaffCount: 0, hours };
-    const waitingResult = await query(
-      `select count(*) from tickets where tenant_id=$1 and service_id=$2 and visit_date=$3 and type='walk_in' and status='waiting'`,
-      [req.tenant.id, service.id, date]
-    );
-    const status = walkInStatusNow(cfg, Number(waitingResult.rows[0]?.count || 0), Number(clockMinutes));
-    return res.json({ open: true, walkIn: status, bookableSlots: [] });
-  }
+  if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
 
   const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
   const day = dayResult.rows[0];
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
 
-  const bookingStaffCount = service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
+  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
   const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, hours: day.hours };
 
   const blockCountResult = await query(
@@ -71,6 +60,10 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
     [service.id, date, currentHourBlock(cfg, Number(clockMinutes))]
   );
   const walkIn = walkInStatusNow(cfg, Number(blockCountResult.rows[0]?.count || 0), Number(clockMinutes));
+
+  if (service.mode === "queue") {
+    return res.json({ open: true, walkIn, bookableSlots: [] });
+  }
 
   const bookedResult = await query(
     `select slot_time, count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' group by slot_time`,

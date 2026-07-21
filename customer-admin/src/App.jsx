@@ -18,6 +18,9 @@ function formatTime(min) {
 function isDateLockedClient(dateStr) {
   return dateStr <= todayIso();
 }
+function isDatePastClient(dateStr) {
+  return dateStr < todayIso();
+}
 function addDaysIso(dateStr, n) {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -175,8 +178,11 @@ function PlanBanner({ tenant, setError, onChanged }) {
   return (
     <div className="card row" style={{ justifyContent: "space-between", background: plan.locked ? "#FBE9E7" : "#E4F0FB", flexWrap: "wrap" }}>
       <div style={{ fontSize: 13 }}>
-        <strong>{label}</strong> covers <strong>{plan.window.start}</strong> to <strong>{plan.window.end}</strong>
-        {plan.locked ? " — locked (already started)." : "."}
+        <strong>{label}</strong>{" "}
+        {tenant.plan_id === "day"
+          ? <>covers <strong>{plan.window.start}</strong>, until midnight.</>
+          : <>covers <strong>{plan.window.start}</strong> to <strong>{plan.window.end}</strong>.</>}
+        {plan.locked && " Rescheduling is locked now that it's started — you can still set hours for the rest of today in the Locations tab."}
       </div>
       {!plan.locked && (
         <div className="row">
@@ -542,7 +548,15 @@ function ServiceEditor({ service, onChange, setError }) {
     setBookingStaffCount(entry?.booking_staff_count ?? 1);
   }, [selectedDate, monthConfigs]);
 
-  const selectedLocked = isDateLockedClient(selectedDate);
+  const selectedIsPast = isDatePastClient(selectedDate);
+  const selectedIsToday = selectedDate === todayIso();
+  const currentMinutes = nowMinutes();
+
+  function isBlockEditable(hourMin) {
+    if (selectedIsPast) return false;
+    if (selectedIsToday && hourMin < currentMinutes) return false;
+    return true;
+  }
 
   function applyHour(hourMin, open) {
     setDraftHours((prev) => {
@@ -553,14 +567,14 @@ function ServiceEditor({ service, onChange, setError }) {
     });
   }
   function beginPaint(hourMin) {
-    if (selectedLocked) return;
+    if (!isBlockEditable(hourMin)) return;
     const mode = !draftHours.includes(hourMin);
     paintingRef.current = true;
     paintModeRef.current = mode;
     applyHour(hourMin, mode);
   }
   function continuePaint(hourMin) {
-    if (!paintingRef.current || selectedLocked) return;
+    if (!paintingRef.current || !isBlockEditable(hourMin)) return;
     applyHour(hourMin, paintModeRef.current);
   }
 
@@ -577,12 +591,26 @@ function ServiceEditor({ service, onChange, setError }) {
     } catch (err) { setError(err.message); }
   }
 
+  // For today, quick-fill/clear only touch hours from now onward — whatever was already
+  // set for earlier today (already offered/used) is left exactly as it was.
   function fillNineToFive() {
-    const hours = [];
-    for (let h = 540; h < 1020; h += 30) hours.push(h);
-    saveNow({ hours });
+    const target = [];
+    for (let h = 540; h < 1020; h += 30) target.push(h);
+    if (selectedIsToday) {
+      const already = draftHours.filter((h) => h < currentMinutes);
+      const upcoming = target.filter((h) => h >= currentMinutes);
+      saveNow({ hours: [...new Set([...already, ...upcoming])].sort((a, b) => a - b) });
+    } else {
+      saveNow({ hours: target });
+    }
   }
-  function clearDay() { saveNow({ hours: [] }); }
+  function clearDay() {
+    if (selectedIsToday) {
+      saveNow({ hours: draftHours.filter((h) => h < currentMinutes) });
+    } else {
+      saveNow({ hours: [] });
+    }
+  }
 
   async function copyToWeek() {
     const idx = weekdayIndex(selectedDate);
@@ -626,25 +654,22 @@ function ServiceEditor({ service, onChange, setError }) {
         {["queue", "appointment", "hybrid"].map((m) => (
           <button key={m} className={service.mode === m ? "btn" : "btn-outline"} onClick={async () => { await api.updateService(service.id, { mode: m }); onChange(); }}>{m}</button>
         ))}
-        {service.mode !== "queue" && (
-          <>
-            <span className="muted">Slot length:</span>
-            <select value={service.slot_minutes} onChange={async (e) => { await api.updateService(service.id, { slotMinutes: Number(e.target.value) }); onChange(); }}>
-              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-            </select>
-          </>
-        )}
+        <span className="muted">Slot length:</span>
+        <select value={service.slot_minutes} onChange={async (e) => { await api.updateService(service.id, { slotMinutes: Number(e.target.value) }); onChange(); }}>
+          {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+        </select>
       </div>
 
-      {service.mode === "queue" ? (
+      {service.mode === "queue" && (
         <div className="row">
           <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
             {service.queue_paused ? "Resume" : "Pause (busy)"}
           </button>
-          <span className="muted">Staff working:</span>
-          <input className="input" style={{ width: 70 }} type="number" min={1} value={service.queue_staff_count} onChange={async (e) => { await api.updateService(service.id, { queueStaffCount: Number(e.target.value) }); onChange(); }} />
+          <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
         </div>
-      ) : expanded && (
+      )}
+
+      {expanded && (
         <div className="stack">
           <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
             <div className="card" style={{ minWidth: 220 }}>
@@ -661,7 +686,7 @@ function ServiceEditor({ service, onChange, setError }) {
                       {week.map((d, di) => {
                         if (!d) return <td key={di} />;
                         const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
-                        const locked = isDateLockedClient(d);
+                        const past = isDatePastClient(d);
                         const count = monthConfigs[d]?.hours?.length || 0;
                         const isSelected = d === selectedDate;
                         const isToday = d === todayIso();
@@ -670,7 +695,7 @@ function ServiceEditor({ service, onChange, setError }) {
                             <button
                               onClick={() => inWindow && setSelectedDate(d)}
                               disabled={!inWindow}
-                              title={!inWindow ? "Outside your access window" : locked ? "Locked — view only" : `${count} half-hour block(s) open`}
+                              title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
                               style={{
                                 width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
                                 background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
@@ -691,8 +716,12 @@ function ServiceEditor({ service, onChange, setError }) {
 
             <div className="stack" style={{ flex: 1, minWidth: 260 }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong style={{ fontSize: 13 }}>{selectedDate}{selectedLocked && <span className="muted" style={{ fontWeight: 400 }}> (locked)</span>}</strong>
-                {!selectedLocked && (
+                <strong style={{ fontSize: 13 }}>
+                  {selectedDate}
+                  {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
+                  {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
+                </strong>
+                {!selectedIsPast && (
                   <div className="row">
                     <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
                     <button className="btn-outline" onClick={clearDay}>Clear day</button>
@@ -702,13 +731,15 @@ function ServiceEditor({ service, onChange, setError }) {
               <div className="wrap" style={{ userSelect: "none" }}>
                 {GRID_HOURS.map((h) => {
                   const open = draftHours.includes(h);
+                  const editable = isBlockEditable(h);
                   return (
                     <span
                       key={h}
                       onMouseDown={() => beginPaint(h)}
                       onMouseEnter={() => continuePaint(h)}
                       className="badge"
-                      style={{ cursor: selectedLocked ? "default" : "pointer", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: selectedLocked ? 0.6 : 1 }}
+                      title={!editable && selectedIsToday ? "Already passed" : undefined}
+                      style={{ cursor: editable ? "pointer" : "default", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: editable ? 1 : 0.5 }}
                     >
                       {formatTime(h)}
                     </span>
@@ -717,15 +748,15 @@ function ServiceEditor({ service, onChange, setError }) {
               </div>
               <div className="row">
                 <span className="muted">Staff:</span>
-                <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedLocked} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
-                {service.mode !== "appointment" && (
+                <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
+                {service.mode === "hybrid" && (
                   <>
                     <span className="muted">On bookings:</span>
-                    <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedLocked} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
+                    <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
                   </>
                 )}
               </div>
-              {!selectedLocked && (
+              {!selectedIsPast && (
                 <div className="wrap">
                   <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
                   <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
