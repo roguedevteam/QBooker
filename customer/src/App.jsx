@@ -16,7 +16,7 @@ function formatTime(min) {
 }
 
 export default function App() {
-  const [code, setCode] = useState(() => new URLSearchParams(window.location.search).get("c") || "");
+  const [tenantId, setTenantId] = useState(() => new URLSearchParams(window.location.search).get("t") || "");
   const [manualEntry, setManualEntry] = useState("");
   const [ready, setReady] = useState(false);
 
@@ -24,59 +24,43 @@ export default function App() {
 
   if (!ready) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
 
-  if (!code) {
+  if (!tenantId) {
     return (
       <div className="narrow card stack" style={{ marginTop: 60 }}>
         <h3>QBooker</h3>
         <p className="muted" style={{ fontSize: 13 }}>
-          This page needs a location code to know where you're checking in — normally you'd arrive
-          here by scanning a QR code or tapping a WhatsApp link at the location. For testing, enter
-          the code shown against a location in the Admin portal (e.g. QB-7F3K2A).
+          This page needs a business link to know who you're booking with — normally you'd arrive here
+          via a link shared by the business. For testing, paste the business ID shown in their Admin portal.
         </p>
-        <input className="input" placeholder="Location code" value={manualEntry} onChange={(e) => setManualEntry(e.target.value)} />
-        <button className="btn" disabled={!manualEntry.trim()} onClick={() => setCode(manualEntry.trim())}>Continue</button>
+        <input className="input" placeholder="Business ID" value={manualEntry} onChange={(e) => setManualEntry(e.target.value)} />
+        <button className="btn" disabled={!manualEntry.trim()} onClick={() => setTenantId(manualEntry.trim())}>Continue</button>
       </div>
     );
   }
 
-  return <CustomerWhatsApp code={code} />;
+  return <CustomerWhatsApp tenantId={tenantId} />;
 }
 
-function CustomerWhatsApp({ code }) {
+function CustomerWhatsApp({ tenantId }) {
   const [error, setError] = useState("");
   const [businessName, setBusinessName] = useState("");
-  const [locationName, setLocationName] = useState("");
-  const [tenantId, setTenantId] = useState(null);
-  const [locationId, setLocationId] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [messages, setMessages] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [options, setOptions] = useState([]);
 
   useEffect(() => {
-    api.lookupCode(code)
-      .then((info) => {
+    Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)])
+      .then(([info, l, s]) => {
         setBusinessName(info.businessName);
-        setLocationName(info.locationName);
-        setTenantId(info.tenantId);
-        setLocationId(info.locationId);
-        return api.getServices(info.tenantId);
-      })
-      .then((s) => {
+        setLocations(l.locations);
         setServices(s.services);
-        setMessages([{ from: "bot", text: `Welcome to ${businessName || "us"} 👋 Reply Hi to get a ticket or book a slot.` }]);
+        setMessages([{ from: "bot", text: `Welcome to ${info.businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
+        setOptions([{ label: "Hi", action: "greet" }]);
       })
       .catch(() => setNotFound(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
-
-  // Set the initial greeting once we actually know the business name (avoids a stale closure).
-  useEffect(() => {
-    if (businessName && messages.length === 0) {
-      setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
-      setOptions([{ label: "Hi", action: "greet" }]);
-    }
-  }, [businessName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text }]); setOptions(opts || []); }
   function user(text) { setMessages((m) => [...m, { from: "user", text }]); }
@@ -84,7 +68,11 @@ function CustomerWhatsApp({ code }) {
   async function handle(action, payload) {
     if (action === "greet") {
       user("Hi");
-      showServices();
+      if (locations.length > 1) bot("Which location?", locations.map((l) => ({ label: l.name, action: "loc", payload: l.id })));
+      else showServices(locations[0]?.id);
+    } else if (action === "loc") {
+      user(locations.find((l) => l.id === payload)?.name);
+      showServices(payload);
     } else if (action === "svc") {
       const svc = services.find((s) => s.id === payload);
       user(svc.name);
@@ -117,21 +105,19 @@ function CustomerWhatsApp({ code }) {
       setOptions([{ label: "Hi", action: "greet" }]);
     }
   }
-  function showServices() {
-    // The location code already identifies which location we're at — no need to ask.
-    const list = services.filter((s) => s.location_id === locationId);
-    if (list.length === 0) { bot("No services are set up at this location yet."); return; }
+  function showServices(locId) {
+    const list = services.filter((s) => s.location_id === locId);
     bot("Which service would you like today?", list.map((s) => ({ label: s.name, action: "svc", payload: s.id })));
   }
 
   if (notFound) {
-    return <div className="narrow card" style={{ marginTop: 60, color: "#C22A1E" }}>We couldn't recognise that code. Check the link/QR code and try again.</div>;
+    return <div className="narrow card" style={{ marginTop: 60, color: "#C22A1E" }}>We couldn't find that business. Check the link and try again.</div>;
   }
 
   return (
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
-        <strong>{businessName ? `${businessName}${locationName ? " — " + locationName : ""}` : "QBooker"}</strong>
+        <strong>{businessName || "QBooker"}</strong>
       </div>
       {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
       <div className="narrow stack">
