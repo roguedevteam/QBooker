@@ -76,6 +76,7 @@ function Signup({ onDone, setError }) {
   const [locationNames, setLocationNames] = useState([""]);
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
+  const [poNumber, setPoNumber] = useState("");
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 });
   const [submitting, setSubmitting] = useState(false);
 
@@ -103,7 +104,7 @@ function Signup({ onDone, setError }) {
       const payload = {
         businessName, email, planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
         planDays, price: total, pricePerLocation: perLocation, locationCount,
-        paymentMethod, invoiceEmail,
+        paymentMethod, invoiceEmail, invoicePO: poNumber,
         locationNames, locationAddresses: locationNames.map(() => ""),
       };
       if (planId === "day") payload.activeDate = activeDate;
@@ -149,6 +150,10 @@ function Signup({ onDone, setError }) {
       {locationNames.map((n, i) => (
         <input key={i} className="input" placeholder={`Location ${i + 1} name`} value={n} onChange={(e) => setLocationNames((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))} />
       ))}
+      <div>
+        <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
+        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required — your internal purchase order or reference number for this account.</div>
+      </div>
       <div className="wrap">
         <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
         <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
@@ -158,7 +163,7 @@ function Signup({ onDone, setError }) {
       )}
       <div className="row" style={{ justifyContent: "space-between" }}>
         <span>Total: <strong>£{total}</strong></span>
-        <button className="btn" disabled={submitting || !businessName || !email} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+        <button className="btn" disabled={submitting || !businessName || !email || !poNumber.trim()} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
       </div>
     </div>
   );

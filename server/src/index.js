@@ -1,7 +1,5 @@
 import express from "express";
 import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
 import "dotenv/config";
 
 import authRoutes from "./routes/auth.js";
@@ -11,18 +9,15 @@ import customerPublicRoutes from "./routes/customerPublic.js";
 import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim());
 const restrictedCors = cors({ origin: allowedOrigins, credentials: true });
 // Public data (service names, opening hours, location codes) is meant to be reachable from
-// anywhere — the embeddable widget runs on arbitrary third-party business websites, so it
-// can't be restricted to a fixed origin list the way the authenticated apps are.
+// anywhere, so it isn't restricted to the fixed origin list the authenticated apps use.
 const openCors = cors();
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "..", "public"))); // serves /widget.js
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
