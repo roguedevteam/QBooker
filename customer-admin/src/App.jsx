@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import QRCode from "qrcode";
 import { api, setToken, hasToken } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 
@@ -200,12 +199,12 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [newServiceDraft, setNewServiceDraft] = useState("");
   const [tickets, setTickets] = useState([]);
+  const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
   const date = todayIso();
   const STAFF_APP_URL = import.meta.env.VITE_STAFF_APP_URL || "http://localhost:5176";
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-  const WHATSAPP_NUMBER = import.meta.env.VITE_WHATSAPP_NUMBER || "+447000000000";
-  const widgetSnippet = `<script src="${API_URL}/widget.js" data-tenant="${tenant.id}" data-whatsapp="${WHATSAPP_NUMBER}" async></script>`;
+  const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
+  const customerLink = `${CUSTOMER_APP_URL}/?t=${tenant.id}`;
 
   async function refreshCore() {
     try {
@@ -215,8 +214,9 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   }
   async function refreshQueue() {
     try {
-      const tixRes = await api.getTickets(date);
+      const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
       setTickets(tixRes.tickets);
+      setStats(statsRes.stats);
     } catch (err) { setError(err.message); }
   }
   async function refreshAudit() {
@@ -235,8 +235,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <PlanBanner tenant={tenant} setError={setError} />
       <div className="wrap">
-        {["locations", "queue", "audit"].map((t) => (
-          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "queue") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+        {["locations", "dashboard", "audit"].map((t) => (
+          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
 
@@ -247,17 +247,12 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
             <div className="muted" style={{ fontSize: 12 }}>
               Give your team the Staff Kiosk link ({STAFF_APP_URL}) and this code, plus the one-time code they'll get when they sign in.
             </div>
-          </div>
-          <div className="card stack">
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Website widget</div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Paste this onto your own website — it lists your locations and links straight to WhatsApp for each one.
-              Update the WhatsApp number in your deployment settings once you have a real one (<code>VITE_WHATSAPP_NUMBER</code>).
-            </div>
             <div className="row" style={{ flexWrap: "wrap" }}>
-              <code style={{ fontSize: 11, background: "#F2F6F9", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{widgetSnippet}</code>
-              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(widgetSnippet); }}>Copy</button>
+              <span style={{ fontSize: 13 }}>Customer link:</span>
+              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
+              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
             </div>
+            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
           </div>
           <div className="card row" style={{ justifyContent: "space-between" }}>
             <span>You're on <strong>{locations.length}</strong> location{locations.length === 1 ? "" : "s"}, paid as part of your {tenant.plan_label?.toLowerCase()}.</span>
@@ -306,8 +301,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                   </div>
                 </div>
 
-                {loc.code && <LocationWhatsApp code={loc.code} whatsappNumber={WHATSAPP_NUMBER} />}
-
                 {addingHere && (
                   <div className="stack" style={{ position: "relative" }}>
                     <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
@@ -348,9 +341,18 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
         </div>
       )}
 
-      {tab === "queue" && (
+      {tab === "dashboard" && (
         <div className="stack">
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
+          {stats && (
+            <div className="wrap">
+              <div className="card">{stats.waiting}<div className="muted" style={{ fontSize: 11 }}>Waiting</div></div>
+              <div className="card">{stats.booked}<div className="muted" style={{ fontSize: 11 }}>Booked</div></div>
+              <div className="card">{stats.seen}<div className="muted" style={{ fontSize: 11 }}>Seen today</div></div>
+              <div className="card">{stats.no_show}<div className="muted" style={{ fontSize: 11 }}>No-show</div></div>
+              <div className="card">{stats.cancelled}<div className="muted" style={{ fontSize: 11 }}>Cancelled</div></div>
+            </div>
+          )}
           <div className="card">
             <table>
               <thead><tr><th>Ticket</th><th>Service</th><th>Type/time</th><th>Status</th><th>Actions</th></tr></thead>
@@ -383,29 +385,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
           {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
         </div>
       )}
-    </div>
-  );
-}
-
-function LocationWhatsApp({ code, whatsappNumber }) {
-  const [qrDataUrl, setQrDataUrl] = useState(null);
-  const waLink = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(code)}`;
-
-  useEffect(() => {
-    QRCode.toDataURL(waLink, { width: 120, margin: 1 }).then(setQrDataUrl).catch(() => setQrDataUrl(null));
-  }, [waLink]);
-
-  return (
-    <div className="row" style={{ alignItems: "flex-start", flexWrap: "wrap", background: "#F2F6F9", borderRadius: 8, padding: 10 }}>
-      {qrDataUrl && <img src={qrDataUrl} alt={`QR code for ${code}`} width={90} height={90} style={{ borderRadius: 4 }} />}
-      <div className="stack" style={{ gap: 4 }}>
-        <div style={{ fontSize: 12 }}>Location code: <strong style={{ letterSpacing: 1 }}>{code}</strong></div>
-        <a href={waLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#0F5FBF" }}>{waLink}</a>
-        <div className="row">
-          <button className="btn-outline" onClick={() => navigator.clipboard?.writeText(waLink)}>Copy WhatsApp link</button>
-        </div>
-        <div className="muted" style={{ fontSize: 11 }}>Print this QR code for the location — scanning it opens WhatsApp with the code pre-filled.</div>
-      </div>
     </div>
   );
 }
