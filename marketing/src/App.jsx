@@ -40,12 +40,115 @@ export default function App() {
   );
 }
 
+const FEATURES = [
+  { icon: "⚡", title: "Rapid setup", text: "Sign up and be live in about 3 minutes — no onboarding call required." },
+  { icon: "🔀", title: "Queue, appointments, or both", text: "Set each service to queue-only, appointment-only, or hybrid — your choice, changeable anytime." },
+  { icon: "📄", title: "No lock-in contracts", text: "Pay for exactly the period you need — a day, a week, a month, or a year. Nothing auto-renews behind your back." },
+  { icon: "📍", title: "Priced per location", text: "One simple price per location, not per seat or per staff member." },
+  { icon: "👥", title: "Unlimited by design", text: "Unlimited staff, unlimited services, unlimited appointments — no artificial caps to hit." },
+  { icon: "🧭", title: "Flexible from day one", text: "Change plans, add locations, and reconfigure services as your business changes." },
+];
+
 function Landing({ onStart }) {
+  const [pricing, setPricing] = useState(null);
+
+  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
+
   return (
-    <div className="container stack" style={{ textAlign: "center", paddingTop: 60 }}>
-      <h1>Let customers join the queue or book a slot — from a WhatsApp message.</h1>
-      <p className="muted">No app to install. Set up services, hours, and slots in minutes.</p>
-      <div><button className="btn" onClick={onStart}>Get started</button></div>
+    <div>
+      <div className="container stack" style={{ textAlign: "center", paddingTop: 60 }}>
+        <h1>Let customers join the queue or book a slot — from a WhatsApp message.</h1>
+        <p className="muted">No app to install. Set up services, hours, and slots in minutes.</p>
+        <div><button className="btn" onClick={onStart}>Get started</button></div>
+      </div>
+
+      <div className="container" style={{ marginTop: 48 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+          {FEATURES.map((f) => (
+            <div key={f.title} className="card stack" style={{ gap: 6 }}>
+              <div style={{ fontSize: 22 }}>{f.icon}</div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{f.title}</div>
+              <div className="muted" style={{ fontSize: 13 }}>{f.text}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="container" style={{ marginTop: 40 }}>
+        <div className="card stack">
+          <div style={{ fontWeight: 600 }}>Reliability</div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            We take uptime seriously — this is where you'd state your specific commitment (e.g. a target
+            percentage or response-time promise) once you've decided what you're comfortable guaranteeing.
+          </p>
+        </div>
+      </div>
+
+      <div className="container" style={{ marginTop: 24 }}>
+        <div className="card row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 600 }}>Want a hand getting set up?</div>
+            <p className="muted" style={{ fontSize: 13, margin: "4px 0 0" }}>
+              Our team will configure your services, hours, and staff for you — done in one session.
+            </p>
+          </div>
+          <div className="row">
+            <strong>£125</strong>
+            <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Get in touch</button></a>
+          </div>
+        </div>
+      </div>
+
+      <div className="container" style={{ marginTop: 24 }}>
+        <div className="card stack">
+          <div style={{ fontWeight: 600 }}>Just need a simple queue?</div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            If you already use Microsoft Bookings for appointments and only need queue management,
+            we offer integration on request — <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration">get in touch</a> to discuss your setup.
+          </p>
+        </div>
+      </div>
+
+      {pricing && (
+        <div className="container" style={{ marginTop: 40 }}>
+          <h2 style={{ textAlign: "center", fontSize: 20 }}>Try it before you commit</h2>
+          <p className="muted" style={{ textAlign: "center", fontSize: 13 }}>Buy exactly as much time as you need to test it properly — per location.</p>
+          <div className="wrap" style={{ justifyContent: "center" }}>
+            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.day}</strong><span className="muted" style={{ fontSize: 12 }}>Day pass</span></div>
+            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.week}</strong><span className="muted" style={{ fontSize: 12 }}>Week</span></div>
+            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.month}</strong><span className="muted" style={{ fontSize: 12 }}>Month</span></div>
+            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.year}</strong><span className="muted" style={{ fontSize: 12 }}>Year</span></div>
+          </div>
+          <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>All prices per location. Need something in between? Choose a custom period at signup.</p>
+        </div>
+      )}
+
+      <div className="container" style={{ marginTop: 40, marginBottom: 60 }}>
+        <h2 style={{ textAlign: "center", fontSize: 20 }}>Questions</h2>
+        <div className="stack" style={{ maxWidth: 640, margin: "0 auto" }}>
+          <FaqItem q="Do I have to sign a contract?" a="No. You buy access for a day, week, month, or year at a time — nothing auto-renews, and there's no minimum term." />
+          <FaqItem q="What if I only need a queue, not appointments?" a="Set any service to queue-only in a couple of clicks — or use hybrid mode to offer both walk-ins and bookings side by side." />
+          <FaqItem q="Is there a limit on staff or services?" a="No — every plan includes unlimited staff, services, and appointments. You're only charged per location." />
+          <FaqItem q="How long does setup actually take?" a="Most businesses are live in about 3 minutes — business name, a plan, your first location, and you're in. If you'd rather have it done for you, we offer paid setup assistance." />
+        </div>
+      </div>
+
+      <div className="container stack" style={{ textAlign: "center", marginBottom: 60 }}>
+        <button className="btn" onClick={onStart}>Get started</button>
+      </div>
+    </div>
+  );
+}
+
+function FaqItem({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between", cursor: "pointer" }} onClick={() => setOpen((v) => !v)}>
+        <strong style={{ fontSize: 14 }}>{q}</strong>
+        <span className="muted">{open ? "−" : "+"}</span>
+      </div>
+      {open && <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>{a}</p>}
     </div>
   );
 }
