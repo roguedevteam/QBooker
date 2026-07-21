@@ -37,13 +37,14 @@ router.get("/:tenantId/services", asyncHandler(async (req, res) => {
 router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (req, res) => {
   const { date, clockMinutes } = req.query;
 
-  if (!isWithinPaidWindow(req.tenant, date)) {
-    return res.json({ open: false, reason: "outside_plan_window" });
-  }
-
   const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id]);
   if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
   const service = svcResult.rows[0];
+  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+
+  if (!location || !isWithinPaidWindow(location, date)) {
+    return res.json({ open: false, reason: "outside_plan_window" });
+  }
 
   if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
 
@@ -78,11 +79,12 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
 
 router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, res) => {
   const { type, slotTime, hourBlock, date } = req.body;
-  if (!isWithinPaidWindow(req.tenant, date)) {
-    return res.status(409).json({ error: "We're not taking bookings today." });
-  }
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
+  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+  if (!location || !isWithinPaidWindow(location, date)) {
+    return res.status(409).json({ error: "We're not taking bookings today." });
+  }
 
   const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);
   const count = Number(countResult.rows[0].count) + 1;

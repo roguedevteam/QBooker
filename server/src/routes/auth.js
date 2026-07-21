@@ -52,8 +52,11 @@ router.post("/signup", asyncHandler(async (req, res) => {
     const locationRows = [];
     for (let i = 0; i < locationNames.length; i++) {
       const r = await client.query(
-        `insert into locations (tenant_id, name, address) values ($1,$2,$3) returning *`,
-        [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || ""]
+        `insert into locations
+          (tenant_id, name, address, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
+        [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || "",
+          planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null, pricePerLocation]
       );
       const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
       locationRows.push({ ...r.rows[0], code });

@@ -151,50 +151,6 @@ function AdminLogin({ onSignedIn, setError }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-function PlanBanner({ tenant, setError, onChanged }) {
-  const [plan, setPlan] = useState(null);
-  const [draft, setDraft] = useState("");
-
-  async function load() {
-    try { const r = await api.getPlan(); setPlan(r); setDraft(r.window?.start || ""); } catch (err) { setError(err.message); }
-  }
-  useEffect(() => { load(); }, []);
-
-  async function reschedule() {
-    try {
-      const payload = tenant.plan_id === "day" ? { activeDate: draft } : tenant.plan_id === "week" ? { weekStartDate: draft } : { startDate: draft };
-      await api.reschedulePlan(payload);
-      await load();
-      onChanged?.();
-    } catch (err) { setError(err.message); }
-  }
-
-  if (!plan || !plan.window) return null;
-  const label = tenant.plan_id === "day" ? "Day pass"
-    : tenant.plan_id === "week" ? "Week pass"
-    : tenant.plan_label;
-
-  return (
-    <div className="card row" style={{ justifyContent: "space-between", background: plan.locked ? "#FBE9E7" : "#E4F0FB", flexWrap: "wrap" }}>
-      <div style={{ fontSize: 13 }}>
-        <strong>{label}</strong>{" "}
-        {tenant.plan_id === "day"
-          ? <>covers <strong>{plan.window.start}</strong>, until midnight.</>
-          : <>covers <strong>{plan.window.start}</strong> to <strong>{plan.window.end}</strong>.</>}
-        {plan.locked && " Rescheduling is locked now that it's started — you can still set hours for the rest of today in the Locations tab."}
-      </div>
-      {!plan.locked && (
-        <div className="row">
-          <span className="muted" style={{ fontSize: 12 }}>Reschedule to:</span>
-          <input className="input" type="date" min={todayIso()} value={draft} onChange={(e) => setDraft(e.target.value)} style={{ width: 150 }} />
-          <button className="btn-outline" onClick={reschedule}>Save</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function AdminDashboard({ tenant, setError, onSignOut }) {
   const [tab, setTab] = useState("locations");
   const [locations, setLocations] = useState([]);
@@ -363,11 +319,27 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   );
 }
 
+function locationWindow(loc) {
+  if (loc.plan_id === "day") return loc.active_date ? { start: loc.active_date, end: loc.active_date } : null;
+  if (loc.plan_id === "week") return loc.week_start_date ? { start: loc.week_start_date, end: addDaysIso(loc.week_start_date, 6) } : null;
+  if (["month", "year", "custom"].includes(loc.plan_id)) return loc.start_date && loc.end_date ? { start: loc.start_date, end: loc.end_date } : null;
+  return null;
+}
+function locationStatus(loc) {
+  const w = locationWindow(loc);
+  if (!w) return "none";
+  const today = todayIso();
+  if (today > w.end) return "expired";
+  if (today < w.start) return "upcoming";
+  return "live";
+}
+
 function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
   const [buyingLocation, setBuyingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
-  const [extending, setExtending] = useState(false);
-  const [confirmingExtend, setConfirmingExtend] = useState(false);
+  const [pricing, setPricing] = useState(null);
+
+  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
   function downloadReceipt() {
     const lines = [
@@ -396,22 +368,8 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
     URL.revokeObjectURL(url);
   }
 
-  async function extendPlan() {
-    setExtending(true);
-    try {
-      await api.extendPlan();
-      setConfirmingExtend(false);
-      window.location.reload(); // simplest way to refresh the tenant + plan banner together
-    } catch (err) {
-      setError(err.message);
-      setExtending(false);
-    }
-  }
-
   return (
     <div className="stack">
-      <PlanBanner tenant={tenant} setError={setError} />
-
       <div className="card stack">
         <div style={{ fontSize: 13, fontWeight: 600 }}>What you're paying for</div>
         <div className="wrap">
@@ -435,6 +393,7 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
             <div style={{ fontSize: 13 }}>
               Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
               {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
+              {" "}It starts with the same license your other locations have, and can be extended independently afterwards.
             </div>
             <div className="row">
               <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
@@ -445,26 +404,90 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
         )}
       </div>
 
-      <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Extend your package</div>
+      <div className="stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Locations &amp; licenses</div>
         <div className="muted" style={{ fontSize: 12 }}>
-          Renew for another {tenant.plan_label?.toLowerCase()} at the same price — starts right after your current period ends
-          (or today, if it's already expired), so you never lose paid-for time.
+          Each location's license runs independently — extend one without affecting the others, with any period length.
         </div>
-        {!confirmingExtend && <div><button className="btn-outline" onClick={() => setConfirmingExtend(true)}>Extend package</button></div>}
-        {confirmingExtend && (
-          <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
-            <div style={{ fontSize: 13 }}>
-              This will renew your {tenant.plan_label?.toLowerCase()} for another full period — <strong>£{tenant.price}</strong>
-              {tenant.payment_method === "invoice" ? " added to your next invoice." : " charged to your card on file."}
-            </div>
-            <div className="row">
-              <button className="btn" disabled={extending} onClick={extendPlan}>{extending ? "Extending…" : "Confirm & extend"}</button>
-              <button className="btn-outline" onClick={() => setConfirmingExtend(false)}>Cancel</button>
-            </div>
-          </div>
-        )}
+        {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
+        {locations.map((loc) => (
+          <LocationLicenseRow key={loc.id} loc={loc} pricing={pricing} setError={setError} onChanged={onLocationsChanged} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
+  const [choosing, setChoosing] = useState(false);
+  const [chosenPlan, setChosenPlan] = useState(null);
+  const [extending, setExtending] = useState(false);
+
+  const window = locationWindow(loc);
+  const status = locationStatus(loc);
+  const statusMeta = {
+    live: { label: "Live", color: "green" },
+    expired: { label: "License expired", color: "red" },
+    upcoming: { label: `Starts ${window?.start}`, color: "amber" },
+    none: { label: "No license assigned", color: "amber" },
+  }[status];
+
+  const windowText = !loc.plan_label
+    ? "No license assigned yet"
+    : loc.plan_id === "day"
+      ? `${loc.plan_label} — ${window?.start}, until midnight`
+      : window
+        ? `${loc.plan_label} — ${window.start} to ${window.end}`
+        : loc.plan_label;
+
+  async function confirmExtend() {
+    setExtending(true);
+    try {
+      await api.extendLocationLicense(loc.id, { planId: chosenPlan });
+      setChoosing(false);
+      setChosenPlan(null);
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExtending(false);
+    }
+  }
+
+  return (
+    <div className="card stack">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div className="row">
+          <strong>{loc.name}</strong>
+          <span className={`badge badge-${statusMeta.color}`}>{statusMeta.label}</span>
+        </div>
+        {!choosing && <button className="btn-outline" onClick={() => setChoosing(true)}>Extend license</button>}
+      </div>
+      <div className="muted" style={{ fontSize: 12 }}>{windowText}</div>
+
+      {choosing && !chosenPlan && (
+        <div className="wrap">
+          {["day", "week", "month", "year"].map((p) => (
+            <button key={p} className="btn-outline" onClick={() => setChosenPlan(p)}>
+              {p[0].toUpperCase() + p.slice(1)} — £{pricing?.[p] ?? "…"}
+            </button>
+          ))}
+          <button className="btn-outline" onClick={() => setChoosing(false)}>Cancel</button>
+        </div>
+      )}
+
+      {chosenPlan && (
+        <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 13 }}>
+            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{pricing?.[chosenPlan]}</strong>, starting{" "}
+            {window && window.end >= todayIso() ? `right after the current license ends (${window.end})` : "today"}.
+          </div>
+          <div className="row">
+            <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>
+            <button className="btn-outline" onClick={() => setChosenPlan(null)}>Back</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

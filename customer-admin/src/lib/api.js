@@ -26,6 +26,7 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
 
 export const api = {
   getClock: () => request("/api/public/clock", { auth: false }),
+  publicPricing: () => request("/api/public/pricing", { auth: false }),
 
   requestAdminOtp: (email) => request("/api/auth/admin/request-otp", { method: "POST", body: { email }, auth: false }),
   verifyAdminOtp: (email, code) => request("/api/auth/admin/verify-otp", { method: "POST", body: { email, code }, auth: false }),
@@ -37,6 +38,7 @@ export const api = {
 
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name) => request("/api/tenant/locations", { method: "POST", body: { name } }),
+  extendLocationLicense: (locationId, payload) => request(`/api/tenant/locations/${locationId}/extend-license`, { method: "POST", body: payload }),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),
   deleteLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "DELETE" }),
 
