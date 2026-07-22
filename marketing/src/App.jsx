@@ -176,7 +176,6 @@ function Signup({ onDone, setError }) {
   const [weekStartDate, setWeekStartDate] = useState(todayIso());
   const [startDate, setStartDate] = useState(todayIso());
   const [locationCount, setLocationCount] = useState(1);
-  const [locationNames, setLocationNames] = useState([""]);
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [poNumber, setPoNumber] = useState("");
@@ -186,13 +185,7 @@ function Signup({ onDone, setError }) {
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
   function setCount(n) {
-    const count = Math.max(1, Math.min(20, n));
-    setLocationCount(count);
-    setLocationNames((prev) => {
-      const next = prev.slice(0, count);
-      while (next.length < count) next.push("");
-      return next;
-    });
+    setLocationCount(Math.max(1, Math.min(20, n)));
   }
 
   const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : pricing[planId];
@@ -208,7 +201,7 @@ function Signup({ onDone, setError }) {
         businessName, email, planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
         planDays, price: total, pricePerLocation: perLocation, locationCount,
         paymentMethod, invoiceEmail, invoicePO: poNumber,
-        locationNames, locationAddresses: locationNames.map(() => ""),
+        locationNames: Array.from({ length: locationCount }, () => ""), locationAddresses: Array.from({ length: locationCount }, () => ""),
       };
       if (planId === "day") payload.activeDate = activeDate;
       if (planId === "week") payload.weekStartDate = weekStartDate;
@@ -236,14 +229,7 @@ function Signup({ onDone, setError }) {
         <div className="row"><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
       )}
       {planId === "day" && (
-        <div>
-          <div className="row"><span className="muted">Which date?</span><input className="input" type="date" min={todayIso()} value={activeDate} onChange={(e) => setActiveDate(e.target.value)} /></div>
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-            {activeDate === todayIso()
-              ? "Covers today, until midnight — you can start setting up and go live right away."
-              : "Covers the date you choose, until midnight."}
-          </div>
-        </div>
+        <div className="row"><span className="muted">Which date?</span><input className="input" type="date" min={todayIso()} value={activeDate} onChange={(e) => setActiveDate(e.target.value)} /></div>
       )}
       {planId === "week" && (
         <div className="row"><span className="muted">Week starting:</span><input className="input" type="date" min={todayIso()} value={weekStartDate} onChange={(e) => setWeekStartDate(e.target.value)} /></div>
@@ -252,14 +238,12 @@ function Signup({ onDone, setError }) {
         <div className="row"><span className="muted">Access starts:</span><input className="input" type="date" min={todayIso()} value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
       )}
       <div className="row">
-        <span className="muted">Locations:</span>
+        <span className="muted">How many locations?</span>
         <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
         <span>{locationCount}</span>
         <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
       </div>
-      {locationNames.map((n, i) => (
-        <input key={i} className="input" placeholder={`Location ${i + 1} name`} value={n} onChange={(e) => setLocationNames((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))} />
-      ))}
+      <div className="muted" style={{ fontSize: 11 }}>You'll name each location and set it up once you're in — no need to do that here.</div>
       <div className="wrap">
         <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
         <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>

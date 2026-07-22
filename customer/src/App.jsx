@@ -44,6 +44,7 @@ export default function App() {
 function CustomerWhatsApp({ tenantId }) {
   const [error, setError] = useState("");
   const [businessName, setBusinessName] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [messages, setMessages] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -54,6 +55,7 @@ function CustomerWhatsApp({ tenantId }) {
     Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)])
       .then(([info, l, s]) => {
         setBusinessName(info.businessName);
+        setWebsiteUrl(info.websiteUrl || null);
         setLocations(l.locations);
         setServices(s.services);
         setMessages([{ from: "bot", text: `Welcome to ${info.businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
@@ -69,10 +71,10 @@ function CustomerWhatsApp({ tenantId }) {
     if (action === "greet") {
       user("Hi");
       if (locations.length > 1) bot("Which location?", locations.map((l) => ({ label: l.name, action: "loc", payload: l.id })));
-      else showServices(locations[0]?.id);
+      else await showServices(locations[0]?.id);
     } else if (action === "loc") {
       user(locations.find((l) => l.id === payload)?.name);
-      showServices(payload);
+      await showServices(payload);
     } else if (action === "svc") {
       const svc = services.find((s) => s.id === payload);
       user(svc.name);
@@ -100,14 +102,44 @@ function CustomerWhatsApp({ tenantId }) {
         const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime });
         bot(`You're booked ✅ ${formatTime(payload.slotTime)} today. Ticket: ${r.ticket.ticket_number}`, [{ label: "Simulate a new customer", action: "restart" }]);
       } catch (err) { bot(`Sorry — ${err.message}`); }
+    } else if (action === "website") {
+      window.open(websiteUrl, "_blank", "noopener");
     } else if (action === "restart") {
       setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
       setOptions([{ label: "Hi", action: "greet" }]);
     }
   }
-  function showServices(locId) {
+
+  // Only shows services that are actually open right now — closed/out-of-hours ones never
+  // appear as options at all, rather than letting the customer pick one only to be told no.
+  async function showServices(locId) {
     const list = services.filter((s) => s.location_id === locId);
-    bot("Which service would you like today?", list.map((s) => ({ label: s.name, action: "svc", payload: s.id })));
+    if (list.length === 0) {
+      bot("There aren't any services set up here yet.");
+      return;
+    }
+    let checks;
+    try {
+      checks = await Promise.all(list.map(async (s) => {
+        try {
+          const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
+          return { service: s, open: r.open };
+        } catch {
+          return { service: s, open: false };
+        }
+      }));
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
+    const liveServices = checks.filter((c) => c.open).map((c) => c.service);
+    if (liveServices.length === 0) {
+      const opts = [];
+      if (websiteUrl) opts.push({ label: "See opening hours", action: "website" });
+      bot("We're not open right now — nothing here is available today. Please check back during opening hours.", opts);
+      return;
+    }
+    bot("Which service would you like today?", liveServices.map((s) => ({ label: s.name, action: "svc", payload: s.id })));
   }
 
   if (notFound) {

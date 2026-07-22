@@ -151,6 +151,33 @@ function AdminLogin({ onSignedIn, setError }) {
   );
 }
 
+function WebsiteUrlSetting({ tenant, setError }) {
+  const [url, setUrl] = useState(tenant.website_url || "");
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    try {
+      await api.updateProfile({ websiteUrl: url.trim() || null });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) { setError(err.message); }
+  }
+
+  return (
+    <div className="card stack">
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Your website</div>
+      <div className="muted" style={{ fontSize: 12 }}>
+        Shown to customers on WhatsApp with a "See opening hours" link whenever nothing's currently open.
+      </div>
+      <div className="row">
+        <input className="input" placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <button className="btn-outline" onClick={save}>Save</button>
+        {saved && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
+
 function AdminDashboard({ tenant, setError, onSignOut }) {
   const [tab, setTab] = useState("locations");
   const [locations, setLocations] = useState([]);
@@ -212,6 +239,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
             </div>
             <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
           </div>
+          <WebsiteUrlSetting tenant={tenant} setError={setError} />
           <div className="card row" style={{ justifyContent: "space-between" }}>
             <span>You're on <strong>{locations.length}</strong> location{locations.length === 1 ? "" : "s"}, paid as part of your {tenant.plan_label?.toLowerCase()}.</span>
             <span className="muted" style={{ fontSize: 12 }}>Buy more locations from the Billing tab.</span>
@@ -227,7 +255,11 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                     <button className="btn-outline" onClick={() => setExpandedLocations((prev) => ({ ...prev, [loc.id]: !prev[loc.id] }))}>
                       {isOpen ? "▾" : "▸"}
                     </button>
-                    <strong>{loc.name}</strong>
+                    <input
+                      className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
+                      onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                    />
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="row">
@@ -534,35 +566,25 @@ function ServiceCalendar({ service, setError }) {
   const [draftHours, setDraftHours] = useState([]);
   const [staffCount, setStaffCount] = useState(2);
   const [bookingStaffCount, setBookingStaffCount] = useState(1);
+  const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
 
   const paintingRef = useRef(false);
   const paintModeRef = useRef(true);
-  const draftHoursRef = useRef([]);
   const staffCountRef = useRef(2);
   const bookingRef = useRef(1);
-  const selectedDateRef = useRef(selectedDate);
+  const saveTimeoutRef = useRef(null);
+  const savedIndicatorRef = useRef(null);
 
-  useEffect(() => { draftHoursRef.current = draftHours; }, [draftHours]);
   useEffect(() => { staffCountRef.current = staffCount; }, [staffCount]);
   useEffect(() => { bookingRef.current = bookingStaffCount; }, [bookingStaffCount]);
-  useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
 
+  // Only resets drag state on mouse release — the actual save no longer depends on
+  // catching this event, so a missed mouseup can no longer cause a silently-lost save.
   useEffect(() => {
-    async function onUp() {
-      if (paintingRef.current) {
-        paintingRef.current = false;
-        try {
-          await api.putDailyConfig(service.id, {
-            date: selectedDateRef.current, hours: draftHoursRef.current, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current,
-          });
-          setMonthConfigs((prev) => ({ ...prev, [selectedDateRef.current]: { date: selectedDateRef.current, hours: draftHoursRef.current, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current } }));
-        } catch (err) { setError(err.message); }
-      }
-    }
+    function onUp() { paintingRef.current = false; }
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service.id]);
+  }, []);
 
   async function loadMonth(monthStart) {
     const monthEnd = addDaysIso(addMonthsIso(monthStart, 1), -1);
@@ -593,12 +615,34 @@ function ServiceCalendar({ service, setError }) {
     return true;
   }
 
+  // Saves shortly after painting pauses — triggered directly from the toggle itself
+  // (not a separate global listener), so there's no dependency on catching the right
+  // browser event, and it behaves identically for mouse and touch.
+  function persistHours(hoursToSave, dateToSave) {
+    setSaveStatus("saving");
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current });
+        setMonthConfigs((prev) => ({ ...prev, [dateToSave]: { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current } }));
+        setSaveStatus("saved");
+        savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
+      } catch (err) {
+        setError(err.message);
+        setSaveStatus("error");
+      }
+    }, 350);
+  }
+
   function applyHour(hourMin, open) {
     setDraftHours((prev) => {
       const has = prev.includes(hourMin);
-      if (open && !has) return [...prev, hourMin].sort((a, b) => a - b);
-      if (!open && has) return prev.filter((h) => h !== hourMin);
-      return prev;
+      let next = prev;
+      if (open && !has) next = [...prev, hourMin].sort((a, b) => a - b);
+      else if (!open && has) next = prev.filter((h) => h !== hourMin);
+      if (next !== prev) persistHours(next, selectedDate);
+      return next;
     });
   }
   function beginPaint(hourMin) {
@@ -614,16 +658,24 @@ function ServiceCalendar({ service, setError }) {
   }
 
   async function saveNow(patch) {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     const hours = patch.hours ?? draftHours;
     const nextStaff = patch.staffCount ?? staffCount;
     const nextBooking = patch.bookingStaffCount ?? bookingStaffCount;
     if (patch.hours) setDraftHours(patch.hours);
     if (patch.staffCount !== undefined) setStaffCount(patch.staffCount);
     if (patch.bookingStaffCount !== undefined) setBookingStaffCount(patch.bookingStaffCount);
+    setSaveStatus("saving");
     try {
       await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking });
       setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking } }));
-    } catch (err) { setError(err.message); }
+      setSaveStatus("saved");
+      if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
+      savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
+    } catch (err) {
+      setError(err.message);
+      setSaveStatus("error");
+    }
   }
 
   // For today, quick-fill/clear only touch hours from now onward — whatever was already
@@ -737,12 +789,17 @@ function ServiceCalendar({ service, setError }) {
               {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
               {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
             </strong>
-            {!selectedIsPast && (
-              <div className="row">
-                <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                <button className="btn-outline" onClick={clearDay}>Clear day</button>
-              </div>
-            )}
+            <div className="row">
+              {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
+              {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
+              {saveStatus === "error" && <span style={{ fontSize: 12, color: "#C22A1E" }}>Save failed</span>}
+              {!selectedIsPast && (
+                <>
+                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
+                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
+                </>
+              )}
+            </div>
           </div>
           <div className="wrap" style={{ userSelect: "none" }}>
             {GRID_HOURS.map((h) => {

@@ -29,6 +29,12 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant }));
 
+router.patch("/profile", adminOnly, asyncHandler(async (req, res) => {
+  const { websiteUrl } = req.body;
+  const result = await query(`update tenants set website_url=$1 where id=$2 returning *`, [websiteUrl || null, req.tenant.id]);
+  res.json({ tenant: result.rows[0] });
+}));
+
 // --- Plan window & rescheduling ------------------------------------------------
 router.get("/plan", (req, res) => {
   const window = getPlanWindow(req.tenant);

@@ -16,7 +16,7 @@ router.use("/:tenantId", asyncHandler(loadTenant));
 
 // Only what a customer needs to see — never exposes email, access code, pricing, etc.
 router.get("/:tenantId/info", (req, res) => {
-  res.json({ businessName: req.tenant.business_name, status: req.tenant.status });
+  res.json({ businessName: req.tenant.business_name, status: req.tenant.status, websiteUrl: req.tenant.website_url || null });
 });
 
 router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
