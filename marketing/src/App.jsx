@@ -5,11 +5,11 @@ import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_APP_URL || "http://localhost:5173";
 
 const PLAN_META = [
-  { id: "day", label: "Day pass", days: 1 },
-  { id: "week", label: "Week", days: 7 },
-  { id: "month", label: "Month", days: 30 },
-  { id: "year", label: "Year", days: 365 },
-  { id: "custom", label: "Custom", days: null },
+  { id: "day", label: "Day pass", days: 1, desc: "One day of access, until midnight." },
+  { id: "week", label: "Week", days: 7, desc: "Seven days of access." },
+  { id: "month", label: "Month", days: 30, desc: "30 days of access." },
+  { id: "year", label: "Year", days: 365, desc: "365 days of access — best value for ongoing use." },
+  { id: "custom", label: "Custom", days: null, desc: "Choose exactly how many days you need." },
 ];
 
 export default function App() {
@@ -209,9 +209,6 @@ function Signup({ onDone, setError }) {
   const [email, setEmail] = useState("");
   const [planId, setPlanId] = useState("month");
   const [customDays, setCustomDays] = useState(14);
-  const [activeDate, setActiveDate] = useState(todayIso());
-  const [weekStartDate, setWeekStartDate] = useState(todayIso());
-  const [startDate, setStartDate] = useState(todayIso());
   const [locationCount, setLocationCount] = useState(1);
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
@@ -225,6 +222,7 @@ function Signup({ onDone, setError }) {
     setLocationCount(Math.max(1, Math.min(20, n)));
   }
 
+  const selectedPlan = PLAN_META.find((p) => p.id === planId);
   const salePrice = pricing.sale?.active && planId !== "custom" ? pricing.sale[planId] : null;
   const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : (salePrice ?? pricing[planId]);
   const total = (perLocation * locationCount).toFixed(2);
@@ -241,9 +239,6 @@ function Signup({ onDone, setError }) {
         paymentMethod, invoiceEmail, invoicePO: poNumber,
         locationNames: Array.from({ length: locationCount }, () => ""), locationAddresses: Array.from({ length: locationCount }, () => ""),
       };
-      if (planId === "day") payload.activeDate = activeDate;
-      if (planId === "week") payload.weekStartDate = weekStartDate;
-      if (["month", "year", "custom"].includes(planId)) payload.startDate = startDate;
       const result = await api.signup(payload);
       onDone(result);
     } catch (err) {
@@ -256,37 +251,51 @@ function Signup({ onDone, setError }) {
   return (
     <div className="narrow stack">
       <h2>Set up your account</h2>
-      <input className="input" placeholder="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
-      <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <div className="wrap">
-        {PLAN_META.map((p) => (
-          <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>
-            {p.label}{pricing.sale?.active && p.id !== "custom" && pricing.sale[p.id] != null ? " 🏷" : ""}
-          </button>
-        ))}
+
+      <div>
+        <input className="input" placeholder="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
       </div>
-      {planId === "custom" && (
-        <div className="row"><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
-      )}
-      {planId === "day" && (
-        <div className="row"><span className="muted">Which date?</span><input className="input" type="date" min={todayIso()} value={activeDate} onChange={(e) => setActiveDate(e.target.value)} /></div>
-      )}
-      {planId === "week" && (
-        <div className="row"><span className="muted">Week starting:</span><input className="input" type="date" min={todayIso()} value={weekStartDate} onChange={(e) => setWeekStartDate(e.target.value)} /></div>
-      )}
-      {["month", "year", "custom"].includes(planId) && (
-        <div className="row"><span className="muted">Access starts:</span><input className="input" type="date" min={todayIso()} value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
-      )}
-      <div className="row">
-        <span className="muted">How many locations?</span>
-        <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
-        <span>{locationCount}</span>
-        <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
+
+      <div>
+        <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.</div>
       </div>
-      <div className="muted" style={{ fontSize: 11 }}>You'll name each location and set it up once you're in — no need to do that here.</div>
-      <div className="wrap">
-        <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
-        <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
+
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>What sort of access do you need?</div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          You're not choosing a start date — access begins automatically the moment you set opening hours for
+          your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
+        </div>
+        <div className="wrap">
+          {PLAN_META.map((p) => (
+            <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>{p.label}</button>
+          ))}
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{selectedPlan?.desc}</div>
+        {planId === "custom" && (
+          <div className="row" style={{ marginTop: 8 }}><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
+        )}
+      </div>
+
+      <div>
+        <div className="row">
+          <span className="muted">How many locations?</span>
+          <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
+          <span>{locationCount}</span>
+          <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
+        </div>
+        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+          You'll name and set up each one once you're in. More locations can always be added later, whenever you need them.
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>How would you like to pay?</div>
+        <div className="wrap">
+          <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
+          <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
+        </div>
       </div>
       {paymentMethod === "invoice" && (
         <div className="stack">
