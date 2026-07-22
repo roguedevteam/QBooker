@@ -16,12 +16,12 @@ router.use("/:tenantId", asyncHandler(loadTenant));
 
 // Only what a customer needs to see — never exposes email, access code, pricing, etc.
 router.get("/:tenantId/info", (req, res) => {
-  res.json({ businessName: req.tenant.business_name, status: req.tenant.status, websiteUrl: req.tenant.website_url || null });
+  res.json({ businessName: req.tenant.business_name, status: req.tenant.status });
 });
 
 router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
-    `select l.id, l.name, lc.code from locations l
+    `select l.id, l.name, l.website_url, lc.code from locations l
      left join location_codes lc on lc.location_id = l.id
      where l.tenant_id=$1 order by l.created_at`,
     [req.tenant.id]
@@ -75,6 +75,22 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   const bookableSlots = getUpcomingBookableSlots(cfg, bookedCountByTime, Number(clockMinutes), 3);
 
   res.json({ open: true, walkIn, bookableSlots });
+}));
+
+// Polled by the customer app after joining/booking, since it's a fully separate app from
+// the staff kiosk with no other way to learn it's been called forward.
+router.get("/:tenantId/tickets/:ticketId/status", asyncHandler(async (req, res) => {
+  const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  let message = null;
+  if (ticket.status === "seen") {
+    const m = (await query(
+      `select body from simulated_messages where tenant_id=$1 and to_reference=$2 and channel='whatsapp' order by created_at desc limit 1`,
+      [req.tenant.id, ticket.ticket_number]
+    )).rows[0];
+    message = m?.body || null;
+  }
+  res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message });
 }));
 
 router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, res) => {

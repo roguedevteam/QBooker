@@ -109,15 +109,42 @@ function Landing({ onStart }) {
         </div>
       </div>
 
+      <div className="container" style={{ marginTop: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+          <div className="card stack" style={{ gap: 4 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>🇬🇧 UK-hosted</div>
+            <div className="muted" style={{ fontSize: 12 }}>Your data stays in the UK, hosted with providers built for reliability.</div>
+          </div>
+          <div className="card stack" style={{ gap: 4 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>🔒 Secure by design</div>
+            <div className="muted" style={{ fontSize: 12 }}>Every sign-in is one-time-code based — no passwords to leak or reuse.</div>
+          </div>
+          <div className="card stack" style={{ gap: 4 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>♿ Accessible</div>
+            <div className="muted" style={{ fontSize: 12 }}>Built with clear contrast, large touch targets, and simple navigation throughout.</div>
+          </div>
+        </div>
+      </div>
+
       {pricing && (
         <div className="container" style={{ marginTop: 40 }}>
           <h2 style={{ textAlign: "center", fontSize: 20 }}>Try it before you commit</h2>
           <p className="muted" style={{ textAlign: "center", fontSize: 13 }}>Buy exactly as much time as you need to test it properly — per location.</p>
+          {pricing.sale?.active && (
+            <p style={{ textAlign: "center", fontSize: 13, color: "#00522A", fontWeight: 600 }}>Sale on selected plans — see below</p>
+          )}
           <div className="wrap" style={{ justifyContent: "center" }}>
-            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.day}</strong><span className="muted" style={{ fontSize: 12 }}>Day pass</span></div>
-            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.week}</strong><span className="muted" style={{ fontSize: 12 }}>Week</span></div>
-            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.month}</strong><span className="muted" style={{ fontSize: 12 }}>Month</span></div>
-            <div className="card stack" style={{ minWidth: 140, textAlign: "center" }}><strong>£{pricing.year}</strong><span className="muted" style={{ fontSize: 12 }}>Year</span></div>
+            {["day", "week", "month", "year"].map((k) => {
+              const label = { day: "Day pass", week: "Week", month: "Month", year: "Year" }[k];
+              const onSale = pricing.sale?.active && pricing.sale[k] != null;
+              return (
+                <div key={k} className="card stack" style={{ minWidth: 140, textAlign: "center" }}>
+                  {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>£{pricing[k]}</span>}
+                  <strong style={{ color: onSale ? "#00522A" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
+                  <span className="muted" style={{ fontSize: 12 }}>{label}</span>
+                </div>
+              );
+            })}
           </div>
           <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>All prices per location. Need something in between? Choose a custom period at signup.</p>
         </div>
@@ -179,7 +206,7 @@ function Signup({ onDone, setError }) {
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [poNumber, setPoNumber] = useState("");
-  const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 });
+  const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
@@ -188,7 +215,8 @@ function Signup({ onDone, setError }) {
     setLocationCount(Math.max(1, Math.min(20, n)));
   }
 
-  const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : pricing[planId];
+  const salePrice = pricing.sale?.active && planId !== "custom" ? pricing.sale[planId] : null;
+  const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : (salePrice ?? pricing[planId]);
   const total = (perLocation * locationCount).toFixed(2);
 
   async function submit() {
@@ -222,7 +250,9 @@ function Signup({ onDone, setError }) {
       <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <div className="wrap">
         {PLAN_META.map((p) => (
-          <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>{p.label}</button>
+          <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>
+            {p.label}{pricing.sale?.active && p.id !== "custom" && pricing.sale[p.id] != null ? " 🏷" : ""}
+          </button>
         ))}
       </div>
       {planId === "custom" && (
@@ -255,10 +285,14 @@ function Signup({ onDone, setError }) {
             <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
             <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required for invoice payment — your internal purchase order or reference number.</div>
           </div>
+          <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
+            With invoice payment, your account can be fully configured straight away, but staff kiosk and customer
+            WhatsApp won't be enabled until payment is received.
+          </div>
         </div>
       )}
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span>Total: <strong>£{total}</strong></span>
+        <span>Total: <strong>£{total}</strong>{salePrice != null && <span className="muted" style={{ fontSize: 12 }}> (sale price applied)</span>}</span>
         <button className="btn" disabled={submitting || !businessName || !email || (paymentMethod === "invoice" && !poNumber.trim())} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
       </div>
     </div>

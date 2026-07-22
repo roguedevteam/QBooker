@@ -66,6 +66,12 @@ router.post("/signup", asyncHandler(async (req, res) => {
       );
       const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
       locationRows.push({ ...r.rows[0], code });
+      await client.query(
+        `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [r.rows[0].id, tenant.id, planId, planLabel, planDays,
+          activeDate || weekStartDate || startDate || null, activeDate || endDate || null, pricePerLocation]
+      );
     }
 
     await client.query(

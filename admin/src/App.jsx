@@ -50,7 +50,7 @@ function Login({ onSignedIn, setError, error }) {
 function Dashboard({ setError, error, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [tenants, setTenants] = useState([]);
-  const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 });
+  const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [overview, setOverview] = useState(null);
 
   async function refresh() {
@@ -144,21 +144,49 @@ function Dashboard({ setError, error, onSignOut }) {
       )}
 
       {tab === "pricing" && (
-        <div className="card wrap">
-          {["day", "week", "month", "year"].map((k) => (
-            <label key={k} className="stack" style={{ gap: 4 }}>
-              <span className="muted">{PLAN_LABELS[k]} (per location)</span>
-              <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
-                onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
+        <div className="stack">
+          <div className="card wrap">
+            {["day", "week", "month", "year"].map((k) => (
+              <label key={k} className="stack" style={{ gap: 4 }}>
+                <span className="muted">{PLAN_LABELS[k]} (per location)</span>
+                <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
+                  onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
+              </label>
+            ))}
+            <label className="stack" style={{ gap: 4 }}>
+              <span className="muted">Custom (per location/day)</span>
+              <input className="input" style={{ width: 100 }} type="number" value={pricing.customDailyRate}
+                onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
             </label>
-          ))}
-          <label className="stack" style={{ gap: 4 }}>
-            <span className="muted">Custom (per location/day)</span>
-            <input className="input" style={{ width: 100 }} type="number" value={pricing.customDailyRate}
-              onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
-          </label>
-          <button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button>
-          <div className="muted" style={{ fontSize: 11, width: "100%" }}>Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
+            <button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button>
+            <div className="muted" style={{ fontSize: 11, width: "100%" }}>Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
+          </div>
+
+          <div className="card stack">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Sale</div>
+              <label className="row" style={{ gap: 6 }}>
+                <input type="checkbox" checked={pricing.sale?.active || false}
+                  onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, active: e.target.checked } }))} />
+                <span className="muted" style={{ fontSize: 12 }}>Sale active</span>
+              </label>
+            </div>
+            <div className="muted" style={{ fontSize: 11 }}>
+              Manual only — no scheduling or automatic expiry. Leave a plan's discount price blank to leave it at full price.
+              Shown on the marketing page (and charged) whenever "Sale active" is on.
+            </div>
+            <div className="wrap">
+              {["day", "week", "month", "year"].map((k) => (
+                <label key={k} className="stack" style={{ gap: 4 }}>
+                  <span className="muted">{PLAN_LABELS[k]} sale price</span>
+                  <input className="input" style={{ width: 100 }} type="number" placeholder="—"
+                    value={pricing.sale?.[k] ?? ""}
+                    onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, [k]: e.target.value === "" ? null : Number(e.target.value) } }))} />
+                </label>
+              ))}
+            </div>
+            <div><button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save sale</button></div>
+          </div>
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "./lib/api.js";
 import { todayIso, refreshClock } from "./lib/clock.js";
 
@@ -44,18 +44,18 @@ export default function App() {
 function CustomerWhatsApp({ tenantId }) {
   const [error, setError] = useState("");
   const [businessName, setBusinessName] = useState("");
-  const [websiteUrl, setWebsiteUrl] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [messages, setMessages] = useState([]);
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [options, setOptions] = useState([]);
+  const [watchedTicket, setWatchedTicket] = useState(null); // { id, ticketNumber }
+  const lastStatusRef = useRef(null);
 
   useEffect(() => {
     Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)])
       .then(([info, l, s]) => {
         setBusinessName(info.businessName);
-        setWebsiteUrl(info.websiteUrl || null);
         setLocations(l.locations);
         setServices(s.services);
         setMessages([{ from: "bot", text: `Welcome to ${info.businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
@@ -63,6 +63,25 @@ function CustomerWhatsApp({ tenantId }) {
       })
       .catch(() => setNotFound(true));
   }, [tenantId]);
+
+  // Polls for "it's your turn" — the staff kiosk and this app are fully separate apps with
+  // no other shared channel, so this is how a customer actually finds out they've been called.
+  useEffect(() => {
+    if (!watchedTicket) return;
+    const id = setInterval(async () => {
+      try {
+        const r = await api.getTicketStatus(tenantId, watchedTicket.id);
+        if (r.status === "seen" && lastStatusRef.current !== "seen") {
+          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`);
+        }
+        lastStatusRef.current = r.status;
+      } catch {
+        // ignore transient errors, try again next tick
+      }
+    }, 6000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedTicket, tenantId]);
 
   function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text }]); setOptions(opts || []); }
   function user(text) { setMessages((m) => [...m, { from: "user", text }]); }
@@ -94,17 +113,23 @@ function CustomerWhatsApp({ tenantId }) {
       const svc = services.find((s) => s.id === payload);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null });
-        bot(`You're checked in ✅ Your ticket number: ${r.ticket.ticket_number}`, [{ label: "Simulate a new customer", action: "restart" }]);
+        bot(`You're checked in ✅ Your ticket number: ${r.ticket.ticket_number}\nWe'll message you here when it's your turn.`, [{ label: "Simulate a new customer", action: "restart" }]);
+        lastStatusRef.current = "waiting";
+        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number });
       } catch (err) { bot(`Sorry — ${err.message}`); }
     } else if (action === "book") {
       const svc = services.find((s) => s.id === payload.serviceId);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime });
-        bot(`You're booked ✅ ${formatTime(payload.slotTime)} today. Ticket: ${r.ticket.ticket_number}`, [{ label: "Simulate a new customer", action: "restart" }]);
+        bot(`You're booked ✅ ${formatTime(payload.slotTime)} today. Ticket: ${r.ticket.ticket_number}\nWe'll message you here when it's your turn.`, [{ label: "Simulate a new customer", action: "restart" }]);
+        lastStatusRef.current = "booked";
+        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number });
       } catch (err) { bot(`Sorry — ${err.message}`); }
     } else if (action === "website") {
-      window.open(websiteUrl, "_blank", "noopener");
+      window.open(payload, "_blank", "noopener");
     } else if (action === "restart") {
+      setWatchedTicket(null);
+      lastStatusRef.current = null;
       setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
       setOptions([{ label: "Hi", action: "greet" }]);
     }
@@ -114,6 +139,7 @@ function CustomerWhatsApp({ tenantId }) {
   // appear as options at all, rather than letting the customer pick one only to be told no.
   async function showServices(locId) {
     const list = services.filter((s) => s.location_id === locId);
+    const location = locations.find((l) => l.id === locId);
     if (list.length === 0) {
       bot("There aren't any services set up here yet.");
       return;
@@ -142,7 +168,7 @@ function CustomerWhatsApp({ tenantId }) {
         else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
       }
       const opts = [];
-      if (websiteUrl) opts.push({ label: "See opening hours", action: "website" });
+      if (location?.website_url) opts.push({ label: "See opening hours", action: "website", payload: location.website_url });
       bot(text, opts);
       return;
     }
@@ -161,7 +187,7 @@ function CustomerWhatsApp({ tenantId }) {
       {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
       <div className="narrow stack">
         <div className="card stack" style={{ minHeight: 300 }}>
-          {messages.map((m, i) => <div key={i} style={{ textAlign: m.from === "user" ? "right" : "left" }}>{m.text}</div>)}
+          {messages.map((m, i) => <div key={i} style={{ textAlign: m.from === "user" ? "right" : "left", whiteSpace: "pre-line" }}>{m.text}</div>)}
           <div className="wrap">
             {options.map((o, i) => <button key={i} className="btn-outline" onClick={() => handle(o.action, o.payload)}>{o.label}</button>)}
           </div>

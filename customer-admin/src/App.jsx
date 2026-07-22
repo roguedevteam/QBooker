@@ -151,29 +151,34 @@ function AdminLogin({ onSignedIn, setError }) {
   );
 }
 
-function WebsiteUrlSetting({ tenant, setError }) {
-  const [url, setUrl] = useState(tenant.website_url || "");
+function PendingPaymentBanner({ tenant }) {
+  if (tenant.status !== "pending") return null;
+  return (
+    <div className="card" style={{ background: "#FBE9E7", borderColor: "#C22A1E", color: "#C22A1E", fontSize: 13, fontWeight: 500 }}>
+      Payment pending — your account can be configured now, but staff kiosk and customer WhatsApp won't work until payment is received.
+    </div>
+  );
+}
+
+function LocationWebsiteField({ loc, setError, onChanged }) {
+  const [url, setUrl] = useState(loc.website_url || "");
   const [saved, setSaved] = useState(false);
 
   async function save() {
     try {
-      await api.updateProfile({ websiteUrl: url.trim() || null });
+      await api.updateLocation(loc.id, { websiteUrl: url.trim() || null });
       setSaved(true);
+      onChanged();
       setTimeout(() => setSaved(false), 1500);
     } catch (err) { setError(err.message); }
   }
 
   return (
-    <div className="card stack">
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Your website</div>
-      <div className="muted" style={{ fontSize: 12 }}>
-        Shown to customers on WhatsApp with a "See opening hours" link whenever nothing's currently open.
-      </div>
-      <div className="row">
-        <input className="input" placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
-        <button className="btn-outline" onClick={save}>Save</button>
-        {saved && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
-      </div>
+    <div className="row" style={{ flexWrap: "wrap" }}>
+      <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
+      <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
+      <button className="btn-outline" onClick={save}>Save</button>
+      {saved && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
     </div>
   );
 }
@@ -227,6 +232,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
       {tab === "locations" && (
         <div className="stack">
+          <PendingPaymentBanner tenant={tenant} />
           <div className="card stack" style={{ background: "#E4F0FB" }}>
             <div style={{ fontSize: 13 }}>Staff access code: <strong style={{ letterSpacing: 1 }}>{tenant.access_code}</strong></div>
             <div className="muted" style={{ fontSize: 12 }}>
@@ -238,11 +244,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
               <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
             </div>
             <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
-          </div>
-          <WebsiteUrlSetting tenant={tenant} setError={setError} />
-          <div className="card row" style={{ justifyContent: "space-between" }}>
-            <span>You're on <strong>{locations.length}</strong> location{locations.length === 1 ? "" : "s"}, paid as part of your {tenant.plan_label?.toLowerCase()}.</span>
-            <span className="muted" style={{ fontSize: 12 }}>Buy more locations from the Billing tab.</span>
           </div>
           {locations.map((loc) => {
             const locServices = services.filter((s) => s.location_id === loc.id);
@@ -277,6 +278,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                     </button>
                   </div>
                 </div>
+
+                <LocationWebsiteField loc={loc} setError={setError} onChanged={refreshCore} />
 
                 {addingHere && (
                   <ServiceWizard
@@ -373,49 +376,9 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
-  function downloadReceipt() {
-    const lines = [
-      "QBOOKER — RECEIPT",
-      "==================",
-      "",
-      `Business: ${tenant.business_name}`,
-      `Account reference: ${tenant.id}`,
-      `Plan: ${tenant.plan_label}`,
-      `Locations: ${tenant.location_count}`,
-      `Price per location: £${tenant.price_per_location}`,
-      `Total: £${tenant.price}`,
-      `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
-      tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
-      tenant.invoice_email ? `Billing email: ${tenant.invoice_email}` : null,
-      `Status: ${tenant.status === "active" ? "Active" : "Payment pending"}`,
-      "",
-      `Issued: ${new Date().toLocaleDateString()}`,
-    ].filter(Boolean);
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `qbooker-receipt-${tenant.id.slice(0, 8)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
     <div className="stack">
-      <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>What you're paying for</div>
-        <div className="wrap">
-          <div><span className="muted">Plan:</span> {tenant.plan_label}</div>
-          <div><span className="muted">Locations:</span> {tenant.location_count}</div>
-          <div><span className="muted">Price per location:</span> £{tenant.price_per_location}</div>
-          <div><span className="muted">Total:</span> £{tenant.price}</div>
-          <div><span className="muted">Payment method:</span> {tenant.payment_method === "invoice" ? "Invoice" : "Card"}</div>
-          {tenant.invoice_po && <div><span className="muted">PO number:</span> {tenant.invoice_po}</div>}
-        </div>
-        <div className="row">
-          <button className="btn-outline" onClick={downloadReceipt}>Download receipt</button>
-        </div>
-      </div>
+      <PendingPaymentBanner tenant={tenant} />
 
       <div className="card stack">
         <div style={{ fontSize: 13, fontWeight: 600 }}>Buy another location</div>
@@ -439,21 +402,24 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
       <div className="stack">
         <div style={{ fontSize: 13, fontWeight: 600 }}>Locations &amp; licenses</div>
         <div className="muted" style={{ fontSize: 12 }}>
-          Each location's license runs independently — extend one without affecting the others, with any period length.
+          Each location's license runs independently — extend one without affecting the others. Expand a location to see
+          everything bought for it and download a receipt.
         </div>
         {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
         {locations.map((loc) => (
-          <LocationLicenseRow key={loc.id} loc={loc} pricing={pricing} setError={setError} onChanged={onLocationsChanged} />
+          <LocationLicenseRow key={loc.id} loc={loc} tenant={tenant} pricing={pricing} setError={setError} onChanged={onLocationsChanged} />
         ))}
       </div>
     </div>
   );
 }
 
-function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
+function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
   const [choosing, setChoosing] = useState(false);
   const [chosenPlan, setChosenPlan] = useState(null);
   const [extending, setExtending] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState(null);
 
   const licenseWindow = locationWindow(loc);
   const status = locationStatus(loc);
@@ -472,12 +438,61 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
         ? `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`
         : loc.plan_label;
 
+  const sale = pricing?.sale?.active ? pricing.sale : null;
+  function planPrice(p) {
+    if (sale && sale[p] != null) return sale[p];
+    return pricing?.[p];
+  }
+
+  async function loadHistory() {
+    try {
+      const r = await api.getLicenseHistory(loc.id);
+      setHistory(r.purchases);
+    } catch (err) { setError(err.message); }
+  }
+  function toggleExpand() {
+    setExpanded((v) => {
+      if (!v && !history) loadHistory();
+      return !v;
+    });
+  }
+
+  function downloadReceipt() {
+    const lines = [
+      "QBOOKER — RECEIPT",
+      "==================",
+      "",
+      `Business: ${tenant.business_name}`,
+      `Location: ${loc.name}`,
+      `Location reference: ${loc.id}`,
+      "",
+      "Licenses purchased for this location:",
+      ...(history || []).map((p) =>
+        `  • ${new Date(p.purchased_at).toLocaleDateString()} — ${p.plan_label} — £${p.price}${p.start_date ? ` (${p.start_date}${p.end_date && p.end_date !== p.start_date ? ` to ${p.end_date}` : ""})` : ""}`
+      ),
+      "",
+      `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
+      tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
+      `Account status: ${tenant.status === "active" ? "Active" : "Payment pending"}`,
+      "",
+      `Issued: ${new Date().toLocaleDateString()}`,
+    ].filter(Boolean);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qbooker-receipt-${loc.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function confirmExtend() {
     setExtending(true);
     try {
       await api.extendLocationLicense(loc.id, { planId: chosenPlan });
       setChoosing(false);
       setChosenPlan(null);
+      setHistory(null);
       onChanged();
     } catch (err) {
       setError(err.message);
@@ -490,6 +505,7 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
     <div className="card stack">
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <div className="row">
+          <button className="btn-outline" onClick={toggleExpand} title={expanded ? "Collapse" : "Expand"}>{expanded ? "▾" : "▸"}</button>
           <strong>{loc.name}</strong>
           <span className={`badge badge-${statusMeta.color}`}>{statusMeta.label}</span>
         </div>
@@ -501,7 +517,9 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
         <div className="wrap">
           {["day", "week", "month", "year"].map((p) => (
             <button key={p} className="btn-outline" onClick={() => setChosenPlan(p)}>
-              {p[0].toUpperCase() + p.slice(1)} — £{pricing?.[p] ?? "…"}
+              {p[0].toUpperCase() + p.slice(1)} — {sale && sale[p] != null && (
+                <span className="muted" style={{ textDecoration: "line-through" }}>£{pricing?.[p]}</span>
+              )} £{planPrice(p) ?? "…"}
             </button>
           ))}
           <button className="btn-outline" onClick={() => setChoosing(false)}>Cancel</button>
@@ -511,13 +529,39 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
       {chosenPlan && (
         <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
           <div style={{ fontSize: 13 }}>
-            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{pricing?.[chosenPlan]}</strong>, starting{" "}
+            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>, starting{" "}
             {licenseWindow && licenseWindow.end >= todayIso() ? `right after the current license ends (${licenseWindow.end})` : "today"}.
           </div>
           <div className="row">
             <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>
             <button className="btn-outline" onClick={() => setChosenPlan(null)}>Back</button>
           </div>
+        </div>
+      )}
+
+      {expanded && (
+        <div className="stack" style={{ borderTop: "1px solid #DCE4EA", paddingTop: 10 }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
+            <button className="btn-outline" onClick={downloadReceipt} disabled={!history}>Download receipt</button>
+          </div>
+          {!history && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
+          {history && history.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Nothing recorded yet.</div>}
+          {history && history.length > 0 && (
+            <table>
+              <thead><tr><th>Date bought</th><th>Plan</th><th>Covers</th><th>Price</th></tr></thead>
+              <tbody>
+                {history.map((p) => (
+                  <tr key={p.id}>
+                    <td>{new Date(p.purchased_at).toLocaleDateString()}</td>
+                    <td>{p.plan_label}</td>
+                    <td>{p.start_date ? (p.end_date && p.end_date !== p.start_date ? `${p.start_date} – ${p.end_date}` : p.start_date) : "—"}</td>
+                    <td>£{p.price}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

@@ -29,12 +29,6 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant }));
 
-router.patch("/profile", adminOnly, asyncHandler(async (req, res) => {
-  const { websiteUrl } = req.body;
-  const result = await query(`update tenants set website_url=$1 where id=$2 returning *`, [websiteUrl || null, req.tenant.id]);
-  res.json({ tenant: result.rows[0] });
-}));
-
 // --- Plan window & rescheduling ------------------------------------------------
 router.get("/plan", (req, res) => {
   const window = getPlanWindow(req.tenant);
@@ -125,6 +119,12 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   );
   const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
+  await query(
+    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [loc.rows[0].id, t.id, t.plan_id, t.plan_label, t.plan_days,
+      t.active_date || t.week_start_date || t.start_date || null, t.active_date || t.end_date || null, t.price_per_location]
+  );
   const chargeNote = req.tenant.payment_method === "invoice"
     ? `£${req.tenant.price_per_location} added to next invoice`
     : `£${req.tenant.price_per_location} charged to card on file`;
@@ -134,12 +134,22 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, address } = req.body;
+  const { name, address, websiteUrl } = req.body;
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address) where id=$3 and tenant_id=$4 returning *`,
-    [name, address, req.params.id, req.tenant.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), website_url=coalesce($3,website_url) where id=$4 and tenant_id=$5 returning *`,
+    [name, address, websiteUrl, req.params.id, req.tenant.id]
   );
   res.json({ location: result.rows[0] });
+}));
+
+router.get("/locations/:id/license-history", asyncHandler(async (req, res) => {
+  const loc = (await query(`select * from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!loc) return res.status(404).json({ error: "Location not found." });
+  const purchases = await query(
+    `select * from location_license_purchases where location_id=$1 order by purchased_at desc`,
+    [req.params.id]
+  );
+  res.json({ location: loc, purchases: purchases.rows });
 }));
 
 router.delete("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
@@ -163,6 +173,7 @@ router.post("/locations/:id/extend-license", adminOnly, asyncHandler(async (req,
 
   const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
   const pricing = pricingRow?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
+  const sale = pricing.sale?.active ? pricing.sale : null;
 
   let planLabel, planDays, price;
   if (planId === "custom") {
@@ -172,7 +183,7 @@ router.post("/locations/:id/extend-license", adminOnly, asyncHandler(async (req,
   } else if (PLAN_META[planId]) {
     planDays = PLAN_META[planId].days;
     planLabel = PLAN_META[planId].label;
-    price = pricing[planId];
+    price = sale && sale[planId] != null ? sale[planId] : pricing[planId];
   } else {
     return res.status(400).json({ error: "Unknown plan type." });
   }
@@ -198,6 +209,11 @@ router.post("/locations/:id/extend-license", adminOnly, asyncHandler(async (req,
      where id=$9 returning *`,
     [patch.plan_id, patch.plan_label, patch.plan_days, patch.license_price,
       patch.active_date, patch.week_start_date, patch.start_date, patch.end_date, loc.id]
+  );
+  await query(
+    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [loc.id, req.tenant.id, planId, planLabel, planDays, newStart, patch.active_date || patch.end_date, price]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License extended for "${loc.name}" — ${planLabel}, £${price} charged`]);

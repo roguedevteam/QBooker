@@ -32,7 +32,6 @@ export const api = {
   verifyAdminOtp: (email, code) => request("/api/auth/admin/verify-otp", { method: "POST", body: { email, code }, auth: false }),
 
   me: () => request("/api/tenant/me"),
-  updateProfile: (payload) => request("/api/tenant/profile", { method: "PATCH", body: payload }),
   getPlan: () => request("/api/tenant/plan"),
   reschedulePlan: (payload) => request("/api/tenant/plan", { method: "PATCH", body: payload }),
   extendPlan: () => request("/api/tenant/plan/extend", { method: "POST" }),
@@ -40,6 +39,7 @@ export const api = {
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name) => request("/api/tenant/locations", { method: "POST", body: { name } }),
   extendLocationLicense: (locationId, payload) => request(`/api/tenant/locations/${locationId}/extend-license`, { method: "POST", body: payload }),
+  getLicenseHistory: (locationId) => request(`/api/tenant/locations/${locationId}/license-history`),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),
   deleteLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "DELETE" }),
 

@@ -37,12 +37,12 @@ router.delete("/tenants/:id", asyncHandler(async (req, res) => {
 
 router.get("/pricing", asyncHandler(async (req, res) => {
   const result = await query(`select value from platform_settings where key='plan_prices'`);
-  res.json({ pricing: result.rows[0]?.value || {} });
+  res.json({ pricing: result.rows[0]?.value || { sale: { active: false } } });
 }));
 
 router.put("/pricing", asyncHandler(async (req, res) => {
-  const { day, week, month, year, customDailyRate } = req.body;
-  const value = { day, week, month, year, customDailyRate };
+  const { day, week, month, year, customDailyRate, sale } = req.body;
+  const value = { day, week, month, year, customDailyRate, sale: sale || { active: false } };
   await query(
     `insert into platform_settings (key, value) values ('plan_prices', $1)
      on conflict (key) do update set value = excluded.value`,
@@ -88,7 +88,7 @@ router.delete("/clock", (req, res) => {
 export const publicRouter = Router();
 publicRouter.get("/pricing", asyncHandler(async (req, res) => {
   const result = await query(`select value from platform_settings where key='plan_prices'`);
-  res.json({ pricing: result.rows[0]?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 } });
+  res.json({ pricing: result.rows[0]?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } } });
 }));
 // Public read-only clock, so the marketing/web/admin apps can all agree on "today"
 // (which may be a simulated date set from System Admin for testing).
