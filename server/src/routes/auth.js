@@ -57,12 +57,13 @@ router.post("/signup", asyncHandler(async (req, res) => {
 
     const locationRows = [];
     for (let i = 0; i < locationNames.length; i++) {
+      const staffAccessCode = genAccessCode();
       const r = await client.query(
         `insert into locations
-          (tenant_id, name, address, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
+          (tenant_id, name, address, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price, staff_access_code)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
         [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || "",
-          planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null, pricePerLocation]
+          planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null, pricePerLocation, staffAccessCode]
       );
       const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
       locationRows.push({ ...r.rows[0], code });
@@ -131,20 +132,22 @@ router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
 // --- Staff OTP login ---------------------------------------------------------
 router.post("/staff/request-otp", asyncHandler(async (req, res) => {
   const { accessCode } = req.body;
-  const result = await query(`select * from tenants where access_code = $1`, [accessCode]);
-  if (result.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any account." });
-  const tenant = result.rows[0];
+  const locResult = await query(`select * from locations where staff_access_code = $1`, [accessCode]);
+  if (locResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any location." });
+  const location = locResult.rows[0];
   const code = genOtp();
-  await query(`insert into staff_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [tenant.id, code]);
+  await query(`insert into staff_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [location.tenant_id, code]);
   const body = `Your QBooker staff sign-in code is ${code}.`;
-  await logSimulatedMessage({ tenantId: tenant.id, channel: "email", toReference: "staff", body });
+  await logSimulatedMessage({ tenantId: location.tenant_id, channel: "email", toReference: "staff", body });
   res.json({ demoOtp: code });
 }));
 
 router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   const { accessCode, code } = req.body;
-  const tenantResult = await query(`select * from tenants where access_code = $1`, [accessCode]);
-  if (tenantResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any account." });
+  const locResult = await query(`select * from locations where staff_access_code = $1`, [accessCode]);
+  if (locResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any location." });
+  const location = locResult.rows[0];
+  const tenantResult = await query(`select * from tenants where id = $1`, [location.tenant_id]);
   const tenant = tenantResult.rows[0];
   const otpResult = await query(
     `select * from staff_otp where tenant_id=$1 and code=$2 and consumed=false and expires_at > now() order by created_at desc limit 1`,
@@ -152,8 +155,8 @@ router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   );
   if (otpResult.rows.length === 0) return res.status(401).json({ error: "Incorrect or expired code." });
   await query(`update staff_otp set consumed=true where id=$1`, [otpResult.rows[0].id]);
-  const token = signSession({ role: "staff", tenantId: tenant.id }, "10h");
-  res.json({ token, tenant });
+  const token = signSession({ role: "staff", tenantId: tenant.id, locationId: location.id }, "10h");
+  res.json({ token, tenant, location: { id: location.id, name: location.name } });
 }));
 
 // --- System admin login (real password, not simulated) -----------------------

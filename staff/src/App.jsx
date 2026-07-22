@@ -17,6 +17,7 @@ function formatTime(min) {
 
 export default function App() {
   const [tenant, setTenant] = useState(null);
+  const [locationId, setLocationId] = useState(null);
   const [error, setError] = useState("");
   const [restoring, setRestoring] = useState(true);
 
@@ -27,6 +28,7 @@ export default function App() {
         try {
           const r = await api.me();
           setTenant(r.tenant);
+          setLocationId(r.staffLocationId || null);
         } catch {
           setToken(null);
         }
@@ -46,8 +48,8 @@ export default function App() {
       </div>
       {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
-      {!tenant && <StaffLogin onSignedIn={(t) => setTenant(t)} setError={setError} />}
-      {tenant && <StaffKiosk tenant={tenant} setError={setError} onSignOut={() => { setToken(null); setTenant(null); }} />}
+      {!tenant && <StaffLogin onSignedIn={(t, locId) => { setTenant(t); setLocationId(locId); }} setError={setError} />}
+      {tenant && <StaffKiosk tenant={tenant} locationId={locationId} setError={setError} onSignOut={() => { setToken(null); setTenant(null); setLocationId(null); }} />}
     </div>
   );
 }
@@ -64,12 +66,17 @@ function StaffLogin({ onSignedIn, setError }) {
   }
   async function verify() {
     setError("");
-    try { const r = await api.verifyStaffOtp(accessCode, otp); setToken(r.token); onSignedIn(r.tenant); } catch (err) { setError(err.message); }
+    try {
+      const r = await api.verifyStaffOtp(accessCode, otp);
+      setToken(r.token);
+      onSignedIn(r.tenant, r.location?.id || null);
+    } catch (err) { setError(err.message); }
   }
 
   return (
     <div className="narrow card stack">
       <h3>Staff sign-in</h3>
+      <p className="muted" style={{ fontSize: 12 }}>Use the sign-in code for your location — shown to your manager in the Locations tab.</p>
       {step === "code" && <><input className="input" placeholder="Access code" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} /><button className="btn" onClick={sendCode}>Continue</button></>}
       {step === "otp" && <>
         <div className="muted">Demo code: <strong>{demoOtp}</strong></div>
@@ -80,10 +87,9 @@ function StaffLogin({ onSignedIn, setError }) {
   );
 }
 
-function StaffKiosk({ tenant, setError, onSignOut }) {
+function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
-  const [locationId, setLocationId] = useState(null);
   const [serviceIds, setServiceIds] = useState([]);
   const [started, setStarted] = useState(false);
   const [room, setRoom] = useState("");
@@ -107,13 +113,9 @@ function StaffKiosk({ tenant, setError, onSignOut }) {
   }, [started]);
 
   if (!locationId) {
-    return (
-      <div className="narrow card stack">
-        <h3>Which location?</h3>
-        {locations.map((l) => <button key={l.id} className="btn-outline" onClick={() => setLocationId(l.id)}>{l.name}</button>)}
-      </div>
-    );
+    return <div className="narrow card" style={{ color: "#C22A1E" }}>This sign-in code isn't linked to a location — please check with your manager.</div>;
   }
+
   const locServices = services.filter((s) => s.location_id === locationId);
   if (!started) {
     return (

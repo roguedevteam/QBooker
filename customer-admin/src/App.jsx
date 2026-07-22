@@ -234,9 +234,9 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
         <div className="stack">
           <PendingPaymentBanner tenant={tenant} />
           <div className="card stack" style={{ background: "#E4F0FB" }}>
-            <div style={{ fontSize: 13 }}>Staff access code: <strong style={{ letterSpacing: 1 }}>{tenant.access_code}</strong></div>
+            <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
             <div className="muted" style={{ fontSize: 12 }}>
-              Give your team the Staff Kiosk link ({STAFF_APP_URL}) and this code, plus the one-time code they'll get when they sign in.
+              Each location below has its own sign-in code — share that location's code with the staff working there.
             </div>
             <div className="row" style={{ flexWrap: "wrap" }}>
               <span style={{ fontSize: 13 }}>Customer link:</span>
@@ -279,6 +279,10 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                   </div>
                 </div>
 
+                <div className="row">
+                  <span className="muted" style={{ fontSize: 12 }}>Staff sign-in code:</span>
+                  <code style={{ fontSize: 13, letterSpacing: 1, background: "#F2F6F9", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
+                </div>
                 <LocationWebsiteField loc={loc} setError={setError} onChanged={refreshCore} />
 
                 {addingHere && (

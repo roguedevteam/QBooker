@@ -27,7 +27,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-router.get("/me", (req, res) => res.json({ tenant: req.tenant }));
+router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
 // --- Plan window & rescheduling ------------------------------------------------
 router.get("/plan", (req, res) => {
@@ -111,11 +111,12 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: "Name required." });
   const t = req.tenant;
+  const staffAccessCode = genAccessCode();
   const loc = await query(
     `insert into locations
-      (tenant_id, name, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
-    [t.id, name.trim(), t.plan_id, t.plan_label, t.plan_days, t.active_date, t.week_start_date, t.start_date, t.end_date, t.price_per_location]
+      (tenant_id, name, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price, staff_access_code)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
+    [t.id, name.trim(), t.plan_id, t.plan_label, t.plan_days, t.active_date, t.week_start_date, t.start_date, t.end_date, t.price_per_location, staffAccessCode]
   );
   const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
