@@ -184,7 +184,7 @@ function LocationWebsiteField({ loc, setError, onChanged }) {
 }
 
 function AdminDashboard({ tenant, setError, onSignOut }) {
-  const [tab, setTab] = useState("locations");
+  const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [expandedLocations, setExpandedLocations] = useState({});
@@ -225,7 +225,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="wrap">
-        {["locations", "billing", "shop", "dashboard", "audit"].map((t) => (
+        {["dashboard", "locations", "billing", "audit", "shop"].map((t) => (
           <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
@@ -315,6 +315,10 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       {tab === "dashboard" && (
         <div className="stack">
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
+          <div className="wrap">
+            <div className="card">{locations.length}<div className="muted" style={{ fontSize: 11 }}>Location{locations.length === 1 ? "" : "s"}</div></div>
+            <div className="card">{services.filter((s) => locationStatus(locations.find((l) => l.id === s.location_id) || {}) === "live").length}<div className="muted" style={{ fontSize: 11 }}>Live services</div></div>
+          </div>
           {stats && (
             <div className="wrap">
               <div className="card">{stats.waiting}<div className="muted" style={{ fontSize: 11 }}>Waiting</div></div>
@@ -952,6 +956,13 @@ function ServiceCalendar({ service, setError }) {
               </>
             )}
           </div>
+          {service.mode === "hybrid" && (
+            staffCount - bookingStaffCount > 0 ? (
+              <div className="muted" style={{ fontSize: 12 }}>→ {staffCount - bookingStaffCount} staff not on bookings — available to serve walk-ins.</div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#C22A1E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
+            )
+          )}
           {!selectedIsPast && (
             <div className="wrap">
               <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
