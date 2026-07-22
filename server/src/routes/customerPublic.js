@@ -2,7 +2,7 @@ import { Router } from "express";
 import { query } from "../db/pool.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock } from "../lib/scheduling.js";
-import { isWithinPaidWindow } from "../lib/plan.js";
+import { isLocationWithinWindow, ensureLicenseStarted } from "../lib/licenseTrigger.js";
 
 const router = Router();
 
@@ -40,9 +40,10 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id]);
   if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
   const service = svcResult.rows[0];
-  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+  let location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+  if (location) location = await ensureLicenseStarted(location);
 
-  if (!location || !isWithinPaidWindow(location, date)) {
+  if (!location || !isLocationWithinWindow(location, date)) {
     return res.json({ open: false, reason: "outside_plan_window" });
   }
 
@@ -97,8 +98,9 @@ router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, r
   const { type, slotTime, hourBlock, date } = req.body;
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
-  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
-  if (!location || !isWithinPaidWindow(location, date)) {
+  let location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+  if (location) location = await ensureLicenseStarted(location);
+  if (!location || !isLocationWithinWindow(location, date)) {
     return res.status(409).json({ error: "We're not taking bookings today." });
   }
 

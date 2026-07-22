@@ -361,18 +361,13 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 }
 
 function locationWindow(loc) {
-  if (loc.plan_id === "day") return loc.active_date ? { start: loc.active_date, end: loc.active_date } : null;
-  if (loc.plan_id === "week") return loc.week_start_date ? { start: loc.week_start_date, end: addDaysIso(loc.week_start_date, 6) } : null;
-  if (["month", "year", "custom"].includes(loc.plan_id)) return loc.start_date && loc.end_date ? { start: loc.start_date, end: loc.end_date } : null;
-  return null;
+  return loc.start_date && loc.end_date ? { start: loc.start_date, end: loc.end_date } : null;
 }
 function locationStatus(loc) {
-  const w = locationWindow(loc);
-  if (!w) return "none";
+  if (!loc.plan_id) return "none";
+  if (!loc.start_date) return "purchased"; // bought, dormant — hasn't started yet
   const today = todayIso();
-  if (today > w.end) return "expired";
-  if (today < w.start) return "upcoming";
-  return "live";
+  return today > loc.end_date ? "expired" : "live";
 }
 
 function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
@@ -394,7 +389,7 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
             <div style={{ fontSize: 13 }}>
               Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
               {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
-              {" "}It starts with the same license your other locations have, and can be extended independently afterwards.
+              {" "}It gets its own {tenant.plan_label?.toLowerCase()} license, which starts the moment you set opening hours for a service there — independent of your other locations.
             </div>
             <div className="row">
               <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
@@ -432,17 +427,17 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
   const statusMeta = {
     live: { label: "Live", color: "green" },
     expired: { label: "License expired", color: "red" },
-    upcoming: { label: `Starts ${licenseWindow?.start}`, color: "amber" },
+    purchased: { label: "Purchased — not started", color: "amber" },
     none: { label: "No license assigned", color: "amber" },
   }[status];
 
   const windowText = !loc.plan_label
     ? "No license assigned yet"
-    : loc.plan_id === "day"
-      ? `${loc.plan_label} — ${licenseWindow?.start}, until midnight`
-      : licenseWindow
-        ? `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`
-        : loc.plan_label;
+    : !licenseWindow
+      ? `${loc.plan_label} — starts the moment you set opening hours for a service here`
+      : loc.plan_days === 1
+        ? `${loc.plan_label} — ${licenseWindow.start}, until midnight`
+        : `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`;
 
   const sale = pricing?.sale?.active ? pricing.sale : null;
   function planPrice(p) {
@@ -534,8 +529,10 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
       {chosenPlan && (
         <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
           <div style={{ fontSize: 13 }}>
-            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>, starting{" "}
-            {licenseWindow && licenseWindow.end >= todayIso() ? `right after the current license ends (${licenseWindow.end})` : "today"}.
+            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>.
+            {status === "live"
+              ? ` It'll pick up automatically the day your current license ends (${licenseWindow.end}) and hours are set for it — never before.`
+              : " It'll start the moment you set opening hours for a service here."}
           </div>
           <div className="row">
             <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>

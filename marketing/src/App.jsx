@@ -181,6 +181,16 @@ function FaqItem({ q, a }) {
 }
 
 function Success({ result }) {
+  if (result.alreadyExists) {
+    return (
+      <div className="narrow card stack" style={{ marginTop: 60 }}>
+        <h3>Welcome back 👋</h3>
+        <p>An account for <strong>{result.businessName}</strong> already exists with that email — we've sent a fresh sign-in code instead of creating a new one.</p>
+        <div className="card">Demo sign-in code (simulated email): <strong>{result.demoOtp}</strong></div>
+        <a href={ADMIN_APP_URL}><button className="btn">Go to admin sign-in →</button></a>
+      </div>
+    );
+  }
   return (
     <div className="narrow card stack" style={{ marginTop: 60 }}>
       <h3>You're set up ✅</h3>

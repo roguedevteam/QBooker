@@ -6,14 +6,9 @@ import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import { addDays } from "../lib/plan.js";
+import { getToday } from "../lib/clock.js";
 
 const router = Router();
-
-function nineToFiveHours() {
-  const hours = [];
-  for (let h = 540; h < 1020; h += 30) hours.push(h);
-  return hours;
-}
 
 // --- Signup ---------------------------------------------------------------
 router.post("/signup", asyncHandler(async (req, res) => {
@@ -30,6 +25,18 @@ router.post("/signup", asyncHandler(async (req, res) => {
   }
   if (paymentMethod === "invoice" && !invoicePO?.trim()) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
+  }
+
+  // One email = one account. If it already exists, don't create a duplicate — just send
+  // them straight back to sign in, same as if they'd used the admin login screen directly.
+  const existing = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
+  if (existing.rows.length > 0) {
+    const tenant = existing.rows[0];
+    const code = genOtp();
+    await query(`insert into admin_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [tenant.id, code]);
+    const body = `Your QBooker admin sign-in code is ${code}.`;
+    await logSimulatedMessage({ tenantId: tenant.id, channel: "email", toReference: email, body });
+    return res.json({ alreadyExists: true, demoOtp: code, businessName: tenant.business_name });
   }
 
   // The client only ever sends a start date for month/year/custom plans — the end date is
@@ -55,23 +62,26 @@ router.post("/signup", asyncHandler(async (req, res) => {
     );
     const tenant = tenantResult.rows[0];
 
+    // Every location's license starts "Purchased" — plan and price are set, but no dates at
+    // all. It only resolves (start_date/end_date get written, permanently) the moment the
+    // first opening-hour block defined for any service here is actually reached.
+    const notBefore = getToday();
     const locationRows = [];
     for (let i = 0; i < locationNames.length; i++) {
       const staffAccessCode = genAccessCode();
       const r = await client.query(
         `insert into locations
-          (tenant_id, name, address, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date, license_price, staff_access_code)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
+          (tenant_id, name, address, plan_id, plan_label, plan_days, license_price, staff_access_code, license_not_before)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
         [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || "",
-          planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null, pricePerLocation, staffAccessCode]
+          planId, planLabel, planDays, pricePerLocation, staffAccessCode, notBefore]
       );
       const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
       locationRows.push({ ...r.rows[0], code });
       await client.query(
         `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
          values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [r.rows[0].id, tenant.id, planId, planLabel, planDays,
-          activeDate || weekStartDate || startDate || null, activeDate || endDate || null, pricePerLocation]
+        [r.rows[0].id, tenant.id, planId, planLabel, planDays, null, null, pricePerLocation]
       );
     }
 
