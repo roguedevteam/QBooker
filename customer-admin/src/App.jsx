@@ -225,7 +225,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="wrap">
-        {["locations", "billing", "dashboard", "audit"].map((t) => (
+        {["locations", "billing", "shop", "dashboard", "audit"].map((t) => (
           <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
@@ -309,6 +309,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       {tab === "billing" && (
         <BillingTab tenant={tenant} locations={locations} setError={setError} onLocationsChanged={refreshCore} />
       )}
+
+      {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
       {tab === "dashboard" && (
         <div className="stack">
@@ -461,19 +463,18 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
     });
   }
 
-  function downloadReceipt() {
+  function downloadReceipt(purchase) {
     const lines = [
       "QBOOKER — RECEIPT",
       "==================",
       "",
       `Business: ${tenant.business_name}`,
       `Location: ${loc.name}`,
-      `Location reference: ${loc.id}`,
       "",
-      "Licenses purchased for this location:",
-      ...(history || []).map((p) =>
-        `  • ${new Date(p.purchased_at).toLocaleDateString()} — ${p.plan_label} — £${p.price}${p.start_date ? ` (${p.start_date}${p.end_date && p.end_date !== p.start_date ? ` to ${p.end_date}` : ""})` : ""}`
-      ),
+      `Plan: ${purchase.plan_label}`,
+      `Price: £${purchase.price}`,
+      purchase.start_date ? `Covers: ${purchase.start_date}${purchase.end_date && purchase.end_date !== purchase.start_date ? ` to ${purchase.end_date}` : ""}` : null,
+      `Date bought: ${new Date(purchase.purchased_at).toLocaleDateString()}`,
       "",
       `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
       tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
@@ -485,7 +486,7 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `qbooker-receipt-${loc.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.txt`;
+    a.download = `qbooker-receipt-${loc.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${new Date(purchase.purchased_at).toISOString().slice(0, 10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -545,15 +546,12 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
 
       {expanded && (
         <div className="stack" style={{ borderTop: "1px solid #DCE4EA", paddingTop: 10 }}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
-            <button className="btn-outline" onClick={downloadReceipt} disabled={!history}>Download receipt</button>
-          </div>
+          <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
           {!history && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
           {history && history.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Nothing recorded yet.</div>}
           {history && history.length > 0 && (
             <table>
-              <thead><tr><th>Date bought</th><th>Plan</th><th>Covers</th><th>Price</th></tr></thead>
+              <thead><tr><th>Date bought</th><th>Plan</th><th>Covers</th><th>Price</th><th></th></tr></thead>
               <tbody>
                 {history.map((p) => (
                   <tr key={p.id}>
@@ -561,6 +559,7 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
                     <td>{p.plan_label}</td>
                     <td>{p.start_date ? (p.end_date && p.end_date !== p.start_date ? `${p.start_date} – ${p.end_date}` : p.start_date) : "—"}</td>
                     <td>£{p.price}</td>
+                    <td><button className="btn-outline" onClick={() => downloadReceipt(p)}>Receipt</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -568,6 +567,85 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ShopTab({ tenant, locations }) {
+  function downloadBrochure() {
+    const withCodes = locations.filter((l) => l.code);
+    if (withCodes.length === 0) {
+      alert("No locations with a WhatsApp code yet — add a location first.");
+      return;
+    }
+    const cards = withCodes.map((l) => `
+      <div style="border:2px solid #0F5FBF;border-radius:14px;padding:32px;margin-bottom:28px;text-align:center;page-break-inside:avoid;">
+        <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${tenant.business_name}</div>
+        <div style="font-size:14px;color:#5B6B79;margin-bottom:20px;">${l.name}</div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:10px;">📱 Message us on WhatsApp to get started</div>
+        <div style="font-size:15px;color:#1B2733;margin-bottom:6px;">Send this code:</div>
+        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F2F6F9;border-radius:8px;padding:10px 0;">${l.code}</div>
+        <div style="font-size:12px;color:#5B6B79;margin-top:18px;">Join the queue or book a slot instantly — no app to download.</div>
+      </div>
+    `).join("");
+    const html = `<!doctype html><html><head><title>QBooker brochure — ${tenant.business_name}</title>
+      <meta charset="utf-8" />
+      <style>body{font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;color:#1B2733;}</style>
+      </head><body>${cards}<p style="text-align:center;color:#5B6B79;font-size:11px;">Print this page and display it in your waiting area.</p></body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  }
+
+  function enquire(subject) {
+    window.open(`mailto:hello@qbooker.example?subject=${encodeURIComponent(subject)}`, "_blank");
+  }
+
+  const products = [
+    { name: "QR Code Brochure", price: "Free", desc: "A printable page for your waiting area with your WhatsApp sign-in code — customers message it to join the queue or book instantly.", action: { label: "Download brochure", onClick: downloadBrochure } },
+    { name: "Floor-standing Banner", price: "Get a quote", desc: "A pull-up banner for your entrance or waiting area, printed with your business name and WhatsApp code built in.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing banner enquiry") } },
+    { name: "Desktop Touch-Screen Kiosk", price: "Get a quote", desc: "A compact touch-screen unit for a reception desk or counter, so walk-in customers can check themselves in without staff involvement.", action: { label: "Get a quote", onClick: () => enquire("Desktop touch-screen kiosk enquiry") } },
+    { name: "Floor-standing Kiosk", price: "Get a quote", desc: "A free-standing self-check-in kiosk for busier waiting areas and lobbies.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing kiosk enquiry") } },
+  ];
+
+  const services = [
+    { name: "Remote Staff Training", price: "Get a quote", desc: "A video session with your team covering the Staff Kiosk — calling tickets, handling no-shows, day-to-day use.", action: { label: "Get a quote", onClick: () => enquire("Remote staff training enquiry") } },
+    { name: "Admin System Set-up", price: "£125", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
+  ];
+
+  return (
+    <div className="stack">
+      <div className="muted" style={{ fontSize: 12 }}>
+        A look at what's available — nothing here is purchased automatically yet, "Get a quote" opens an email to us directly.
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Products</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        {products.map((p) => (
+          <div key={p.name} className="card stack">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>{p.name}</strong>
+              <span className={`badge ${p.price === "Free" ? "badge-green" : "badge-blue"}`}>{p.price}</span>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>{p.desc}</div>
+            <div><button className="btn-outline" onClick={p.action.onClick}>{p.action.label}</button></div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>Services</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        {services.map((s) => (
+          <div key={s.name} className="card stack">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>{s.name}</strong>
+              <span className="badge badge-blue">{s.price}</span>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>{s.desc}</div>
+            <div><button className="btn-outline" onClick={s.action.onClick}>{s.action.label}</button></div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
