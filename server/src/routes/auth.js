@@ -5,6 +5,7 @@ import { signSession } from "../lib/auth.js";
 import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
+import { addDays } from "../lib/plan.js";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ function nineToFiveHours() {
 router.post("/signup", asyncHandler(async (req, res) => {
   const {
     businessName, email, planId, planLabel, planDays,
-    activeDate, weekStartDate, startDate, endDate,
+    activeDate, weekStartDate, startDate,
     price, pricePerLocation, locationCount,
     paymentMethod, invoiceEmail, invoicePO,
     locationNames, locationAddresses,
@@ -30,6 +31,11 @@ router.post("/signup", asyncHandler(async (req, res) => {
   if (paymentMethod === "invoice" && !invoicePO?.trim()) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
+
+  // The client only ever sends a start date for month/year/custom plans — the end date is
+  // always derived from it here, rather than trusted from the client (which never actually
+  // sent one, silently leaving it null for every month/year/custom signup until now).
+  const endDate = startDate && planDays ? addDays(startDate, planDays - 1) : null;
 
   let client;
   try {
