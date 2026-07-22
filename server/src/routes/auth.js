@@ -62,29 +62,6 @@ router.post("/signup", asyncHandler(async (req, res) => {
       locationRows.push({ ...r.rows[0], code });
     }
 
-    // Seed one starter service per location so the account isn't empty.
-    const starterHours = nineToFiveHours();
-    const today = new Date();
-    for (const loc of locationRows) {
-      const svc = await client.query(
-        `insert into services (tenant_id, location_id, name, icon, slot_minutes, mode)
-         values ($1,$2,'General Consultation','stethoscope',15,'hybrid') returning *`,
-        [tenant.id, loc.id]
-      );
-      // Seed today + next 6 days with default weekday hours as a starting point.
-      for (let d = 0; d < 7; d++) {
-        const date = new Date(today);
-        date.setDate(date.getDate() + d);
-        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-        if (isWeekend) continue;
-        await client.query(
-          `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-           values ($1,$2,$3,2,1) on conflict (service_id, date) do nothing`,
-          [svc.rows[0].id, date.toISOString().slice(0, 10), starterHours]
-        );
-      }
-    }
-
     await client.query(
       `insert into audit_log (tenant_id, message) values ($1,$2)`,
       [tenant.id, `Account activated for ${businessName} — plan: ${planLabel} × ${locationCount} location(s)`]

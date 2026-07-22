@@ -455,21 +455,21 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
   const [chosenPlan, setChosenPlan] = useState(null);
   const [extending, setExtending] = useState(false);
 
-  const window = locationWindow(loc);
+  const licenseWindow = locationWindow(loc);
   const status = locationStatus(loc);
   const statusMeta = {
     live: { label: "Live", color: "green" },
     expired: { label: "License expired", color: "red" },
-    upcoming: { label: `Starts ${window?.start}`, color: "amber" },
+    upcoming: { label: `Starts ${licenseWindow?.start}`, color: "amber" },
     none: { label: "No license assigned", color: "amber" },
   }[status];
 
   const windowText = !loc.plan_label
     ? "No license assigned yet"
     : loc.plan_id === "day"
-      ? `${loc.plan_label} — ${window?.start}, until midnight`
-      : window
-        ? `${loc.plan_label} — ${window.start} to ${window.end}`
+      ? `${loc.plan_label} — ${licenseWindow?.start}, until midnight`
+      : licenseWindow
+        ? `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`
         : loc.plan_label;
 
   async function confirmExtend() {
@@ -512,7 +512,7 @@ function LocationLicenseRow({ loc, pricing, setError, onChanged }) {
         <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
           <div style={{ fontSize: 13 }}>
             Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{pricing?.[chosenPlan]}</strong>, starting{" "}
-            {window && window.end >= todayIso() ? `right after the current license ends (${window.end})` : "today"}.
+            {licenseWindow && licenseWindow.end >= todayIso() ? `right after the current license ends (${licenseWindow.end})` : "today"}.
           </div>
           <div className="row">
             <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>
