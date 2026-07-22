@@ -123,9 +123,9 @@ function CustomerWhatsApp({ tenantId }) {
       checks = await Promise.all(list.map(async (s) => {
         try {
           const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
-          return { service: s, open: r.open };
+          return { service: s, open: r.open, reason: r.reason };
         } catch {
-          return { service: s, open: false };
+          return { service: s, open: false, reason: "error" };
         }
       }));
     } catch (err) {
@@ -134,9 +134,16 @@ function CustomerWhatsApp({ tenantId }) {
     }
     const liveServices = checks.filter((c) => c.open).map((c) => c.service);
     if (liveServices.length === 0) {
+      const reasons = new Set(checks.map((c) => c.reason));
+      let text = "We're not open right now — nothing here is available today. Please check back during opening hours.";
+      if (reasons.size === 1) {
+        const reason = [...reasons][0];
+        if (reason === "outside_plan_window") text = "This location's license doesn't cover today's date — please contact the business directly.";
+        else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
+      }
       const opts = [];
       if (websiteUrl) opts.push({ label: "See opening hours", action: "website" });
-      bot("We're not open right now — nothing here is available today. Please check back during opening hours.", opts);
+      bot(text, opts);
       return;
     }
     bot("Which service would you like today?", liveServices.map((s) => ({ label: s.name, action: "svc", payload: s.id })));
