@@ -31,7 +31,7 @@ export default function App() {
           <a href={ADMIN_APP_URL} style={{ color: "#fff", fontSize: 13 }}>Already have an account? Admin sign-in →</a>
         </div>
       </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "landing" && <Landing onStart={() => setScreen("signup")} />}
       {screen === "signup" && <Signup setError={setError} onDone={(r) => { setResult(r); setScreen("success"); }} />}
@@ -131,7 +131,7 @@ function Landing({ onStart }) {
           <h2 style={{ textAlign: "center", fontSize: 20 }}>Try it before you commit</h2>
           <p className="muted" style={{ textAlign: "center", fontSize: 13 }}>Buy exactly as much time as you need to test it properly — per location.</p>
           {pricing.sale?.active && (
-            <p style={{ textAlign: "center", fontSize: 13, color: "#00522A", fontWeight: 600 }}>Sale on selected plans — see below</p>
+            <p style={{ textAlign: "center", fontSize: 13, color: "#C8690D", fontWeight: 600 }}>Sale on selected plans — see below</p>
           )}
           <div className="wrap" style={{ justifyContent: "center" }}>
             {["day", "week", "month", "year"].map((k) => {
@@ -140,7 +140,7 @@ function Landing({ onStart }) {
               return (
                 <div key={k} className="card stack" style={{ minWidth: 140, textAlign: "center" }}>
                   {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>£{pricing[k]}</span>}
-                  <strong style={{ color: onSale ? "#00522A" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
+                  <strong style={{ color: onSale ? "#C8690D" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
                   <span className="muted" style={{ fontSize: 12 }}>{label}</span>
                 </div>
               );
@@ -219,13 +219,13 @@ function StepHeader({ step }) {
               style={{
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
                 width: 22, height: 22, borderRadius: "50%", fontSize: 12, fontWeight: 600,
-                background: active || done ? "#00522A" : "#eee",
-                color: active || done ? "#fff" : "#777",
+                background: active || done ? "#C8690D" : "#DEDDD6",
+                color: active || done ? "#fff" : "#5F615B",
               }}
             >
               {done ? "✓" : n}
             </span>
-            <span className="muted" style={{ fontSize: 12, color: active ? "#00522A" : undefined, fontWeight: active ? 600 : 400 }}>{label}</span>
+            <span className="muted" style={{ fontSize: 12, color: active ? "#C8690D" : undefined, fontWeight: active ? 600 : 400 }}>{label}</span>
             {n < STEP_LABELS.length && <span className="muted" style={{ fontSize: 12 }}>—</span>}
           </div>
         );
@@ -386,7 +386,7 @@ function Signup({ onDone, setError }) {
             )}
           </div>
 
-          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#F4F9F6" }}>
+          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#FBEEDD" }}>
             <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
             <strong>Total: £{total}</strong>
           </div>
@@ -420,12 +420,12 @@ function Signup({ onDone, setError }) {
             <button className="btn-outline" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add location</button>
           </div>
           {hasDuplicateNames && (
-            <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
+            <div style={{ fontSize: 12, color: "#B3261E", fontWeight: 500 }}>
               Each location needs its own name — two locations currently share the same name.
             </div>
           )}
 
-          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#F4F9F6" }}>
+          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#FBEEDD" }}>
             <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
             <strong>Total: £{total}</strong>
           </div>
@@ -459,7 +459,7 @@ function Signup({ onDone, setError }) {
                 <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
                 <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required for invoice payment — your internal purchase order or reference number.</div>
               </div>
-              <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
+              <div style={{ fontSize: 12, color: "#B3261E", fontWeight: 500 }}>
                 With invoice payment, your account can be fully configured straight away, but staff kiosk and customer
                 WhatsApp won't be enabled until payment is received.
               </div>

@@ -46,7 +46,7 @@ export default function App() {
         <strong>{tenant ? `${tenant.business_name} — Staff Kiosk` : "QBooker Staff Kiosk"}</strong>
         {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
       </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {!tenant && <StaffLogin onSignedIn={(t, locId) => { setTenant(t); setLocationId(locId); }} setError={setError} />}
       {tenant && <StaffKiosk tenant={tenant} locationId={locationId} setError={setError} onSignOut={() => { setToken(null); setTenant(null); setLocationId(null); }} />}
@@ -113,7 +113,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   }, [started]);
 
   if (!locationId) {
-    return <div className="narrow card" style={{ color: "#C22A1E" }}>This sign-in code isn't linked to a location — please check with your manager.</div>;
+    return <div className="narrow card" style={{ color: "#B3261E" }}>This sign-in code isn't linked to a location — please check with your manager.</div>;
   }
 
   const locServices = services.filter((s) => s.location_id === locationId);
@@ -146,26 +146,26 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   return (
     <div className="container stack">
       <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
-      <div className="card row" style={{ background: room.trim() ? "#E4F0FB" : "#FBE9E7" }}>
-        <span style={{ color: room.trim() ? "#0F5FBF" : "#C22A1E", fontSize: 13 }}>Where are you right now?</span>
-        <input className="input" style={{ borderColor: room.trim() ? "#DCE4EA" : "#C22A1E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
+      <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
+        <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
+        <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
       </div>
-      {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#C22A1E" }}>Not set — customers you call will be told no location has been given yet.</div>}
+      {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Not set — customers you call will be told no location has been given yet.</div>}
 
       {locServices.filter((s) => serviceIds.includes(s.id)).map((s) => {
         const serving = nowServing[s.id];
         return (
           <div key={s.id} className="card stack">
             <div>{s.name}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#0F5FBF" }}>{serving?.ticket_number || "—"}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "#1B1D1F" }}>{serving?.ticket_number || "—"}</div>
             {serving && <div style={{ fontSize: 13 }}>{room.trim() ? `📍 ${room.trim()}` : "Now serving"}</div>}
             <button className="btn" onClick={() => callNext(s.id)}>Call next ticket</button>
             {serving && (
               <div className="stack">
-                <button className="btn" style={{ background: "#14803C" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
+                <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
                 <div className="row">
                   <button className="btn-outline" style={{ flex: 1 }} onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }), s.id)}>Return to queue</button>
-                  <button className="btn-outline" style={{ flex: 1, color: "#C22A1E" }} onClick={() => doAction(() => api.cancelTicket(serving.id), s.id)}>Cancel ticket</button>
+                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id), s.id)}>Cancel ticket</button>
                 </div>
                 <div className="row">
                   <button className="btn-outline" style={{ flex: 1 }} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>

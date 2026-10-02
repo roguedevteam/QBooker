@@ -99,7 +99,7 @@ export default function App() {
           <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "#fff", fontSize: 13 }}>New here? Sign up →</a>
         </div>
       </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
       {screen === "admin" && tenant && <AdminDashboard tenant={tenant} setError={setError} onSignOut={() => { setToken("tenant_admin", null); setTenant(null); setScreen("admin-login"); }} />}
@@ -154,7 +154,7 @@ function AdminLogin({ onSignedIn, setError }) {
 function PendingPaymentBanner({ tenant }) {
   if (tenant.status !== "pending") return null;
   return (
-    <div className="card" style={{ background: "#FBE9E7", borderColor: "#C22A1E", color: "#C22A1E", fontSize: 13, fontWeight: 500 }}>
+    <div className="card" style={{ background: "#FBE9E7", borderColor: "#B3261E", color: "#B3261E", fontSize: 13, fontWeight: 500 }}>
       Payment pending — your account can be configured now, but staff kiosk and customer WhatsApp won't work until payment is received.
     </div>
   );
@@ -178,7 +178,7 @@ function LocationWebsiteField({ loc, setError, onChanged }) {
       <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
       <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
       <button className="btn-outline" onClick={save}>Save</button>
-      {saved && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
+      {saved && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
     </div>
   );
 }
@@ -233,7 +233,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       {tab === "locations" && (
         <div className="stack">
           <PendingPaymentBanner tenant={tenant} />
-          <div className="card stack" style={{ background: "#E4F0FB" }}>
+          <div className="card stack" style={{ background: "#FBEEDD" }}>
             <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
             <div className="muted" style={{ fontSize: 12 }}>
               Each location below has its own sign-in code — share that location's code with the staff working there.
@@ -281,7 +281,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
                 <div className="row">
                   <span className="muted" style={{ fontSize: 12 }}>Staff sign-in code:</span>
-                  <code style={{ fontSize: 13, letterSpacing: 1, background: "#F2F6F9", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
+                  <code style={{ fontSize: 13, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
                 </div>
                 <LocationWebsiteField loc={loc} setError={setError} onChanged={refreshCore} />
 
@@ -295,7 +295,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                 )}
 
                 {isOpen && (
-                  <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DCE4EA" }}>
+                  <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
                     {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
                     {locServices.map((s) => <ServiceEditor key={s.id} service={s} onChange={refreshCore} setError={setError} />)}
                   </div>
@@ -389,7 +389,7 @@ function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
         <div style={{ fontSize: 13, fontWeight: 600 }}>Buy another location</div>
         {!buyingLocation && <div><button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button></div>}
         {buyingLocation && (
-          <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
+          <div className="stack" style={{ background: "#FBEEDD", borderRadius: 8, padding: 12 }}>
             <div style={{ fontSize: 13 }}>
               Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
               {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
@@ -531,7 +531,7 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
       )}
 
       {chosenPlan && (
-        <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
+        <div className="stack" style={{ background: "#FBEEDD", borderRadius: 8, padding: 12 }}>
           <div style={{ fontSize: 13 }}>
             Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>.
             {status === "live"
@@ -546,7 +546,7 @@ function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
       )}
 
       {expanded && (
-        <div className="stack" style={{ borderTop: "1px solid #DCE4EA", paddingTop: 10 }}>
+        <div className="stack" style={{ borderTop: "1px solid #DEDDD6", paddingTop: 10 }}>
           <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
           {!history && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
           {history && history.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Nothing recorded yet.</div>}
@@ -580,19 +580,19 @@ function ShopTab({ tenant, locations }) {
       return;
     }
     const cards = withCodes.map((l) => `
-      <div style="border:2px solid #0F5FBF;border-radius:14px;padding:32px;margin-bottom:28px;text-align:center;page-break-inside:avoid;">
+      <div style="border:2px solid #1B1D1F;border-radius:14px;padding:32px;margin-bottom:28px;text-align:center;page-break-inside:avoid;">
         <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${tenant.business_name}</div>
-        <div style="font-size:14px;color:#5B6B79;margin-bottom:20px;">${l.name}</div>
+        <div style="font-size:14px;color:#5F615B;margin-bottom:20px;">${l.name}</div>
         <div style="font-size:17px;font-weight:600;margin-bottom:10px;">📱 Message us on WhatsApp to get started</div>
-        <div style="font-size:15px;color:#1B2733;margin-bottom:6px;">Send this code:</div>
-        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F2F6F9;border-radius:8px;padding:10px 0;">${l.code}</div>
-        <div style="font-size:12px;color:#5B6B79;margin-top:18px;">Join the queue or book a slot instantly — no app to download.</div>
+        <div style="font-size:15px;color:#1B1D1F;margin-bottom:6px;">Send this code:</div>
+        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F7F7F4;border-radius:8px;padding:10px 0;">${l.code}</div>
+        <div style="font-size:12px;color:#5F615B;margin-top:18px;">Join the queue or book a slot instantly — no app to download.</div>
       </div>
     `).join("");
     const html = `<!doctype html><html><head><title>QBooker brochure — ${tenant.business_name}</title>
       <meta charset="utf-8" />
-      <style>body{font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;color:#1B2733;}</style>
-      </head><body>${cards}<p style="text-align:center;color:#5B6B79;font-size:11px;">Print this page and display it in your waiting area.</p></body></html>`;
+      <style>body{font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;color:#1B1D1F;}</style>
+      </head><body>${cards}<p style="text-align:center;color:#5F615B;font-size:11px;">Print this page and display it in your waiting area.</p></body></html>`;
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank");
@@ -892,9 +892,9 @@ function ServiceCalendar({ service, setError }) {
                           disabled={!inWindow}
                           title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
                           style={{
-                            width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
-                            background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
-                            color: isSelected ? "#fff" : !inWindow ? "#DCE4EA" : "#1B2733",
+                            width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #1B1D1F" : "1px solid #DEDDD6",
+                            background: isSelected ? "#1B1D1F" : count > 0 ? "#FBEEDD" : "#fff",
+                            color: isSelected ? "#fff" : !inWindow ? "#DEDDD6" : "#1B1D1F",
                             opacity: inWindow ? 1 : 0.4,
                           }}
                         >
@@ -918,8 +918,8 @@ function ServiceCalendar({ service, setError }) {
             </strong>
             <div className="row">
               {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
-              {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
-              {saveStatus === "error" && <span style={{ fontSize: 12, color: "#C22A1E" }}>Save failed</span>}
+              {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
+              {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
               {!selectedIsPast && (
                 <>
                   <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
@@ -939,7 +939,7 @@ function ServiceCalendar({ service, setError }) {
                   onMouseEnter={() => continuePaint(h)}
                   className="badge"
                   title={!editable && selectedIsToday ? "Already passed" : undefined}
-                  style={{ cursor: editable ? "pointer" : "default", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: editable ? 1 : 0.5 }}
+                  style={{ cursor: editable ? "pointer" : "default", background: open ? "#1B1D1F" : "#F7F7F4", color: open ? "#fff" : "#1B1D1F", opacity: editable ? 1 : 0.5 }}
                 >
                   {formatTime(h)}
                 </span>
@@ -960,7 +960,7 @@ function ServiceCalendar({ service, setError }) {
             staffCount - bookingStaffCount > 0 ? (
               <div className="muted" style={{ fontSize: 12 }}>→ {staffCount - bookingStaffCount} staff not on bookings — available to serve walk-ins.</div>
             ) : (
-              <div style={{ fontSize: 12, color: "#C22A1E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
+              <div style={{ fontSize: 12, color: "#B3261E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
             )
           )}
           {!selectedIsPast && (
@@ -973,7 +973,7 @@ function ServiceCalendar({ service, setError }) {
           )}
           <div className="wrap">
             <span className="muted" style={{ fontSize: 12 }}>Danger zone:</span>
-            <button className="btn-outline" style={{ color: "#C22A1E" }} onClick={clearAllDays}>Clear all days</button>
+            <button className="btn-outline" style={{ color: "#B3261E" }} onClick={clearAllDays}>Clear all days</button>
           </div>
         </div>
       </div>
@@ -1013,12 +1013,12 @@ function ServiceWizard({ locationId, onDone, onCancel, setError }) {
 
   if (step === 1) {
     return (
-      <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
+      <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 2</div>
         <input className="input" autoFocus placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="stack">
           {SERVICE_MODE_INFO.map((m) => (
-            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "#0F5FBF" : undefined }}>
+            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "#1B1D1F" : undefined }}>
               <input type="radio" name="mode" checked={mode === m.id} onChange={() => setMode(m.id)} style={{ marginTop: 3 }} />
               <div>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</div>
@@ -1045,7 +1045,7 @@ function ServiceWizard({ locationId, onDone, onCancel, setError }) {
   }
 
   return (
-    <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
+    <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: set hours for "{createdService.name}"</div>
       </div>
