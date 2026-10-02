@@ -268,8 +268,9 @@ function Signup({ onDone, setError }) {
   // Step 2 — pass + locations (combined, since the pass decides the per-location price)
   const [planId, setPlanId] = useState("month");
   const [customDays, setCustomDays] = useState(14);
-  const [locationCount, setLocationCount] = useState(1);
   const [locationNames, setLocationNames] = useState([""]);
+  const locationCount = locationNames.length;
+  const MAX_LOCATIONS = 20;
 
   // Step 3 — payment
   const [paymentMethod, setPaymentMethod] = useState("card");
@@ -281,22 +282,16 @@ function Signup({ onDone, setError }) {
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
-  function resizeArray(setter, clamped) {
-    setter((prev) => {
-      const next = prev.slice(0, clamped);
-      while (next.length < clamped) next.push("");
-      return next;
-    });
+  function addLocation() {
+    setLocationNames((prev) => (prev.length >= MAX_LOCATIONS ? prev : [...prev, ""]));
   }
 
-  function setCount(n) {
-    const clamped = Math.max(1, Math.min(20, n));
-    setLocationCount(clamped);
-    resizeArray(setLocationNames, clamped);
+  function removeLocation(i) {
+    setLocationNames((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)));
   }
 
-  function updateLocationField(setter, i, value) {
-    setter((prev) => prev.map((v, idx) => (idx === i ? value : v)));
+  function updateLocationName(i, value) {
+    setLocationNames((prev) => prev.map((v, idx) => (idx === i ? value : v)));
   }
 
   const selectedPlan = PLAN_META.find((p) => p.id === planId);
@@ -305,7 +300,7 @@ function Signup({ onDone, setError }) {
   const total = (perLocation * locationCount).toFixed(2);
 
   const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
-  const activeNames = locationNames.slice(0, locationCount).map((n) => n.trim());
+  const activeNames = locationNames.map((n) => n.trim());
   const namesFilled = activeNames.every((n) => n);
   const normalizedNames = activeNames.map((n) => n.toLowerCase());
   const hasDuplicateNames = namesFilled && new Set(normalizedNames).size !== normalizedNames.length;
@@ -396,26 +391,33 @@ function Signup({ onDone, setError }) {
             <strong>Total: £{total}</strong>
           </div>
 
-          <div className="row">
-            <span className="muted">How many locations?</span>
-            <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
-            <span>{locationCount}</span>
-            <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
-          </div>
           <div className="muted" style={{ fontSize: 11 }}>
             Name each location now — each name must be unique. Once you're in, you'll just need to add services,
-            set working hours, and pick the dates you're open. More locations can always be added later.
+            set working hours, and pick the dates you're open.
           </div>
           <div className="stack">
-            {Array.from({ length: locationCount }).map((_, i) => (
-              <input
-                key={i}
-                className="input"
-                placeholder={`Location ${i + 1} name`}
-                value={locationNames[i] || ""}
-                onChange={(e) => updateLocationField(setLocationNames, i, e.target.value)}
-              />
+            {locationNames.map((name, i) => (
+              <div key={i} className="row" style={{ gap: 6 }}>
+                <input
+                  className="input"
+                  placeholder={`Location ${i + 1} name`}
+                  value={name}
+                  onChange={(e) => updateLocationName(i, e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn-outline"
+                  onClick={() => removeLocation(i)}
+                  disabled={locationNames.length <= 1}
+                  title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
+                >
+                  Remove
+                </button>
+              </div>
             ))}
+          </div>
+          <div>
+            <button className="btn-outline" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add location</button>
           </div>
           {hasDuplicateNames && (
             <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
