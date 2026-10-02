@@ -270,10 +270,6 @@ function Signup({ onDone, setError }) {
   const [customDays, setCustomDays] = useState(14);
   const [locationCount, setLocationCount] = useState(1);
   const [locationNames, setLocationNames] = useState([""]);
-  const [locationLine1, setLocationLine1] = useState([""]);
-  const [locationLine2, setLocationLine2] = useState([""]);
-  const [locationCity, setLocationCity] = useState([""]);
-  const [locationPostcode, setLocationPostcode] = useState([""]);
 
   // Step 3 — payment
   const [paymentMethod, setPaymentMethod] = useState("card");
@@ -297,10 +293,6 @@ function Signup({ onDone, setError }) {
     const clamped = Math.max(1, Math.min(20, n));
     setLocationCount(clamped);
     resizeArray(setLocationNames, clamped);
-    resizeArray(setLocationLine1, clamped);
-    resizeArray(setLocationLine2, clamped);
-    resizeArray(setLocationCity, clamped);
-    resizeArray(setLocationPostcode, clamped);
   }
 
   function updateLocationField(setter, i, value) {
@@ -313,7 +305,11 @@ function Signup({ onDone, setError }) {
   const total = (perLocation * locationCount).toFixed(2);
 
   const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
-  const step2Valid = locationNames.slice(0, locationCount).every((n) => n.trim());
+  const activeNames = locationNames.slice(0, locationCount).map((n) => n.trim());
+  const namesFilled = activeNames.every((n) => n);
+  const normalizedNames = activeNames.map((n) => n.toLowerCase());
+  const hasDuplicateNames = namesFilled && new Set(normalizedNames).size !== normalizedNames.length;
+  const step2Valid = namesFilled && !hasDuplicateNames;
   const step3Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
 
   function next() { setStep((s) => Math.min(3, s + 1)); }
@@ -332,9 +328,6 @@ function Signup({ onDone, setError }) {
         planDays, price: total, pricePerLocation: perLocation, locationCount,
         paymentMethod, invoiceEmail, invoicePO: poNumber,
         locationNames: locationNames.slice(0, locationCount),
-        locationAddresses: Array.from({ length: locationCount }, (_, i) =>
-          combineAddress(locationLine1[i], locationLine2[i], locationCity[i], locationPostcode[i])
-        ),
       };
       const result = await api.signup(payload);
       onDone(result);
@@ -410,31 +403,25 @@ function Signup({ onDone, setError }) {
             <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
           </div>
           <div className="muted" style={{ fontSize: 11 }}>
-            Name each location now — once you're in, you'll just need to add services, set working hours, and
-            pick the dates you're open. More locations can always be added later.
+            Name each location now — each name must be unique. Once you're in, you'll just need to add services,
+            set working hours, and pick the dates you're open. More locations can always be added later.
           </div>
           <div className="stack">
             {Array.from({ length: locationCount }).map((_, i) => (
-              <div key={i} className="card stack" style={{ gap: 6 }}>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>Location {i + 1}</div>
-                <input
-                  className="input"
-                  placeholder={`Location ${i + 1} name`}
-                  value={locationNames[i] || ""}
-                  onChange={(e) => updateLocationField(setLocationNames, i, e.target.value)}
-                />
-                <AddressFields
-                  line1={locationLine1[i] || ""} line2={locationLine2[i] || ""} city={locationCity[i] || ""} postcode={locationPostcode[i] || ""}
-                  onChange={(field, value) => {
-                    if (field === "line1") updateLocationField(setLocationLine1, i, value);
-                    if (field === "line2") updateLocationField(setLocationLine2, i, value);
-                    if (field === "city") updateLocationField(setLocationCity, i, value);
-                    if (field === "postcode") updateLocationField(setLocationPostcode, i, value);
-                  }}
-                />
-              </div>
+              <input
+                key={i}
+                className="input"
+                placeholder={`Location ${i + 1} name`}
+                value={locationNames[i] || ""}
+                onChange={(e) => updateLocationField(setLocationNames, i, e.target.value)}
+              />
             ))}
           </div>
+          {hasDuplicateNames && (
+            <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
+              Each location needs its own name — two locations currently share the same name.
+            </div>
+          )}
 
           <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#F4F9F6" }}>
             <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>

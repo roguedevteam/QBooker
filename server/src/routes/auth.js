@@ -24,6 +24,15 @@ router.post("/signup", asyncHandler(async (req, res) => {
   if (!email || !businessName || !firstName || !lastName || !planId || !locationNames?.length) {
     return res.status(400).json({ error: "Missing required signup fields." });
   }
+  if (locationNames.some((n) => !n?.trim())) {
+    return res.status(400).json({ error: "Every location needs a name." });
+  }
+  // Location names must be unique per customer — this is how staff and customers tell locations
+  // apart, so two locations on the same account can't share one.
+  const normalizedNames = locationNames.map((n) => n.trim().toLowerCase());
+  if (new Set(normalizedNames).size !== normalizedNames.length) {
+    return res.status(400).json({ error: "Location names must be unique." });
+  }
   if (paymentMethod === "invoice" && !invoicePO?.trim()) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
