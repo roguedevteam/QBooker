@@ -18,9 +18,6 @@ function formatTime(min) {
 function isDateLockedClient(dateStr) {
   return dateStr <= todayIso();
 }
-function isDatePastClient(dateStr) {
-  return dateStr < todayIso();
-}
 function addDaysIso(dateStr, n) {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -102,7 +99,7 @@ export default function App() {
       {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
-      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} setError={setError} onSignOut={() => { setToken("tenant_admin", null); setTenant(null); setScreen("admin-login"); }} />}
+      {screen === "admin" && tenant && <Workspace tenant={tenant} setError={setError} onSignOut={() => { setToken("tenant_admin", null); setTenant(null); setScreen("admin-login"); }} />}
     </div>
   );
 }
@@ -151,34 +148,308 @@ function AdminLogin({ onSignedIn, setError }) {
   );
 }
 
-function PendingPaymentBanner({ tenant }) {
-  if (tenant.status !== "pending") return null;
+// ---------------------------------------------------------------------------
+function PlanBanner({ tenant, setError, onChanged }) {
+  const [plan, setPlan] = useState(null);
+  const [draft, setDraft] = useState("");
+
+  async function load() {
+    try { const r = await api.getPlan(); setPlan(r); setDraft(r.window?.start || ""); } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function reschedule() {
+    try {
+      const payload = tenant.plan_id === "day" ? { activeDate: draft } : tenant.plan_id === "week" ? { weekStartDate: draft } : { startDate: draft };
+      await api.reschedulePlan(payload);
+      await load();
+      onChanged?.();
+    } catch (err) { setError(err.message); }
+  }
+
+  if (!plan || !plan.window) return null;
+  const label = tenant.plan_id === "day" ? "Day pass"
+    : tenant.plan_id === "week" ? "Week pass"
+    : tenant.plan_label;
+
   return (
-    <div className="card" style={{ background: "#FBE9E7", borderColor: "#C22A1E", color: "#C22A1E", fontSize: 13, fontWeight: 500 }}>
-      Payment pending — your account can be configured now, but staff kiosk and customer WhatsApp won't work until payment is received.
+    <div className="card row" style={{ justifyContent: "space-between", background: plan.locked ? "#FBE9E7" : "#E4F0FB", flexWrap: "wrap" }}>
+      <div style={{ fontSize: 13 }}>
+        <strong>{label}</strong> covers <strong>{plan.window.start}</strong> to <strong>{plan.window.end}</strong>
+        {plan.locked ? " — locked (already started)." : "."}
+      </div>
+      {!plan.locked && (
+        <div className="row">
+          <span className="muted" style={{ fontSize: 12 }}>Reschedule to:</span>
+          <input className="input" type="date" min={todayIso()} value={draft} onChange={(e) => setDraft(e.target.value)} style={{ width: 150 }} />
+          <button className="btn-outline" onClick={reschedule}>Save</button>
+        </div>
+      )}
     </div>
   );
 }
 
-function LocationWebsiteField({ loc, setError, onChanged }) {
-  const [url, setUrl] = useState(loc.website_url || "");
-  const [saved, setSaved] = useState(false);
+// ---------------------------------------------------------------------------
+// Decides whether a tenant lands in the guided onboarding wizard or the
+// normal tabbed dashboard, based on the server's onboarding/status check.
+function Workspace({ tenant, setError, onSignOut }) {
+  const [status, setStatus] = useState(null); // null while loading
 
-  async function save() {
+  async function refreshStatus() {
+    try { setStatus(await api.getOnboardingStatus()); } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { refreshStatus(); }, []);
+
+  if (status === null) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
+
+  if (!status.completed) {
+    return <OnboardingFlow tenant={tenant} status={status} refreshStatus={refreshStatus} setError={setError} onSignOut={onSignOut} />;
+  }
+  return <AdminDashboard tenant={tenant} setError={setError} onSignOut={onSignOut} />;
+}
+
+function OnboardingProgress({ step }) {
+  const labels = ["Location", "Service", "Hours", "You're live"];
+  return (
+    <div className="row" style={{ justifyContent: "center", gap: 6 }}>
+      {labels.map((l, i) => (
+        <span key={l} className="badge" style={{ background: i + 1 <= step ? "#0F5FBF" : "#DCE4EA", color: i + 1 <= step ? "#fff" : "#5B6B79" }}>
+          {i + 1}. {l}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// One linear path for a brand-new tenant: add a location, add a service,
+// confirm this week's hours, then hand over the staff code & customer link.
+// Each step's own screen is derived straight from server state, so refreshing
+// or signing back in mid-flow resumes at the right place.
+function OnboardingFlow({ tenant, status, refreshStatus, setError, onSignOut }) {
+  const [locations, setLocations] = useState([]);
+  const [services, setServices] = useState([]);
+  const STAFF_APP_URL = import.meta.env.VITE_STAFF_APP_URL || "http://localhost:5176";
+  const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
+
+  async function refreshAll() {
     try {
-      await api.updateLocation(loc.id, { websiteUrl: url.trim() || null });
-      setSaved(true);
-      onChanged();
-      setTimeout(() => setSaved(false), 1500);
+      const [l, s] = await Promise.all([api.getLocations(), api.getServices()]);
+      setLocations(l.locations); setServices(s.services);
     } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { refreshAll(); }, []);
+
+  const step = !status.hasLocation ? 1 : !status.hasService ? 2 : !status.hasHours ? 3 : 4;
+
+  return (
+    <div>
+      <div className="header row" style={{ justifyContent: "space-between" }}>
+        <strong>{tenant.business_name} — Getting set up</strong>
+        <button className="btn-outline" style={{ background: "transparent", borderColor: "#fff", color: "#fff" }} onClick={onSignOut}>Sign out</button>
+      </div>
+      <div className="stack" style={{ maxWidth: 560, margin: "0 auto", padding: 20 }}>
+        <OnboardingProgress step={step} />
+        {step === 1 && <StepLocation onAdded={async () => { await refreshAll(); await refreshStatus(); }} setError={setError} />}
+        {step === 2 && <StepService locations={locations} onAdded={async () => { await refreshAll(); await refreshStatus(); }} setError={setError} />}
+        {step === 3 && <StepHours services={services} onDone={refreshStatus} setError={setError} />}
+        {step === 4 && <StepLive tenant={tenant} staffAppUrl={STAFF_APP_URL} customerAppUrl={CUSTOMER_APP_URL} onFinish={refreshStatus} setError={setError} />}
+      </div>
+    </div>
+  );
+}
+
+function StepLocation({ onAdded, setError }) {
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit() {
+    if (!name.trim()) return;
+    setSubmitting(true);
+    try { await api.addLocation(name.trim()); setName(""); await onAdded(); }
+    catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
   }
 
   return (
-    <div className="row" style={{ flexWrap: "wrap" }}>
-      <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
-      <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
-      <button className="btn-outline" onClick={save}>Save</button>
-      {saved && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
+    <div className="card stack">
+      <h3>Let's set up your first location</h3>
+      <p className="muted" style={{ fontSize: 13 }}>This could be a shop, branch, office — wherever customers are served.</p>
+      <input className="input" autoFocus placeholder="e.g. High Street Branch" value={name}
+        onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <button className="btn" disabled={!name.trim() || submitting} onClick={submit}>{submitting ? "Adding…" : "Add location & continue"}</button>
+    </div>
+  );
+}
+
+function StepService({ locations, onAdded, setError }) {
+  const [name, setName] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => { if (!locationId && locations[0]) setLocationId(locations[0].id); }, [locations]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submit() {
+    if (!name.trim() || !locationId) return;
+    setSubmitting(true);
+    try { await api.addService(name.trim(), locationId, { seedDefaultHours: false }); setName(""); await onAdded(); }
+    catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="card stack">
+      <h3>What's the first thing customers see you for?</h3>
+      <p className="muted" style={{ fontSize: 13 }}>
+        e.g. "Prescriptions", "Returns", "Consultations". We'll set it up as <strong>Hybrid</strong> (queue + bookings)
+        with 15-minute slots — the most flexible option. You can fine-tune this later.
+      </p>
+      {locations.length > 1 && (
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="muted">Location</span>
+          <select className="input" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+            {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </label>
+      )}
+      <input className="input" autoFocus placeholder="Service name" value={name}
+        onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <button className="btn" disabled={!name.trim() || !locationId || submitting} onClick={submit}>{submitting ? "Adding…" : "Add service & continue"}</button>
+    </div>
+  );
+}
+
+function next7Days() {
+  const today = todayIso();
+  const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const date = addDaysIso(today, i);
+    const idx = weekdayIndex(date);
+    days.push({ date, label: names[idx], defaultOpen: idx < 5 });
+  }
+  return days;
+}
+
+function TimeSelect({ value, onChange }) {
+  const opts = [];
+  for (let m = 0; m < 24 * 60; m += 30) opts.push(m);
+  return (
+    <select className="input" style={{ width: 110 }} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {opts.map((m) => <option key={m} value={m}>{formatTime(m)}</option>)}
+    </select>
+  );
+}
+
+function StepHours({ services, onDone, setError }) {
+  const days = useState(next7Days)[0];
+  const [enabled, setEnabled] = useState(() => Object.fromEntries(days.map((d) => [d.date, d.defaultOpen])));
+  const [start, setStart] = useState(510); // 8:30am
+  const [end, setEnd] = useState(1020); // 5:00pm
+  const [staffCount, setStaffCount] = useState(2);
+  const [bookingStaffCount, setBookingStaffCount] = useState(1);
+  const [saving, setSaving] = useState(false);
+
+  function rangeHours() {
+    const hours = [];
+    for (let m = start; m < end; m += 30) hours.push(m);
+    return hours;
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const hours = rangeHours();
+      for (const svc of services) {
+        for (const d of days) {
+          await api.putDailyConfig(svc.id, { date: d.date, hours: enabled[d.date] ? hours : [], staffCount, bookingStaffCount });
+        }
+      }
+      await onDone();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="card stack">
+      <h3>Set this week's hours</h3>
+      <p className="muted" style={{ fontSize: 13 }}>We've pre-filled standard weekday hours — adjust anything that's different, or just continue.</p>
+      <div className="wrap">
+        {days.map((d) => (
+          <label key={d.date} className="row" style={{ gap: 4 }}>
+            <input type="checkbox" checked={!!enabled[d.date]} onChange={(e) => setEnabled((p) => ({ ...p, [d.date]: e.target.checked }))} />
+            {d.label}
+          </label>
+        ))}
+      </div>
+      <div className="row">
+        <span className="muted">Open</span>
+        <TimeSelect value={start} onChange={setStart} />
+        <span className="muted">to</span>
+        <TimeSelect value={end} onChange={setEnd} />
+      </div>
+      <div className="row">
+        <span className="muted">Staff on duty:</span>
+        <input className="input" style={{ width: 60 }} type="number" min={1} value={staffCount} onChange={(e) => setStaffCount(Math.max(1, Number(e.target.value) || 1))} />
+        <span className="muted">On bookings:</span>
+        <input className="input" style={{ width: 60 }} type="number" min={0} value={bookingStaffCount} onChange={(e) => setBookingStaffCount(Math.max(0, Number(e.target.value) || 0))} />
+      </div>
+      <button className="btn" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save & continue"}</button>
+    </div>
+  );
+}
+
+function StepLive({ tenant, staffAppUrl, customerAppUrl, onFinish, setError }) {
+  const [finishing, setFinishing] = useState(false);
+  const customerLink = `${customerAppUrl}/?t=${tenant.id}`;
+
+  async function markInvited() {
+    try { await api.updateOnboarding({ staffInvited: true }); } catch { /* non-blocking */ }
+  }
+  async function finish() {
+    setFinishing(true);
+    try { await api.updateOnboarding({ completed: true }); await onFinish(); }
+    catch (err) { setError(err.message); }
+    finally { setFinishing(false); }
+  }
+
+  return (
+    <div className="card stack">
+      <h3>You're live 🎉</h3>
+      <p className="muted" style={{ fontSize: 13 }}>Share these with your team so they can start taking customers.</p>
+      <div className="card stack" style={{ background: "#E4F0FB" }}>
+        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13 }}>Staff access code: <strong style={{ letterSpacing: 1 }}>{tenant.access_code}</strong></div>
+          <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(`${staffAppUrl} — code ${tenant.access_code}`); markInvited(); }}>Copy for staff</button>
+        </div>
+        <div className="muted" style={{ fontSize: 12 }}>Staff Kiosk: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{staffAppUrl}</code></div>
+      </div>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13 }}>Customer link:</span>
+        <code style={{ fontSize: 12, background: "#F2F6F9", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
+        <button className="btn-outline" onClick={() => navigator.clipboard?.writeText(customerLink)}>Copy</button>
+      </div>
+      <button className="btn" disabled={finishing} onClick={finish}>{finishing ? "Finishing…" : "Go to dashboard →"}</button>
+    </div>
+  );
+}
+
+function SetupChecklist({ status, onJump }) {
+  const items = [
+    { key: "hasLocation", label: "Location added" },
+    { key: "hasService", label: "Service added" },
+    { key: "hasHours", label: "Hours set" },
+    { key: "staffInvited", label: "Staff invited" },
+  ];
+  const allDone = items.every((it) => status[it.key]);
+  if (allDone) return null;
+  return (
+    <div className="card wrap" style={{ background: "#F2F6F9" }}>
+      {items.map((it) => (
+        <span key={it.key} className="row" style={{ gap: 4, cursor: "pointer" }} onClick={() => onJump("locations")}>
+          <span style={{ color: status[it.key] ? "#14803C" : "#5B6B79" }}>{status[it.key] ? "✓" : "☐"}</span>
+          <span style={{ fontSize: 13, color: status[it.key] ? "#5B6B79" : "#1B2733" }}>{it.label}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -187,11 +458,15 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
+  const [buyingLocation, setBuyingLocation] = useState(false);
+  const [newLocationName, setNewLocationName] = useState("");
   const [expandedLocations, setExpandedLocations] = useState({});
   const [addingServiceFor, setAddingServiceFor] = useState(null);
+  const [newServiceDraft, setNewServiceDraft] = useState("");
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
+  const [onboardingStatus, setOnboardingStatus] = useState(null);
   const date = todayIso();
   const STAFF_APP_URL = import.meta.env.VITE_STAFF_APP_URL || "http://localhost:5176";
   const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
@@ -206,14 +481,19 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   async function refreshQueue() {
     try {
       const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
-      setTickets(tixRes.tickets);
-      setStats(statsRes.stats);
+      setTickets(tixRes.tickets); setStats(statsRes.stats);
     } catch (err) { setError(err.message); }
   }
   async function refreshAudit() {
     try { const logRes = await api.getAuditLog(); setAuditLog(logRes.auditLog); } catch (err) { setError(err.message); }
   }
-  useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); }, []);
+  async function refreshOnboarding() {
+    try { setOnboardingStatus(await api.getOnboardingStatus()); } catch (err) { setError(err.message); }
+  }
+  async function markStaffInvited() {
+    try { await api.updateOnboarding({ staffInvited: true }); refreshOnboarding(); } catch { /* non-blocking */ }
+  }
+  useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); refreshOnboarding(); }, []);
 
   // Light polling for near-real-time (not a WebSocket/Supabase-realtime subscription — just periodic refetch).
   useEffect(() => {
@@ -224,111 +504,28 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   return (
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+      <PlanBanner tenant={tenant} setError={setError} />
       <div className="wrap">
-        {["dashboard", "locations", "billing", "audit", "shop"].map((t) => (
-          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+        {["dashboard", "locations", "audit"].map((t) => (
+          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") { refreshQueue(); refreshOnboarding(); } if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
 
-      {tab === "locations" && (
-        <div className="stack">
-          <PendingPaymentBanner tenant={tenant} />
-          <div className="card stack" style={{ background: "#E4F0FB" }}>
-            <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Each location below has its own sign-in code — share that location's code with the staff working there.
-            </div>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13 }}>Customer link:</span>
-              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
-              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
-          </div>
-          {locations.map((loc) => {
-            const locServices = services.filter((s) => s.location_id === loc.id);
-            const isOpen = !!expandedLocations[loc.id];
-            const addingHere = addingServiceFor === loc.id;
-            return (
-              <div key={loc.id} className="card stack">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <div className="row">
-                    <button className="btn-outline" onClick={() => setExpandedLocations((prev) => ({ ...prev, [loc.id]: !prev[loc.id] }))}>
-                      {isOpen ? "▾" : "▸"}
-                    </button>
-                    <input
-                      className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
-                      onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                    />
-                    <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <div className="row">
-                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setExpandedLocations((prev) => ({ ...prev, [loc.id]: true })); }}>Add service</button>
-                    <button
-                      className="btn-outline"
-                      onClick={async () => {
-                        if (confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
-                          await api.deleteLocation(loc.id);
-                          refreshCore();
-                        }
-                      }}
-                    >
-                      Remove location
-                    </button>
-                  </div>
-                </div>
-
-                <div className="row">
-                  <span className="muted" style={{ fontSize: 12 }}>Staff sign-in code:</span>
-                  <code style={{ fontSize: 13, letterSpacing: 1, background: "#F2F6F9", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
-                </div>
-                <LocationWebsiteField loc={loc} setError={setError} onChanged={refreshCore} />
-
-                {addingHere && (
-                  <ServiceWizard
-                    locationId={loc.id}
-                    setError={setError}
-                    onCancel={() => setAddingServiceFor(null)}
-                    onDone={() => { setAddingServiceFor(null); refreshCore(); }}
-                  />
-                )}
-
-                {isOpen && (
-                  <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DCE4EA" }}>
-                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
-                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} onChange={refreshCore} setError={setError} />)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {tab === "billing" && (
-        <BillingTab tenant={tenant} locations={locations} setError={setError} onLocationsChanged={refreshCore} />
-      )}
-
-      {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
-
       {tab === "dashboard" && (
         <div className="stack">
-          <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
+          {onboardingStatus && <SetupChecklist status={onboardingStatus} onJump={setTab} />}
           <div className="wrap">
-            <div className="card">{locations.length}<div className="muted" style={{ fontSize: 11 }}>Location{locations.length === 1 ? "" : "s"}</div></div>
-            <div className="card">{services.filter((s) => locationStatus(locations.find((l) => l.id === s.location_id) || {}) === "live").length}<div className="muted" style={{ fontSize: 11 }}>Live services</div></div>
+            <div className="card">{stats?.waiting ?? 0}<div className="muted" style={{ fontSize: 11 }}>Waiting now</div></div>
+            <div className="card">{stats?.booked ?? 0}<div className="muted" style={{ fontSize: 11 }}>Booked today</div></div>
+            <div className="card">{stats?.seen ?? 0}<div className="muted" style={{ fontSize: 11 }}>Seen today</div></div>
+            <div className="card">{stats?.no_show ?? 0}<div className="muted" style={{ fontSize: 11 }}>No-shows</div></div>
+            <div className="card">{stats?.cancelled ?? 0}<div className="muted" style={{ fontSize: 11 }}>Cancelled</div></div>
           </div>
-          {stats && (
-            <div className="wrap">
-              <div className="card">{stats.waiting}<div className="muted" style={{ fontSize: 11 }}>Waiting</div></div>
-              <div className="card">{stats.booked}<div className="muted" style={{ fontSize: 11 }}>Booked</div></div>
-              <div className="card">{stats.seen}<div className="muted" style={{ fontSize: 11 }}>Seen today</div></div>
-              <div className="card">{stats.no_show}<div className="muted" style={{ fontSize: 11 }}>No-show</div></div>
-              <div className="card">{stats.cancelled}<div className="muted" style={{ fontSize: 11 }}>Cancelled</div></div>
-            </div>
-          )}
           <div className="card">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 13 }}>Today's tickets</strong>
+              <button className="btn-outline" onClick={refreshQueue}>Refresh</button>
+            </div>
             <table>
               <thead><tr><th>Ticket</th><th>Service</th><th>Type/time</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
@@ -354,6 +551,110 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
         </div>
       )}
 
+      {tab === "locations" && (
+        <div className="stack">
+          <div className="card stack" style={{ background: "#E4F0FB" }}>
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13 }}>Staff access code: <strong style={{ letterSpacing: 1 }}>{tenant.access_code}</strong></div>
+              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(`${STAFF_APP_URL} — code ${tenant.access_code}`); markStaffInvited(); }}>Copy for staff</button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Give your team the Staff Kiosk link ({STAFF_APP_URL}) and this code, plus the one-time code they'll get when they sign in.
+            </div>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>Customer link:</span>
+              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
+              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
+          </div>
+          <div className="card row" style={{ justifyContent: "space-between" }}>
+            <span>You're on <strong>{locations.length}</strong> location{locations.length === 1 ? "" : "s"}, paid as part of your {tenant.plan_label?.toLowerCase()}.</span>
+            {!buyingLocation && <button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button>}
+          </div>
+          {buyingLocation && (
+            <div className="card stack" style={{ background: "#E4F0FB" }}>
+              <div style={{ fontSize: 13 }}>
+                Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
+                {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
+              </div>
+              <div className="row">
+                <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
+                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName); setNewLocationName(""); setBuyingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Buy &amp; add</button>
+                <button className="btn-outline" onClick={() => { setBuyingLocation(false); setNewLocationName(""); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {locations.map((loc) => {
+            const locServices = services.filter((s) => s.location_id === loc.id);
+            const isOpen = !!expandedLocations[loc.id];
+            const addingHere = addingServiceFor === loc.id;
+            return (
+              <div key={loc.id} className="card stack">
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <div className="row">
+                    <button className="btn-outline" onClick={() => setExpandedLocations((prev) => ({ ...prev, [loc.id]: !prev[loc.id] }))}>
+                      {isOpen ? "▾" : "▸"}
+                    </button>
+                    <strong>{loc.name}</strong>
+                    <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="row">
+                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setNewServiceDraft(""); setExpandedLocations((prev) => ({ ...prev, [loc.id]: true })); }}>Add service</button>
+                    <button
+                      className="btn-outline"
+                      onClick={async () => {
+                        if (confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
+                          await api.deleteLocation(loc.id);
+                          refreshCore();
+                        }
+                      }}
+                    >
+                      Remove location
+                    </button>
+                  </div>
+                </div>
+
+                {addingHere && (
+                  <div className="stack" style={{ position: "relative" }}>
+                    <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
+                      <span className="muted" style={{ fontSize: 12 }}>New service at {loc.name}</span>
+                      <div className="row">
+                        <input
+                          className="input" autoFocus placeholder="Service name" value={newServiceDraft}
+                          onChange={(e) => setNewServiceDraft(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter" && newServiceDraft.trim()) {
+                              await api.addService(newServiceDraft, loc.id);
+                              setAddingServiceFor(null); setNewServiceDraft(""); refreshCore(); refreshOnboarding();
+                            }
+                            if (e.key === "Escape") { setAddingServiceFor(null); setNewServiceDraft(""); }
+                          }}
+                        />
+                        <button
+                          className="btn" disabled={!newServiceDraft.trim()}
+                          onClick={async () => { await api.addService(newServiceDraft, loc.id); setAddingServiceFor(null); setNewServiceDraft(""); refreshCore(); refreshOnboarding(); }}
+                        >
+                          Add
+                        </button>
+                        <button className="btn-outline" onClick={() => { setAddingServiceFor(null); setNewServiceDraft(""); }}>Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isOpen && (
+                  <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DCE4EA" }}>
+                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
+                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} onChange={refreshCore} setError={setError} />)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {tab === "audit" && (
         <div className="card stack">
           {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
@@ -364,328 +665,9 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   );
 }
 
-function locationWindow(loc) {
-  return loc.start_date && loc.end_date ? { start: loc.start_date, end: loc.end_date } : null;
-}
-function locationStatus(loc) {
-  if (!loc.plan_id) return "none";
-  if (!loc.start_date) return "purchased"; // bought, dormant — hasn't started yet
-  const today = todayIso();
-  return today > loc.end_date ? "expired" : "live";
-}
-
-function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
-  const [buyingLocation, setBuyingLocation] = useState(false);
-  const [newLocationName, setNewLocationName] = useState("");
-  const [pricing, setPricing] = useState(null);
-
-  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
-
-  return (
-    <div className="stack">
-      <PendingPaymentBanner tenant={tenant} />
-
-      <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Buy another location</div>
-        {!buyingLocation && <div><button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button></div>}
-        {buyingLocation && (
-          <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
-            <div style={{ fontSize: 13 }}>
-              Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
-              {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
-              {" "}It gets its own {tenant.plan_label?.toLowerCase()} license, which starts the moment you set opening hours for a service there — independent of your other locations.
-            </div>
-            <div className="row">
-              <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
-              <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName); setNewLocationName(""); setBuyingLocation(false); onLocationsChanged(); } catch (err) { setError(err.message); } }}>Buy &amp; add</button>
-              <button className="btn-outline" onClick={() => { setBuyingLocation(false); setNewLocationName(""); }}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Locations &amp; licenses</div>
-        <div className="muted" style={{ fontSize: 12 }}>
-          Each location's license runs independently — extend one without affecting the others. Expand a location to see
-          everything bought for it and download a receipt.
-        </div>
-        {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
-        {locations.map((loc) => (
-          <LocationLicenseRow key={loc.id} loc={loc} tenant={tenant} pricing={pricing} setError={setError} onChanged={onLocationsChanged} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
-  const [choosing, setChoosing] = useState(false);
-  const [chosenPlan, setChosenPlan] = useState(null);
-  const [extending, setExtending] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [history, setHistory] = useState(null);
-
-  const licenseWindow = locationWindow(loc);
-  const status = locationStatus(loc);
-  const statusMeta = {
-    live: { label: "Live", color: "green" },
-    expired: { label: "License expired", color: "red" },
-    purchased: { label: "Purchased — not started", color: "amber" },
-    none: { label: "No license assigned", color: "amber" },
-  }[status];
-
-  const windowText = !loc.plan_label
-    ? "No license assigned yet"
-    : !licenseWindow
-      ? `${loc.plan_label} — starts the moment you set opening hours for a service here`
-      : loc.plan_days === 1
-        ? `${loc.plan_label} — ${licenseWindow.start}, until midnight`
-        : `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`;
-
-  const sale = pricing?.sale?.active ? pricing.sale : null;
-  function planPrice(p) {
-    if (sale && sale[p] != null) return sale[p];
-    return pricing?.[p];
-  }
-
-  async function loadHistory() {
-    try {
-      const r = await api.getLicenseHistory(loc.id);
-      setHistory(r.purchases);
-    } catch (err) { setError(err.message); }
-  }
-  function toggleExpand() {
-    setExpanded((v) => {
-      if (!v && !history) loadHistory();
-      return !v;
-    });
-  }
-
-  function downloadReceipt(purchase) {
-    const lines = [
-      "QBOOKER — RECEIPT",
-      "==================",
-      "",
-      `Business: ${tenant.business_name}`,
-      `Location: ${loc.name}`,
-      "",
-      `Plan: ${purchase.plan_label}`,
-      `Price: £${purchase.price}`,
-      purchase.start_date ? `Covers: ${purchase.start_date}${purchase.end_date && purchase.end_date !== purchase.start_date ? ` to ${purchase.end_date}` : ""}` : null,
-      `Date bought: ${new Date(purchase.purchased_at).toLocaleDateString()}`,
-      "",
-      `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
-      tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
-      `Account status: ${tenant.status === "active" ? "Active" : "Payment pending"}`,
-      "",
-      `Issued: ${new Date().toLocaleDateString()}`,
-    ].filter(Boolean);
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `qbooker-receipt-${loc.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${new Date(purchase.purchased_at).toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function confirmExtend() {
-    setExtending(true);
-    try {
-      await api.extendLocationLicense(loc.id, { planId: chosenPlan });
-      setChoosing(false);
-      setChosenPlan(null);
-      setHistory(null);
-      onChanged();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setExtending(false);
-    }
-  }
-
-  return (
-    <div className="card stack">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-        <div className="row">
-          <button className="btn-outline" onClick={toggleExpand} title={expanded ? "Collapse" : "Expand"}>{expanded ? "▾" : "▸"}</button>
-          <strong>{loc.name}</strong>
-          <span className={`badge badge-${statusMeta.color}`}>{statusMeta.label}</span>
-        </div>
-        {!choosing && <button className="btn-outline" onClick={() => setChoosing(true)}>Extend license</button>}
-      </div>
-      <div className="muted" style={{ fontSize: 12 }}>{windowText}</div>
-
-      {choosing && !chosenPlan && (
-        <div className="wrap">
-          {["day", "week", "month", "year"].map((p) => (
-            <button key={p} className="btn-outline" onClick={() => setChosenPlan(p)}>
-              {p[0].toUpperCase() + p.slice(1)} — {sale && sale[p] != null && (
-                <span className="muted" style={{ textDecoration: "line-through" }}>£{pricing?.[p]}</span>
-              )} £{planPrice(p) ?? "…"}
-            </button>
-          ))}
-          <button className="btn-outline" onClick={() => setChoosing(false)}>Cancel</button>
-        </div>
-      )}
-
-      {chosenPlan && (
-        <div className="stack" style={{ background: "#E4F0FB", borderRadius: 8, padding: 12 }}>
-          <div style={{ fontSize: 13 }}>
-            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>.
-            {status === "live"
-              ? ` It'll pick up automatically the day your current license ends (${licenseWindow.end}) and hours are set for it — never before.`
-              : " It'll start the moment you set opening hours for a service here."}
-          </div>
-          <div className="row">
-            <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>
-            <button className="btn-outline" onClick={() => setChosenPlan(null)}>Back</button>
-          </div>
-        </div>
-      )}
-
-      {expanded && (
-        <div className="stack" style={{ borderTop: "1px solid #DCE4EA", paddingTop: 10 }}>
-          <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
-          {!history && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
-          {history && history.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Nothing recorded yet.</div>}
-          {history && history.length > 0 && (
-            <table>
-              <thead><tr><th>Date bought</th><th>Plan</th><th>Covers</th><th>Price</th><th></th></tr></thead>
-              <tbody>
-                {history.map((p) => (
-                  <tr key={p.id}>
-                    <td>{new Date(p.purchased_at).toLocaleDateString()}</td>
-                    <td>{p.plan_label}</td>
-                    <td>{p.start_date ? (p.end_date && p.end_date !== p.start_date ? `${p.start_date} – ${p.end_date}` : p.start_date) : "—"}</td>
-                    <td>£{p.price}</td>
-                    <td><button className="btn-outline" onClick={() => downloadReceipt(p)}>Receipt</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ShopTab({ tenant, locations }) {
-  function downloadBrochure() {
-    const withCodes = locations.filter((l) => l.code);
-    if (withCodes.length === 0) {
-      alert("No locations with a WhatsApp code yet — add a location first.");
-      return;
-    }
-    const cards = withCodes.map((l) => `
-      <div style="border:2px solid #0F5FBF;border-radius:14px;padding:32px;margin-bottom:28px;text-align:center;page-break-inside:avoid;">
-        <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${tenant.business_name}</div>
-        <div style="font-size:14px;color:#5B6B79;margin-bottom:20px;">${l.name}</div>
-        <div style="font-size:17px;font-weight:600;margin-bottom:10px;">📱 Message us on WhatsApp to get started</div>
-        <div style="font-size:15px;color:#1B2733;margin-bottom:6px;">Send this code:</div>
-        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F2F6F9;border-radius:8px;padding:10px 0;">${l.code}</div>
-        <div style="font-size:12px;color:#5B6B79;margin-top:18px;">Join the queue or book a slot instantly — no app to download.</div>
-      </div>
-    `).join("");
-    const html = `<!doctype html><html><head><title>QBooker brochure — ${tenant.business_name}</title>
-      <meta charset="utf-8" />
-      <style>body{font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;color:#1B2733;}</style>
-      </head><body>${cards}<p style="text-align:center;color:#5B6B79;font-size:11px;">Print this page and display it in your waiting area.</p></body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
-  }
-
-  function enquire(subject) {
-    window.open(`mailto:hello@qbooker.example?subject=${encodeURIComponent(subject)}`, "_blank");
-  }
-
-  const products = [
-    { name: "QR Code Brochure", price: "Free", desc: "A printable page for your waiting area with your WhatsApp sign-in code — customers message it to join the queue or book instantly.", action: { label: "Download brochure", onClick: downloadBrochure } },
-    { name: "Floor-standing Banner", price: "Get a quote", desc: "A pull-up banner for your entrance or waiting area, printed with your business name and WhatsApp code built in.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing banner enquiry") } },
-    { name: "Desktop Touch-Screen Kiosk", price: "Get a quote", desc: "A compact touch-screen unit for a reception desk or counter, so walk-in customers can check themselves in without staff involvement.", action: { label: "Get a quote", onClick: () => enquire("Desktop touch-screen kiosk enquiry") } },
-    { name: "Floor-standing Kiosk", price: "Get a quote", desc: "A free-standing self-check-in kiosk for busier waiting areas and lobbies.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing kiosk enquiry") } },
-  ];
-
-  const services = [
-    { name: "Remote Staff Training", price: "Get a quote", desc: "A video session with your team covering the Staff Kiosk — calling tickets, handling no-shows, day-to-day use.", action: { label: "Get a quote", onClick: () => enquire("Remote staff training enquiry") } },
-    { name: "Admin System Set-up", price: "£125", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
-  ];
-
-  return (
-    <div className="stack">
-      <div className="muted" style={{ fontSize: 12 }}>
-        A look at what's available — nothing here is purchased automatically yet, "Get a quote" opens an email to us directly.
-      </div>
-
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Products</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        {products.map((p) => (
-          <div key={p.name} className="card stack">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong style={{ fontSize: 14 }}>{p.name}</strong>
-              <span className={`badge ${p.price === "Free" ? "badge-green" : "badge-blue"}`}>{p.price}</span>
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>{p.desc}</div>
-            <div><button className="btn-outline" onClick={p.action.onClick}>{p.action.label}</button></div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>Services</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        {services.map((s) => (
-          <div key={s.name} className="card stack">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong style={{ fontSize: 14 }}>{s.name}</strong>
-              <span className="badge badge-blue">{s.price}</span>
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>{s.desc}</div>
-            <div><button className="btn-outline" onClick={s.action.onClick}>{s.action.label}</button></div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ServiceEditor({ service, onChange, setError }) {
   const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="card stack">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-        <div className="row" style={{ flexWrap: "wrap" }}>
-          <strong>{service.name}</strong>
-          <span className="badge badge-blue" style={{ textTransform: "capitalize" }}>{service.mode}</span>
-          {service.mode !== "queue" && <span className="muted" style={{ fontSize: 12 }}>{service.slot_minutes} min slots</span>}
-        </div>
-        <div className="row">
-          <button className="btn-outline" onClick={async () => { if (confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); } }}>Delete</button>
-          <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
-            {expanded ? "▾" : "▸"}
-          </button>
-        </div>
-      </div>
-
-      {service.mode === "queue" && (
-        <div className="row">
-          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
-            {service.queue_paused ? "Resume" : "Pause (busy)"}
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
-        </div>
-      )}
-
-      {expanded && <ServiceCalendar service={service} setError={setError} />}
-    </div>
-  );
-}
-
-// Shared by ServiceEditor (post-setup editing) and ServiceWizard (step 2, right after creation).
-function ServiceCalendar({ service, setError }) {
+  const [showAdvancedMode, setShowAdvancedMode] = useState(false);
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(todayIso()));
   const [monthConfigs, setMonthConfigs] = useState({});
@@ -693,27 +675,38 @@ function ServiceCalendar({ service, setError }) {
   const [draftHours, setDraftHours] = useState([]);
   const [staffCount, setStaffCount] = useState(2);
   const [bookingStaffCount, setBookingStaffCount] = useState(1);
-  const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
 
   const paintingRef = useRef(false);
   const paintModeRef = useRef(true);
+  const draftHoursRef = useRef([]);
   const staffCountRef = useRef(2);
   const bookingRef = useRef(1);
-  const saveTimeoutRef = useRef(null);
-  const savedIndicatorRef = useRef(null);
+  const selectedDateRef = useRef(selectedDate);
 
+  useEffect(() => { draftHoursRef.current = draftHours; }, [draftHours]);
   useEffect(() => { staffCountRef.current = staffCount; }, [staffCount]);
   useEffect(() => { bookingRef.current = bookingStaffCount; }, [bookingStaffCount]);
+  useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
 
-  // Only resets drag state on mouse release — the actual save no longer depends on
-  // catching this event, so a missed mouseup can no longer cause a silently-lost save.
   useEffect(() => {
-    function onUp() { paintingRef.current = false; }
+    async function onUp() {
+      if (paintingRef.current) {
+        paintingRef.current = false;
+        try {
+          await api.putDailyConfig(service.id, {
+            date: selectedDateRef.current, hours: draftHoursRef.current, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current,
+          });
+          setMonthConfigs((prev) => ({ ...prev, [selectedDateRef.current]: { date: selectedDateRef.current, hours: draftHoursRef.current, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current } }));
+        } catch (err) { setError(err.message); }
+      }
+    }
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [service.id]);
 
   async function loadMonth(monthStart) {
+    if (!expanded) return;
     const monthEnd = addDaysIso(addMonthsIso(monthStart, 1), -1);
     try {
       const r = await api.getDailyConfig(service.id, monthStart, monthEnd);
@@ -723,7 +716,7 @@ function ServiceCalendar({ service, setError }) {
       setPlanWindow(r.window);
     } catch (err) { setError(err.message); }
   }
-  useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth, expanded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const entry = monthConfigs[selectedDate];
@@ -732,114 +725,47 @@ function ServiceCalendar({ service, setError }) {
     setBookingStaffCount(entry?.booking_staff_count ?? 1);
   }, [selectedDate, monthConfigs]);
 
-  const selectedIsPast = isDatePastClient(selectedDate);
-  const selectedIsToday = selectedDate === todayIso();
-  const currentMinutes = nowMinutes();
-
-  function isBlockEditable(hourMin) {
-    if (selectedIsPast) return false;
-    if (selectedIsToday && hourMin < currentMinutes) return false;
-    return true;
-  }
-
-  // Saves shortly after painting pauses — triggered directly from the toggle itself
-  // (not a separate global listener), so there's no dependency on catching the right
-  // browser event, and it behaves identically for mouse and touch.
-  function persistHours(hoursToSave, dateToSave) {
-    setSaveStatus("saving");
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
-    saveTimeoutRef.current = setTimeout(async () => {
-      try {
-        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current });
-        setMonthConfigs((prev) => ({ ...prev, [dateToSave]: { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current } }));
-        setSaveStatus("saved");
-        savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
-      } catch (err) {
-        setError(err.message);
-        setSaveStatus("error");
-      }
-    }, 350);
-  }
+  const selectedLocked = isDateLockedClient(selectedDate);
 
   function applyHour(hourMin, open) {
     setDraftHours((prev) => {
       const has = prev.includes(hourMin);
-      let next = prev;
-      if (open && !has) next = [...prev, hourMin].sort((a, b) => a - b);
-      else if (!open && has) next = prev.filter((h) => h !== hourMin);
-      if (next !== prev) persistHours(next, selectedDate);
-      return next;
+      if (open && !has) return [...prev, hourMin].sort((a, b) => a - b);
+      if (!open && has) return prev.filter((h) => h !== hourMin);
+      return prev;
     });
   }
   function beginPaint(hourMin) {
-    if (!isBlockEditable(hourMin)) return;
+    if (selectedLocked) return;
     const mode = !draftHours.includes(hourMin);
     paintingRef.current = true;
     paintModeRef.current = mode;
     applyHour(hourMin, mode);
   }
   function continuePaint(hourMin) {
-    if (!paintingRef.current || !isBlockEditable(hourMin)) return;
+    if (!paintingRef.current || selectedLocked) return;
     applyHour(hourMin, paintModeRef.current);
   }
 
   async function saveNow(patch) {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     const hours = patch.hours ?? draftHours;
     const nextStaff = patch.staffCount ?? staffCount;
     const nextBooking = patch.bookingStaffCount ?? bookingStaffCount;
     if (patch.hours) setDraftHours(patch.hours);
     if (patch.staffCount !== undefined) setStaffCount(patch.staffCount);
     if (patch.bookingStaffCount !== undefined) setBookingStaffCount(patch.bookingStaffCount);
-    setSaveStatus("saving");
     try {
       await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking });
       setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking } }));
-      setSaveStatus("saved");
-      if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
-      savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
-    } catch (err) {
-      setError(err.message);
-      setSaveStatus("error");
-    }
-  }
-
-  // For today, quick-fill/clear only touch hours from now onward — whatever was already
-  // set for earlier today (already offered/used) is left exactly as it was.
-  function fillNineToFive() {
-    const target = [];
-    for (let h = 540; h < 1020; h += 30) target.push(h);
-    if (selectedIsToday) {
-      const already = draftHours.filter((h) => h < currentMinutes);
-      const upcoming = target.filter((h) => h >= currentMinutes);
-      saveNow({ hours: [...new Set([...already, ...upcoming])].sort((a, b) => a - b) });
-    } else {
-      saveNow({ hours: target });
-    }
-  }
-  function clearDay() {
-    if (selectedIsToday) {
-      saveNow({ hours: draftHours.filter((h) => h < currentMinutes) });
-    } else {
-      saveNow({ hours: [] });
-    }
-  }
-
-  async function clearAllDays() {
-    if (!planWindow) return;
-    if (!confirm("Clear hours for every day in your paid period? Already-passed hours today are kept — everything else is wiped. This can't be undone.")) return;
-    try {
-      let todayHours = monthConfigs[todayIso()]?.hours;
-      if (todayHours === undefined) {
-        const r = await api.getDailyConfig(service.id, todayIso(), todayIso());
-        todayHours = r.dailyConfig[0]?.hours || [];
-      }
-      const keep = todayHours.filter((h) => h < currentMinutes);
-      await api.clearAllDailyConfig(service.id, { keepHoursForToday: keep });
-      await loadMonth(calendarMonth);
     } catch (err) { setError(err.message); }
   }
+
+  function fillStandardHours() {
+    const hours = [];
+    for (let h = 510; h < 1020; h += 30) hours.push(h); // 8:30am-5:00pm
+    saveNow({ hours });
+  }
+  function clearDay() { saveNow({ hours: [] }); }
 
   async function copyToWeek() {
     const idx = weekdayIndex(selectedDate);
@@ -863,196 +789,147 @@ function ServiceCalendar({ service, setError }) {
   }
 
   const calendarWeeks = buildCalendarWeeks(calendarMonth);
+  const configuredCount = Object.values(monthConfigs).filter((c) => c.hours?.length > 0).length;
 
   return (
-    <div className="stack">
-      <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-        <div className="card" style={{ minWidth: 220 }}>
-          <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-            <button className="btn-outline" disabled={planWindow && calendarMonth <= firstOfMonth(planWindow.start)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
-            <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
-            <button className="btn-outline" disabled={planWindow && calendarMonth >= firstOfMonth(planWindow.end)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
-          </div>
-          <table>
-            <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
-            <tbody>
-              {calendarWeeks.map((week, wi) => (
-                <tr key={wi}>
-                  {week.map((d, di) => {
-                    if (!d) return <td key={di} />;
-                    const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
-                    const past = isDatePastClient(d);
-                    const count = monthConfigs[d]?.hours?.length || 0;
-                    const isSelected = d === selectedDate;
-                    const isToday = d === todayIso();
-                    return (
-                      <td key={di} style={{ padding: 2 }}>
-                        <button
-                          onClick={() => inWindow && setSelectedDate(d)}
-                          disabled={!inWindow}
-                          title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
-                          style={{
-                            width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
-                            background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
-                            color: isSelected ? "#fff" : !inWindow ? "#DCE4EA" : "#1B2733",
-                            opacity: inWindow ? 1 : 0.4,
-                          }}
-                        >
-                          {Number(d.slice(8, 10))}
-                        </button>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="card stack">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <input className="input" style={{ maxWidth: 220 }} value={service.name} onChange={async (e) => { await api.updateService(service.id, { name: e.target.value }); }} />
+        {!expanded && <span className="muted" style={{ fontSize: 12 }}>{configuredCount} day(s) with hours this month</span>}
+        <div className="row">
+          <button className="btn-outline" onClick={async () => { await api.deleteService(service.id); onChange(); }}>Delete</button>
+          <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
+            {expanded ? "▾" : "▸"}
+          </button>
         </div>
+      </div>
 
-        <div className="stack" style={{ flex: 1, minWidth: 260 }}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <strong style={{ fontSize: 13 }}>
-              {selectedDate}
-              {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
-              {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
-            </strong>
-            <div className="row">
-              {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
-              {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#14803C" }}>✓ Saved</span>}
-              {saveStatus === "error" && <span style={{ fontSize: 12, color: "#C22A1E" }}>Save failed</span>}
-              {!selectedIsPast && (
-                <>
-                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
-                </>
+      <div className="wrap">
+        <span className="muted">Booking type:</span>
+        {!showAdvancedMode ? (
+          <>
+            <span className="badge badge-blue">{service.mode}</span>
+            <button className="btn-outline" onClick={() => setShowAdvancedMode(true)}>Advanced</button>
+          </>
+        ) : (
+          <>
+            {["queue", "appointment", "hybrid"].map((m) => (
+              <button key={m} className={service.mode === m ? "btn" : "btn-outline"} onClick={async () => { await api.updateService(service.id, { mode: m }); onChange(); }}>{m}</button>
+            ))}
+            <button className="btn-outline" onClick={() => setShowAdvancedMode(false)}>Hide</button>
+          </>
+        )}
+        {service.mode !== "queue" && (
+          <>
+            <span className="muted">Slot length:</span>
+            <select value={service.slot_minutes} onChange={async (e) => { await api.updateService(service.id, { slotMinutes: Number(e.target.value) }); onChange(); }}>
+              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </>
+        )}
+      </div>
+
+      {service.mode === "queue" ? (
+        <div className="row">
+          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
+            {service.queue_paused ? "Resume" : "Pause (busy)"}
+          </button>
+          <span className="muted">Staff working:</span>
+          <input className="input" style={{ width: 70 }} type="number" min={1} value={service.queue_staff_count} onChange={async (e) => { await api.updateService(service.id, { queueStaffCount: Number(e.target.value) }); onChange(); }} />
+        </div>
+      ) : expanded && (
+        <div className="stack">
+          <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+            <div className="card" style={{ minWidth: 220 }}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                <button className="btn-outline" disabled={planWindow && calendarMonth <= firstOfMonth(planWindow.start)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
+                <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
+                <button className="btn-outline" disabled={planWindow && calendarMonth >= firstOfMonth(planWindow.end)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
+              </div>
+              <table>
+                <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
+                <tbody>
+                  {calendarWeeks.map((week, wi) => (
+                    <tr key={wi}>
+                      {week.map((d, di) => {
+                        if (!d) return <td key={di} />;
+                        const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
+                        const locked = isDateLockedClient(d);
+                        const count = monthConfigs[d]?.hours?.length || 0;
+                        const isSelected = d === selectedDate;
+                        const isToday = d === todayIso();
+                        return (
+                          <td key={di} style={{ padding: 2 }}>
+                            <button
+                              onClick={() => inWindow && setSelectedDate(d)}
+                              disabled={!inWindow}
+                              title={!inWindow ? "Outside your access window" : locked ? "Locked — view only" : `${count} half-hour block(s) open`}
+                              style={{
+                                width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #0F5FBF" : "1px solid #DCE4EA",
+                                background: isSelected ? "#0F5FBF" : count > 0 ? "#E4F0FB" : "#fff",
+                                color: isSelected ? "#fff" : !inWindow ? "#DCE4EA" : "#1B2733",
+                                opacity: inWindow ? 1 : 0.4,
+                              }}
+                            >
+                              {Number(d.slice(8, 10))}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="stack" style={{ flex: 1, minWidth: 260 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong style={{ fontSize: 13 }}>{selectedDate}{selectedLocked && <span className="muted" style={{ fontWeight: 400 }}> (locked)</span>}</strong>
+                {!selectedLocked && (
+                  <div className="row">
+                    <button className="btn-outline" onClick={fillStandardHours}>Set 8:30–5</button>
+                    <button className="btn-outline" onClick={clearDay}>Clear day</button>
+                  </div>
+                )}
+              </div>
+              <div className="wrap" style={{ userSelect: "none" }}>
+                {GRID_HOURS.map((h) => {
+                  const open = draftHours.includes(h);
+                  return (
+                    <span
+                      key={h}
+                      onMouseDown={() => beginPaint(h)}
+                      onMouseEnter={() => continuePaint(h)}
+                      className="badge"
+                      style={{ cursor: selectedLocked ? "default" : "pointer", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: selectedLocked ? 0.6 : 1 }}
+                    >
+                      {formatTime(h)}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="row">
+                <span className="muted">Staff:</span>
+                <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedLocked} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
+                {service.mode !== "appointment" && (
+                  <>
+                    <span className="muted">On bookings:</span>
+                    <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedLocked} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
+                  </>
+                )}
+              </div>
+              {!selectedLocked && (
+                <div className="wrap">
+                  <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
+                  <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
+                  <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
+                  <button className="btn-outline" onClick={copyToWholePeriod}>Whole paid period</button>
+                </div>
               )}
             </div>
           </div>
-          <div className="wrap" style={{ userSelect: "none" }}>
-            {GRID_HOURS.map((h) => {
-              const open = draftHours.includes(h);
-              const editable = isBlockEditable(h);
-              return (
-                <span
-                  key={h}
-                  onMouseDown={() => beginPaint(h)}
-                  onMouseEnter={() => continuePaint(h)}
-                  className="badge"
-                  title={!editable && selectedIsToday ? "Already passed" : undefined}
-                  style={{ cursor: editable ? "pointer" : "default", background: open ? "#0F5FBF" : "#F2F6F9", color: open ? "#fff" : "#1B2733", opacity: editable ? 1 : 0.5 }}
-                >
-                  {formatTime(h)}
-                </span>
-              );
-            })}
-          </div>
-          <div className="row">
-            <span className="muted">Staff:</span>
-            <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
-            {service.mode === "hybrid" && (
-              <>
-                <span className="muted">On bookings:</span>
-                <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
-              </>
-            )}
-          </div>
-          {service.mode === "hybrid" && (
-            staffCount - bookingStaffCount > 0 ? (
-              <div className="muted" style={{ fontSize: 12 }}>→ {staffCount - bookingStaffCount} staff not on bookings — available to serve walk-ins.</div>
-            ) : (
-              <div style={{ fontSize: 12, color: "#C22A1E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
-            )
-          )}
-          {!selectedIsPast && (
-            <div className="wrap">
-              <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
-              <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
-              <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
-              <button className="btn-outline" onClick={copyToWholePeriod}>Whole paid period</button>
-            </div>
-          )}
-          <div className="wrap">
-            <span className="muted" style={{ fontSize: 12 }}>Danger zone:</span>
-            <button className="btn-outline" style={{ color: "#C22A1E" }} onClick={clearAllDays}>Clear all days</button>
-          </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-const SERVICE_MODE_INFO = [
-  { id: "queue", label: "Queue", text: "Walk-ins only. Customers join a live queue and get called forward in order — no fixed appointment times." },
-  { id: "appointment", label: "Appointment", text: "Bookable time slots only. Customers pick a specific time in advance — no walk-ins." },
-  { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
-];
-
-function ServiceWizard({ locationId, onDone, onCancel, setError }) {
-  const [step, setStep] = useState(1);
-  const [name, setName] = useState("");
-  const [mode, setMode] = useState("hybrid");
-  const [slotMinutes, setSlotMinutes] = useState(15);
-  const [creating, setCreating] = useState(false);
-  const [createdService, setCreatedService] = useState(null);
-
-  const needsSlotLength = mode === "appointment" || mode === "hybrid";
-
-  async function next() {
-    setCreating(true);
-    try {
-      const r = await api.addService(name, locationId);
-      const updated = await api.updateService(r.service.id, { mode, slotMinutes: needsSlotLength ? slotMinutes : 15 });
-      setCreatedService(updated.service);
-      setStep(2);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  if (step === 1) {
-    return (
-      <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 2</div>
-        <input className="input" autoFocus placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
-        <div className="stack">
-          {SERVICE_MODE_INFO.map((m) => (
-            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "#0F5FBF" : undefined }}>
-              <input type="radio" name="mode" checked={mode === m.id} onChange={() => setMode(m.id)} style={{ marginTop: 3 }} />
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</div>
-                <div className="muted" style={{ fontSize: 12 }}>{m.text}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-        {needsSlotLength && (
-          <div className="row">
-            <span className="muted">Slot length:</span>
-            <select value={slotMinutes} onChange={(e) => setSlotMinutes(Number(e.target.value))}>
-              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-            </select>
-          </div>
-        )}
-        <div className="muted" style={{ fontSize: 11 }}>The name, type, and slot length can't be changed after this step — delete and recreate the service if you need to change them later.</div>
-        <div className="row">
-          <button className="btn" disabled={!name.trim() || creating} onClick={next}>{creating ? "Creating…" : "Next: set hours →"}</button>
-          <button className="btn-outline" onClick={onCancel}>Cancel</button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card stack" style={{ background: "#E4F0FB", border: "1px solid #0F5FBF" }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: set hours for "{createdService.name}"</div>
-      </div>
-      <ServiceCalendar service={createdService} setError={setError} />
-      <div className="row">
-        <button className="btn" onClick={() => onDone(createdService)}>Done</button>
-      </div>
+      )}
     </div>
   );
 }
