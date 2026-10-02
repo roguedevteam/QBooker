@@ -3,10 +3,13 @@ import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { createLocationCode } from "../lib/codes.js";
 import {
   getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
 } from "../lib/scheduling.js";
-import { isDateLocked, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
+import { isDateLocked, isDateFullyPast, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
+import { getToday } from "../lib/clock.js";
+import { getLocationWindow, isLocationWithinWindow, ensureLicenseStarted } from "../lib/licenseTrigger.js";
 
 const router = Router();
 
@@ -25,58 +28,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-router.get("/me", (req, res) => res.json({ tenant: req.tenant }));
-
-// --- Onboarding ----------------------------------------------------------------
-function standardWeekdayHours() {
-  // 8:30am-5:00pm in 30-minute blocks.
-  const hours = [];
-  for (let h = 510; h < 1020; h += 30) hours.push(h);
-  return hours;
-}
-
-async function seedDefaultWeekHours(serviceId) {
-  const today = new Date();
-  for (let d = 0; d < 7; d++) {
-    const date = new Date(today);
-    date.setDate(date.getDate() + d);
-    if (date.getDay() === 0 || date.getDay() === 6) continue; // skip weekends
-    await query(
-      `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-       values ($1,$2,$3,2,1) on conflict (service_id, date) do nothing`,
-      [serviceId, date.toISOString().slice(0, 10), standardWeekdayHours()]
-    );
-  }
-}
-
-router.get("/onboarding/status", asyncHandler(async (req, res) => {
-  const locCount = await query(`select count(*) from locations where tenant_id=$1`, [req.tenant.id]);
-  const svcCount = await query(`select count(*) from services where tenant_id=$1`, [req.tenant.id]);
-  const hoursResult = await query(
-    `select 1 from service_daily_config sdc join services s on s.id = sdc.service_id
-     where s.tenant_id=$1 and array_length(sdc.hours, 1) > 0 limit 1`,
-    [req.tenant.id]
-  );
-  res.json({
-    hasLocation: Number(locCount.rows[0].count) > 0,
-    hasService: Number(svcCount.rows[0].count) > 0,
-    hasHours: hoursResult.rows.length > 0,
-    staffInvited: req.tenant.staff_invited,
-    completed: req.tenant.onboarding_completed,
-  });
-}));
-
-router.patch("/onboarding", adminOnly, asyncHandler(async (req, res) => {
-  const { completed, staffInvited } = req.body;
-  const result = await query(
-    `update tenants set
-       onboarding_completed = coalesce($1, onboarding_completed),
-       staff_invited = coalesce($2, staff_invited)
-     where id=$3 returning *`,
-    [completed, staffInvited, req.tenant.id]
-  );
-  res.json({ tenant: result.rows[0] });
-}));
+router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
 // --- Plan window & rescheduling ------------------------------------------------
 router.get("/plan", (req, res) => {
@@ -117,37 +69,154 @@ router.patch("/plan", adminOnly, asyncHandler(async (req, res) => {
   res.status(400).json({ error: "Unknown plan type." });
 }));
 
+// Renew for another full period of the same length, charged at the tenant's existing
+// price. Starts the day after the current window ends if it hasn't expired yet, or today
+// if it already has — so renewing early never loses paid-for time.
+router.post("/plan/extend", adminOnly, asyncHandler(async (req, res) => {
+  const tenant = req.tenant;
+  const today = getToday();
+
+  if (tenant.plan_id === "day") {
+    const newDate = tenant.active_date && tenant.active_date >= today ? addDays(tenant.active_date, 1) : today;
+    const r = await query(`update tenants set active_date=$1 where id=$2 returning *`, [newDate, tenant.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — new day pass for ${newDate}, £${tenant.price} charged`]);
+    return res.json({ tenant: r.rows[0] });
+  }
+  if (tenant.plan_id === "week") {
+    const currentEnd = tenant.week_start_date ? addDays(tenant.week_start_date, 6) : null;
+    const newStart = currentEnd && currentEnd >= today ? addDays(currentEnd, 1) : today;
+    const r = await query(`update tenants set week_start_date=$1 where id=$2 returning *`, [newStart, tenant.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — another week from ${newStart}, £${tenant.price} charged`]);
+    return res.json({ tenant: r.rows[0] });
+  }
+  // month / year / custom
+  const newStart = tenant.end_date && tenant.end_date >= today ? addDays(tenant.end_date, 1) : today;
+  const newEnd = addDays(newStart, tenant.plan_days - 1);
+  const r = await query(`update tenants set start_date=$1, end_date=$2 where id=$3 returning *`, [newStart, newEnd, tenant.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended to ${newEnd} — £${tenant.price} charged`]);
+  res.json({ tenant: r.rows[0] });
+}));
+
 // --- Locations ---------------------------------------------------------------
 router.get("/locations", asyncHandler(async (req, res) => {
-  const result = await query(`select * from locations where tenant_id=$1 order by created_at`, [req.tenant.id]);
-  res.json({ locations: result.rows });
+  const result = await query(
+    `select l.*, lc.code from locations l
+     left join location_codes lc on lc.location_id = l.id
+     where l.tenant_id=$1 order by l.created_at`,
+    [req.tenant.id]
+  );
+  const locations = [];
+  for (const loc of result.rows) {
+    const resolved = await ensureLicenseStarted(loc);
+    locations.push({ ...resolved, code: loc.code });
+  }
+  res.json({ locations });
 }));
 
 router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: "Name required." });
-  const loc = await query(`insert into locations (tenant_id, name) values ($1,$2) returning *`, [req.tenant.id, name.trim()]);
+  const t = req.tenant;
+  const staffAccessCode = genAccessCode();
+  const loc = await query(
+    `insert into locations
+      (tenant_id, name, plan_id, plan_label, plan_days, license_price, staff_access_code, license_not_before)
+     values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+    [t.id, name.trim(), t.plan_id, t.plan_label, t.plan_days, t.price_per_location, staffAccessCode, getToday()]
+  );
+  const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
+  await query(
+    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [loc.rows[0].id, t.id, t.plan_id, t.plan_label, t.plan_days, null, null, t.price_per_location]
+  );
   const chargeNote = req.tenant.payment_method === "invoice"
     ? `£${req.tenant.price_per_location} added to next invoice`
     : `£${req.tenant.price_per_location} charged to card on file`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Bought an additional location "${name.trim()}" — ${chargeNote}`]);
-  res.json({ location: loc.rows[0], charge: { amount: req.tenant.price_per_location, note: chargeNote } });
+  res.json({ location: { ...loc.rows[0], code }, charge: { amount: req.tenant.price_per_location, note: chargeNote } });
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, address } = req.body;
+  const { name, address, websiteUrl } = req.body;
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address) where id=$3 and tenant_id=$4 returning *`,
-    [name, address, req.params.id, req.tenant.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), website_url=coalesce($3,website_url) where id=$4 and tenant_id=$5 returning *`,
+    [name, address, websiteUrl, req.params.id, req.tenant.id]
   );
   res.json({ location: result.rows[0] });
+}));
+
+router.get("/locations/:id/license-history", asyncHandler(async (req, res) => {
+  let loc = (await query(`select * from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!loc) return res.status(404).json({ error: "Location not found." });
+  loc = await ensureLicenseStarted(loc);
+  const purchases = await query(
+    `select * from location_license_purchases where location_id=$1 order by purchased_at desc`,
+    [req.params.id]
+  );
+  res.json({ location: loc, purchases: purchases.rows });
 }));
 
 router.delete("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   res.json({ ok: true });
+}));
+
+const PLAN_META = {
+  day: { label: "Day pass", days: 1 },
+  week: { label: "Week", days: 7 },
+  month: { label: "Month", days: 30 },
+  year: { label: "Year", days: 365 },
+};
+
+// Extends (or assigns, if it never had one) a single location's own license — independent
+// of every other location on the account. The new license is also dormant/Purchased — it
+// won't start until hours are defined for it, and can't start before the current license's
+// end date (if any), so back-to-back periods never overlap.
+router.post("/locations/:id/extend-license", adminOnly, asyncHandler(async (req, res) => {
+  const { planId, customDays } = req.body;
+  let loc = (await query(`select * from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!loc) return res.status(404).json({ error: "Location not found." });
+  loc = await ensureLicenseStarted(loc); // resolve first, so "current" reflects reality
+
+  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
+  const pricing = pricingRow?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
+  const sale = pricing.sale?.active ? pricing.sale : null;
+
+  let planLabel, planDays, price;
+  if (planId === "custom") {
+    planDays = Math.max(1, Number(customDays) || 1);
+    planLabel = `${planDays}-day custom plan`;
+    price = (planDays * pricing.customDailyRate).toFixed(2);
+  } else if (PLAN_META[planId]) {
+    planDays = PLAN_META[planId].days;
+    planLabel = PLAN_META[planId].label;
+    price = sale && sale[planId] != null ? sale[planId] : pricing[planId];
+  } else {
+    return res.status(400).json({ error: "Unknown plan type." });
+  }
+
+  // Can't start before the current license ends (if it has resolved dates); otherwise
+  // today — either way, it still won't actually start until hours are defined for it.
+  const notBefore = loc.end_date ? addDays(loc.end_date, 1) : getToday();
+
+  const result = await query(
+    `update locations set
+       plan_id=$1, plan_label=$2, plan_days=$3, license_price=$4,
+       start_date=null, end_date=null, license_not_before=$5
+     where id=$6 returning *`,
+    [planId, planLabel, planDays, price, notBefore, loc.id]
+  );
+  await query(
+    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [loc.id, req.tenant.id, planId, planLabel, planDays, null, null, price]
+  );
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `License extended for "${loc.name}" — ${planLabel}, £${price} charged (starts once hours are set)`]);
+  res.json({ location: result.rows[0] });
 }));
 
 // --- Services ------------------------------------------------------------------
@@ -157,17 +226,14 @@ router.get("/services", asyncHandler(async (req, res) => {
 }));
 
 router.post("/services", adminOnly, asyncHandler(async (req, res) => {
-  const { name, locationId, seedDefaultHours = true } = req.body;
+  const { name, locationId } = req.body;
   if (!name?.trim() || !locationId) return res.status(400).json({ error: "Name and location required." });
-  // mode/slot_minutes fall back to their table defaults: hybrid, 15-minute slots.
   const result = await query(
     `insert into services (tenant_id, location_id, name) values ($1,$2,$3) returning *`,
     [req.tenant.id, locationId, name.trim()]
   );
-  const service = result.rows[0];
-  if (seedDefaultHours) await seedDefaultWeekHours(service.id);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Service "${name.trim()}" added`]);
-  res.json({ service });
+  res.json({ service: result.rows[0] });
 }));
 
 router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
@@ -191,13 +257,24 @@ router.delete("/services/:id", adminOnly, asyncHandler(async (req, res) => {
 }));
 
 // --- Per-day hours & staffing ----------------------------------------------------
+async function getServiceLocation(serviceId, tenantId) {
+  const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, tenantId]);
+  const service = svcResult.rows[0];
+  if (!service) return { service: null, location: null };
+  const locResult = await query(`select * from locations where id=$1`, [service.location_id]);
+  if (!locResult.rows[0]) return { service, location: null };
+  const location = await ensureLicenseStarted(locResult.rows[0]);
+  return { service, location };
+}
+
 router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const result = await query(
     `select * from service_daily_config where service_id=$1 and date >= $2 and date <= $3 order by date`,
     [req.params.id, from, to]
   );
-  const window = getPlanWindow(req.tenant);
+  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
+  const window = location ? getLocationWindow(location) : null;
   res.json({
     dailyConfig: result.rows,
     window,
@@ -207,11 +284,13 @@ router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
 
 router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res) => {
   const { date, hours, staffCount, bookingStaffCount } = req.body;
-  const window = getPlanWindow(req.tenant);
+  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
+  if (!location) return res.status(404).json({ error: "Service not found." });
+  const window = getLocationWindow(location);
   if (window && (date < window.start || date > window.end)) {
-    return res.status(409).json({ error: "That date is outside your paid access window." });
+    return res.status(409).json({ error: "That date is outside this location's licensed period." });
   }
-  if (isDateLocked(date)) return res.status(409).json({ error: "That date has already started, so it's locked." });
+  if (isDateFullyPast(date)) return res.status(409).json({ error: "That date has already passed." });
   const result = await query(
     `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
      values ($1,$2,$3,$4,$5)
@@ -225,12 +304,13 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
 
 router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (req, res) => {
   const { fromDate, toDates } = req.body;
-  const window = getPlanWindow(req.tenant);
+  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
+  const window = location ? getLocationWindow(location) : null;
   const sourceResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [req.params.id, fromDate]);
   const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1 };
   let applied = 0;
   for (const date of toDates || []) {
-    if (isDateLocked(date)) continue;
+    if (isDateFullyPast(date)) continue;
     if (window && (date < window.start || date > window.end)) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
@@ -242,6 +322,35 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
     applied++;
   }
   res.json({ ok: true, count: applied, skipped: (toDates || []).length - applied });
+}));
+
+// Clears hours across the entire licensed period in one call. For today specifically, the
+// client tells us which blocks have already passed (it knows the real time; the server
+// only knows the date) so they're preserved rather than wiped.
+router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(async (req, res) => {
+  const { keepHoursForToday } = req.body;
+  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
+  const window = location ? getLocationWindow(location) : null;
+  if (!window) return res.json({ ok: true, count: 0 });
+  const today = getToday();
+  let applied = 0;
+  let d = window.start;
+  let guard = 0;
+  while (d <= window.end && guard < 400) {
+    if (!isDateFullyPast(d)) {
+      const hours = d === today ? (keepHoursForToday || []) : [];
+      await query(
+        `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
+         values ($1,$2,$3,2,1)
+         on conflict (service_id, date) do update set hours = excluded.hours`,
+        [req.params.id, d, hours]
+      );
+      applied++;
+    }
+    d = addDays(d, 1);
+    guard++;
+  }
+  res.json({ ok: true, count: applied });
 }));
 
 // --- Tickets ----------------------------------------------------------------------
@@ -378,27 +487,21 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
 router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   const { date, clockMinutes } = req.query;
 
-  if (!isWithinPaidWindow(req.tenant, date)) {
+  const { service, location } = await getServiceLocation(req.params.id, req.tenant.id);
+  if (!service) return res.status(404).json({ error: "Service not found." });
+  if (!location || !isLocationWithinWindow(location, date)) {
     return res.json({ open: false, reason: "outside_plan_window" });
   }
 
-  const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
-  const service = svcResult.rows[0];
-
-  if (service.mode === "queue") {
-    if (service.queue_paused) return res.json({ open: false, reason: "paused" });
-    const cfg = { slotMinutes: service.slot_minutes, staffCount: service.queue_staff_count, bookingStaffCount: 0, hours: allDayBlocks() };
-    const waitingCount = await countWaiting(req.tenant.id, service.id, date);
-    const status = walkInStatusNow(cfg, waitingCount, Number(clockMinutes));
-    return res.json({ open: true, walkIn: status, bookableSlots: [] });
-  }
+  // Pause/Resume is a live override that sits on top of the scheduled hours below —
+  // it doesn't replace the schedule, it just short-circuits it when active.
+  if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
 
   const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
   const day = dayResult.rows[0];
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
 
-  const bookingStaffCount = service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
+  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
   const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, hours: day.hours };
 
   const blockCountResult = await query(
@@ -408,6 +511,10 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   );
   const walkInCountInBlock = Number(blockCountResult.rows[0]?.count || 0);
   const walkIn = walkInStatusNow(cfg, walkInCountInBlock, Number(clockMinutes));
+
+  if (service.mode === "queue") {
+    return res.json({ open: true, walkIn, bookableSlots: [] });
+  }
 
   const bookedResult = await query(
     `select slot_time, count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' group by slot_time`,
@@ -420,26 +527,13 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   res.json({ open: true, walkIn, bookableSlots });
 }));
 
-function allDayBlocks() {
-  const hours = [];
-  for (let h = 0; h < 24 * 60; h += 30) hours.push(h);
-  return hours;
-}
-async function countWaiting(tenantId, serviceId, date) {
-  const r = await query(
-    `select count(*) from tickets where tenant_id=$1 and service_id=$2 and visit_date=$3 and type='walk_in' and status='waiting'`,
-    [tenantId, serviceId, date]
-  );
-  return Number(r.rows[0]?.count || 0);
-}
-
 router.post("/services/:id/tickets", asyncHandler(async (req, res) => {
   const { type, slotTime, hourBlock, date } = req.body;
-  if (!isWithinPaidWindow(req.tenant, date)) {
-    return res.status(409).json({ error: "We're not taking bookings today — outside the account's paid access window." });
-  }
-  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  const { service, location } = await getServiceLocation(req.params.id, req.tenant.id);
   if (!service) return res.status(404).json({ error: "Service not found." });
+  if (!location || !isLocationWithinWindow(location, date)) {
+    return res.status(409).json({ error: "We're not taking bookings today — outside this location's licensed period." });
+  }
 
   const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);
   const count = Number(countResult.rows[0].count) + 1;
