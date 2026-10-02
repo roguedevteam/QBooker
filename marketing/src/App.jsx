@@ -204,7 +204,7 @@ function Success({ result }) {
   );
 }
 
-const STEP_LABELS = ["Your details", "Choose your pass", "Your locations", "Payment"];
+const STEP_LABELS = ["Your details", "Pass & locations", "Payment"];
 
 function StepHeader({ step }) {
   return (
@@ -234,6 +234,24 @@ function StepHeader({ step }) {
   );
 }
 
+// Joins the 4 address parts into the single string the server stores, dropping any that are blank.
+function combineAddress(line1, line2, city, postcode) {
+  return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+function AddressFields({ line1, line2, city, postcode, onChange, required }) {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <input className="input" placeholder={`Address line 1${required ? "" : " (optional)"}`} value={line1} onChange={(e) => onChange("line1", e.target.value)} />
+      <input className="input" placeholder="Address line 2 (optional)" value={line2} onChange={(e) => onChange("line2", e.target.value)} />
+      <div className="row" style={{ gap: 8 }}>
+        <input className="input" placeholder="City" value={city} onChange={(e) => onChange("city", e.target.value)} style={{ flex: 1 }} />
+        <input className="input" placeholder="Post / zip code" value={postcode} onChange={(e) => onChange("postcode", e.target.value)} style={{ flex: 1 }} />
+      </div>
+    </div>
+  );
+}
+
 function Signup({ onDone, setError }) {
   const [step, setStep] = useState(1);
 
@@ -242,18 +260,22 @@ function Signup({ onDone, setError }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [companyAddress, setCompanyAddress] = useState("");
+  const [companyLine1, setCompanyLine1] = useState("");
+  const [companyLine2, setCompanyLine2] = useState("");
+  const [companyCity, setCompanyCity] = useState("");
+  const [companyPostcode, setCompanyPostcode] = useState("");
 
-  // Step 2 — pass
+  // Step 2 — pass + locations (combined, since the pass decides the per-location price)
   const [planId, setPlanId] = useState("month");
   const [customDays, setCustomDays] = useState(14);
-
-  // Step 3 — locations
   const [locationCount, setLocationCount] = useState(1);
   const [locationNames, setLocationNames] = useState([""]);
-  const [locationAddresses, setLocationAddresses] = useState([""]);
+  const [locationLine1, setLocationLine1] = useState([""]);
+  const [locationLine2, setLocationLine2] = useState([""]);
+  const [locationCity, setLocationCity] = useState([""]);
+  const [locationPostcode, setLocationPostcode] = useState([""]);
 
-  // Step 4 — payment
+  // Step 3 — payment
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [poNumber, setPoNumber] = useState("");
@@ -263,26 +285,26 @@ function Signup({ onDone, setError }) {
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
-  function setCount(n) {
-    const clamped = Math.max(1, Math.min(20, n));
-    setLocationCount(clamped);
-    setLocationNames((prev) => {
-      const next = prev.slice(0, clamped);
-      while (next.length < clamped) next.push("");
-      return next;
-    });
-    setLocationAddresses((prev) => {
+  function resizeArray(setter, clamped) {
+    setter((prev) => {
       const next = prev.slice(0, clamped);
       while (next.length < clamped) next.push("");
       return next;
     });
   }
 
-  function updateLocationName(i, value) {
-    setLocationNames((prev) => prev.map((v, idx) => (idx === i ? value : v)));
+  function setCount(n) {
+    const clamped = Math.max(1, Math.min(20, n));
+    setLocationCount(clamped);
+    resizeArray(setLocationNames, clamped);
+    resizeArray(setLocationLine1, clamped);
+    resizeArray(setLocationLine2, clamped);
+    resizeArray(setLocationCity, clamped);
+    resizeArray(setLocationPostcode, clamped);
   }
-  function updateLocationAddress(i, value) {
-    setLocationAddresses((prev) => prev.map((v, idx) => (idx === i ? value : v)));
+
+  function updateLocationField(setter, i, value) {
+    setter((prev) => prev.map((v, idx) => (idx === i ? value : v)));
   }
 
   const selectedPlan = PLAN_META.find((p) => p.id === planId);
@@ -291,10 +313,10 @@ function Signup({ onDone, setError }) {
   const total = (perLocation * locationCount).toFixed(2);
 
   const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
-  const step3Valid = locationNames.slice(0, locationCount).every((n) => n.trim());
-  const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
+  const step2Valid = locationNames.slice(0, locationCount).every((n) => n.trim());
+  const step3Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
 
-  function next() { setStep((s) => Math.min(4, s + 1)); }
+  function next() { setStep((s) => Math.min(3, s + 1)); }
   function back() { setStep((s) => Math.max(1, s - 1)); }
 
   async function submit() {
@@ -304,12 +326,15 @@ function Signup({ onDone, setError }) {
       const plan = PLAN_META.find((p) => p.id === planId);
       const planDays = planId === "custom" ? customDays : plan.days;
       const payload = {
-        businessName, firstName, lastName, email, companyAddress,
+        businessName, firstName, lastName, email,
+        companyAddress: combineAddress(companyLine1, companyLine2, companyCity, companyPostcode),
         planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
         planDays, price: total, pricePerLocation: perLocation, locationCount,
         paymentMethod, invoiceEmail, invoicePO: poNumber,
         locationNames: locationNames.slice(0, locationCount),
-        locationAddresses: locationAddresses.slice(0, locationCount),
+        locationAddresses: Array.from({ length: locationCount }, (_, i) =>
+          combineAddress(locationLine1[i], locationLine2[i], locationCity[i], locationPostcode[i])
+        ),
       };
       const result = await api.signup(payload);
       onDone(result);
@@ -336,7 +361,18 @@ function Signup({ onDone, setError }) {
             <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.</div>
           </div>
-          <input className="input" placeholder="Company address (optional)" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} />
+          <div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Company address (optional)</div>
+            <AddressFields
+              line1={companyLine1} line2={companyLine2} city={companyCity} postcode={companyPostcode}
+              onChange={(field, value) => {
+                if (field === "line1") setCompanyLine1(value);
+                if (field === "line2") setCompanyLine2(value);
+                if (field === "city") setCompanyCity(value);
+                if (field === "postcode") setCompanyPostcode(value);
+              }}
+            />
+          </div>
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button className="btn" disabled={!step1Valid} onClick={next}>Continue</button>
           </div>
@@ -361,15 +397,12 @@ function Signup({ onDone, setError }) {
               <div className="row" style={{ marginTop: 8 }}><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
             )}
           </div>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <button className="btn-outline" onClick={back}>Back</button>
-            <button className="btn" onClick={next}>Continue</button>
-          </div>
-        </div>
-      )}
 
-      {step === 3 && (
-        <div className="stack">
+          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#F4F9F6" }}>
+            <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
+            <strong>Total: £{total}</strong>
+          </div>
+
           <div className="row">
             <span className="muted">How many locations?</span>
             <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
@@ -388,25 +421,34 @@ function Signup({ onDone, setError }) {
                   className="input"
                   placeholder={`Location ${i + 1} name`}
                   value={locationNames[i] || ""}
-                  onChange={(e) => updateLocationName(i, e.target.value)}
+                  onChange={(e) => updateLocationField(setLocationNames, i, e.target.value)}
                 />
-                <input
-                  className="input"
-                  placeholder="Address (optional)"
-                  value={locationAddresses[i] || ""}
-                  onChange={(e) => updateLocationAddress(i, e.target.value)}
+                <AddressFields
+                  line1={locationLine1[i] || ""} line2={locationLine2[i] || ""} city={locationCity[i] || ""} postcode={locationPostcode[i] || ""}
+                  onChange={(field, value) => {
+                    if (field === "line1") updateLocationField(setLocationLine1, i, value);
+                    if (field === "line2") updateLocationField(setLocationLine2, i, value);
+                    if (field === "city") updateLocationField(setLocationCity, i, value);
+                    if (field === "postcode") updateLocationField(setLocationPostcode, i, value);
+                  }}
                 />
               </div>
             ))}
           </div>
+
+          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "#F4F9F6" }}>
+            <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
+            <strong>Total: £{total}</strong>
+          </div>
+
           <div className="row" style={{ justifyContent: "space-between" }}>
             <button className="btn-outline" onClick={back}>Back</button>
-            <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
+            <button className="btn" disabled={!step2Valid} onClick={next}>Continue</button>
           </div>
         </div>
       )}
 
-      {step === 4 && (
+      {step === 3 && (
         <div className="stack">
           <div>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>How would you like to pay?</div>
@@ -439,7 +481,7 @@ function Signup({ onDone, setError }) {
           </div>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <button className="btn-outline" onClick={back}>Back</button>
-            <button className="btn" disabled={submitting || !step4Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+            <button className="btn" disabled={submitting || !step3Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
           </div>
         </div>
       )}
