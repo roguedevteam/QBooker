@@ -13,14 +13,15 @@ const router = Router();
 // --- Signup ---------------------------------------------------------------
 router.post("/signup", asyncHandler(async (req, res) => {
   const {
-    businessName, email, planId, planLabel, planDays,
+    businessName, firstName, lastName, email, companyAddress,
+    planId, planLabel, planDays,
     activeDate, weekStartDate, startDate,
     price, pricePerLocation, locationCount,
     paymentMethod, invoiceEmail, invoicePO,
     locationNames, locationAddresses,
   } = req.body;
 
-  if (!email || !businessName || !planId || !locationNames?.length) {
+  if (!email || !businessName || !firstName || !lastName || !planId || !locationNames?.length) {
     return res.status(400).json({ error: "Missing required signup fields." });
   }
   if (paymentMethod === "invoice" && !invoicePO?.trim()) {
@@ -40,8 +41,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
   }
 
   // The client only ever sends a start date for month/year/custom plans — the end date is
-  // always derived from it here, rather than trusted from the client (which never actually
-  // sent one, silently leaving it null for every month/year/custom signup until now).
+  // always derived from it here, rather than trusted from the client.
   const endDate = startDate && planDays ? addDays(startDate, planDays - 1) : null;
 
   let client;
@@ -54,11 +54,13 @@ router.post("/signup", asyncHandler(async (req, res) => {
     const tenantResult = await client.query(
       `insert into tenants
         (business_name, email, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date,
-         price, price_per_location, location_count, access_code, payment_method, status, invoice_email, invoice_po)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         price, price_per_location, location_count, access_code, payment_method, status, invoice_email, invoice_po,
+         first_name, last_name, company_address)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        returning *`,
       [businessName, email, planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null,
-        price, pricePerLocation, locationCount, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null]
+        price, pricePerLocation, locationCount, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null,
+        firstName, lastName, companyAddress || null]
     );
     const tenant = tenantResult.rows[0];
 

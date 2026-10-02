@@ -204,28 +204,98 @@ function Success({ result }) {
   );
 }
 
+const STEP_LABELS = ["Your details", "Choose your pass", "Your locations", "Payment"];
+
+function StepHeader({ step }) {
+  return (
+    <div className="row" style={{ justifyContent: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+      {STEP_LABELS.map((label, i) => {
+        const n = i + 1;
+        const active = n === step;
+        const done = n < step;
+        return (
+          <div key={label} className="row" style={{ gap: 6, alignItems: "center" }}>
+            <span
+              style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 22, height: 22, borderRadius: "50%", fontSize: 12, fontWeight: 600,
+                background: active || done ? "#00522A" : "#eee",
+                color: active || done ? "#fff" : "#777",
+              }}
+            >
+              {done ? "✓" : n}
+            </span>
+            <span className="muted" style={{ fontSize: 12, color: active ? "#00522A" : undefined, fontWeight: active ? 600 : 400 }}>{label}</span>
+            {n < STEP_LABELS.length && <span className="muted" style={{ fontSize: 12 }}>—</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Signup({ onDone, setError }) {
+  const [step, setStep] = useState(1);
+
+  // Step 1 — contact & business details
   const [businessName, setBusinessName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [companyAddress, setCompanyAddress] = useState("");
+
+  // Step 2 — pass
   const [planId, setPlanId] = useState("month");
   const [customDays, setCustomDays] = useState(14);
+
+  // Step 3 — locations
   const [locationCount, setLocationCount] = useState(1);
+  const [locationNames, setLocationNames] = useState([""]);
+  const [locationAddresses, setLocationAddresses] = useState([""]);
+
+  // Step 4 — payment
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [poNumber, setPoNumber] = useState("");
+
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
   function setCount(n) {
-    setLocationCount(Math.max(1, Math.min(20, n)));
+    const clamped = Math.max(1, Math.min(20, n));
+    setLocationCount(clamped);
+    setLocationNames((prev) => {
+      const next = prev.slice(0, clamped);
+      while (next.length < clamped) next.push("");
+      return next;
+    });
+    setLocationAddresses((prev) => {
+      const next = prev.slice(0, clamped);
+      while (next.length < clamped) next.push("");
+      return next;
+    });
+  }
+
+  function updateLocationName(i, value) {
+    setLocationNames((prev) => prev.map((v, idx) => (idx === i ? value : v)));
+  }
+  function updateLocationAddress(i, value) {
+    setLocationAddresses((prev) => prev.map((v, idx) => (idx === i ? value : v)));
   }
 
   const selectedPlan = PLAN_META.find((p) => p.id === planId);
   const salePrice = pricing.sale?.active && planId !== "custom" ? pricing.sale[planId] : null;
   const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : (salePrice ?? pricing[planId]);
   const total = (perLocation * locationCount).toFixed(2);
+
+  const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
+  const step3Valid = locationNames.slice(0, locationCount).every((n) => n.trim());
+  const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
+
+  function next() { setStep((s) => Math.min(4, s + 1)); }
+  function back() { setStep((s) => Math.max(1, s - 1)); }
 
   async function submit() {
     setSubmitting(true);
@@ -234,10 +304,12 @@ function Signup({ onDone, setError }) {
       const plan = PLAN_META.find((p) => p.id === planId);
       const planDays = planId === "custom" ? customDays : plan.days;
       const payload = {
-        businessName, email, planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
+        businessName, firstName, lastName, email, companyAddress,
+        planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
         planDays, price: total, pricePerLocation: perLocation, locationCount,
         paymentMethod, invoiceEmail, invoicePO: poNumber,
-        locationNames: Array.from({ length: locationCount }, () => ""), locationAddresses: Array.from({ length: locationCount }, () => ""),
+        locationNames: locationNames.slice(0, locationCount),
+        locationAddresses: locationAddresses.slice(0, locationCount),
       };
       const result = await api.signup(payload);
       onDone(result);
@@ -250,70 +322,127 @@ function Signup({ onDone, setError }) {
 
   return (
     <div className="narrow stack">
-      <h2>Set up your account</h2>
+      <h2 style={{ textAlign: "center" }}>Set up your account</h2>
+      <StepHeader step={step} />
 
-      <div>
-        <input className="input" placeholder="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
-      </div>
-
-      <div>
-        <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.</div>
-      </div>
-
-      <div>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>What sort of access do you need?</div>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-          You're not choosing a start date — access begins automatically the moment you set opening hours for
-          your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
-        </div>
-        <div className="wrap">
-          {PLAN_META.map((p) => (
-            <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>{p.label}</button>
-          ))}
-        </div>
-        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{selectedPlan?.desc}</div>
-        {planId === "custom" && (
-          <div className="row" style={{ marginTop: 8 }}><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
-        )}
-      </div>
-
-      <div>
-        <div className="row">
-          <span className="muted">How many locations?</span>
-          <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
-          <span>{locationCount}</span>
-          <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
-        </div>
-        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-          You'll name and set up each one once you're in. More locations can always be added later, whenever you need them.
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>How would you like to pay?</div>
-        <div className="wrap">
-          <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
-          <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
-        </div>
-      </div>
-      {paymentMethod === "invoice" && (
+      {step === 1 && (
         <div className="stack">
-          <input className="input" placeholder="Billing email" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
-          <div>
-            <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
-            <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required for invoice payment — your internal purchase order or reference number.</div>
+          <input className="input" placeholder="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input" placeholder="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} style={{ flex: 1 }} />
+            <input className="input" placeholder="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} style={{ flex: 1 }} />
           </div>
-          <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
-            With invoice payment, your account can be fully configured straight away, but staff kiosk and customer
-            WhatsApp won't be enabled until payment is received.
+          <div>
+            <input className="input" placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.</div>
+          </div>
+          <input className="input" placeholder="Company address (optional)" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} />
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button className="btn" disabled={!step1Valid} onClick={next}>Continue</button>
           </div>
         </div>
       )}
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span>Total: <strong>£{total}</strong>{salePrice != null && <span className="muted" style={{ fontSize: 12 }}> (sale price applied)</span>}</span>
-        <button className="btn" disabled={submitting || !businessName || !email || (paymentMethod === "invoice" && !poNumber.trim())} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
-      </div>
+
+      {step === 2 && (
+        <div className="stack">
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>What sort of access do you need?</div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              You're not choosing a start date — access begins automatically the moment you set opening hours for
+              your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
+            </div>
+            <div className="wrap">
+              {PLAN_META.map((p) => (
+                <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>{p.label}</button>
+              ))}
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{selectedPlan?.desc}</div>
+            {planId === "custom" && (
+              <div className="row" style={{ marginTop: 8 }}><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
+            )}
+          </div>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <button className="btn-outline" onClick={back}>Back</button>
+            <button className="btn" onClick={next}>Continue</button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="stack">
+          <div className="row">
+            <span className="muted">How many locations?</span>
+            <button className="btn-outline" onClick={() => setCount(locationCount - 1)}>−</button>
+            <span>{locationCount}</span>
+            <button className="btn-outline" onClick={() => setCount(locationCount + 1)}>+</button>
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>
+            Name each location now — once you're in, you'll just need to add services, set working hours, and
+            pick the dates you're open. More locations can always be added later.
+          </div>
+          <div className="stack">
+            {Array.from({ length: locationCount }).map((_, i) => (
+              <div key={i} className="card stack" style={{ gap: 6 }}>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>Location {i + 1}</div>
+                <input
+                  className="input"
+                  placeholder={`Location ${i + 1} name`}
+                  value={locationNames[i] || ""}
+                  onChange={(e) => updateLocationName(i, e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="Address (optional)"
+                  value={locationAddresses[i] || ""}
+                  onChange={(e) => updateLocationAddress(i, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <button className="btn-outline" onClick={back}>Back</button>
+            <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div className="stack">
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>How would you like to pay?</div>
+            <div className="wrap">
+              <button className={paymentMethod === "card" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("card")}>Card</button>
+              <button className={paymentMethod === "invoice" ? "btn" : "btn-outline"} onClick={() => setPaymentMethod("invoice")}>Invoice</button>
+            </div>
+          </div>
+          {paymentMethod === "card" && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Card payment integration via Stripe is coming soon — for now, your account is activated immediately
+              without taking a real charge.
+            </div>
+          )}
+          {paymentMethod === "invoice" && (
+            <div className="stack">
+              <input className="input" placeholder="Billing email" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
+              <div>
+                <input className="input" placeholder="PO / reference number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
+                <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Required for invoice payment — your internal purchase order or reference number.</div>
+              </div>
+              <div style={{ fontSize: 12, color: "#942A21", fontWeight: 500 }}>
+                With invoice payment, your account can be fully configured straight away, but staff kiosk and customer
+                WhatsApp won't be enabled until payment is received.
+              </div>
+            </div>
+          )}
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span>Total: <strong>£{total}</strong>{salePrice != null && <span className="muted" style={{ fontSize: 12 }}> (sale price applied)</span>}</span>
+          </div>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <button className="btn-outline" onClick={back}>Back</button>
+            <button className="btn" disabled={submitting || !step4Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
