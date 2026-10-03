@@ -102,6 +102,12 @@ export default function App() {
 
   if (restoring) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
 
+  function doSignOut() {
+    setToken("tenant_admin", null);
+    setTenant(null);
+    setScreen("admin-login");
+  }
+
   return (
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
@@ -112,13 +118,17 @@ export default function App() {
         <div className="row">
           {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
           {tenant && <span style={{ fontSize: 12, opacity: 0.85 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
-          <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "#fff", fontSize: 13 }}>New here? Sign up →</a>
+          {tenant ? (
+            <button className="btn-outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.4)" }} onClick={doSignOut}>Sign out</button>
+          ) : (
+            <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "#fff", fontSize: 13 }}>New here? Sign up →</a>
+          )}
         </div>
       </div>
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
-      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} setError={setError} onSignOut={() => { setToken("tenant_admin", null); setTenant(null); setScreen("admin-login"); }} />}
+      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} setError={setError} />}
     </div>
   );
 }
@@ -208,7 +218,7 @@ function LocationWebsiteLine({ loc, setError, onChanged, editing, onDoneEditing 
   return <div className="muted" style={{ fontSize: 12 }}>Website: {loc.website_url}</div>;
 }
 
-function AdminDashboard({ tenant, setError, onSignOut }) {
+function AdminDashboard({ tenant, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
@@ -254,11 +264,13 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
-      <div className="wrap">
-        {["dashboard", "locations", "setup", "audit"].map((t) => (
-          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
-        ))}
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="wrap">
+          {["dashboard", "locations", "setup", "audit"].map((t) => (
+            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+          ))}
+        </div>
+        {tab === "locations" && !addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
       </div>
 
       {tab === "locations" && (
@@ -279,7 +291,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
               )}
             </div>
             <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
-            {!addingLocation && <div><button className="btn-outline" onClick={() => setAddingLocation(true)}>+ Add location</button></div>}
             {addingLocation && (
               <div className="row">
                 <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
@@ -524,6 +535,7 @@ function ShopTab({ tenant, locations }) {
 
 function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const [expanded, setExpanded] = useState(false);
+  const [buyTrigger, setBuyTrigger] = useState(0);
 
   return (
     <div className="card stack" style={service.archived ? { opacity: 0.6 } : undefined}>
@@ -535,6 +547,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
           {service.archived && <span className="badge badge-amber">Archived</span>}
         </div>
         <div className="row">
+          <button className="btn-outline" onClick={() => { setExpanded(true); setBuyTrigger((t) => t + 1); }}>Buy a license</button>
           <select
             className="btn-outline"
             defaultValue=""
@@ -566,7 +579,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
 
       {expanded && (
         <div className="stack">
-          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} tenant={tenant} />
+          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false} />
           <ServiceCalendar service={service} setError={setError} />
         </div>
       )}
@@ -586,7 +599,7 @@ const LICENSE_STATUS_META = {
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -597,6 +610,9 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const [movingId, setMovingId] = useState(null);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
+  // "Buy a license" lives in ServiceEditor's header (to the left of its Actions ⋯ menu);
+  // it bumps buyTrigger to open the plan picker here.
+  useEffect(() => { if (buyTrigger) setBuying(true); }, [buyTrigger]);
 
   async function load() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
@@ -664,7 +680,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
     <div className="stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <strong style={{ fontSize: 13 }}>Licenses</strong>
-        {!buying && <button className="btn-outline" onClick={() => setBuying(true)}>Buy a license</button>}
+        {showBuyButton && !buying && <button className="btn-outline" onClick={() => setBuying(true)}>Buy a license</button>}
       </div>
 
       {buying && pricing && (
