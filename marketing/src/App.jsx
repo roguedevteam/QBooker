@@ -12,6 +12,18 @@ const PLAN_META = [
   { id: "custom", label: "Custom", days: null, desc: "Choose exactly how many days you need." },
 ];
 
+const SERVICE_MODE_META = [
+  { id: "queue", label: "Queue", desc: "Walk-ins only, called forward in order." },
+  { id: "appointment", label: "Appointment", desc: "Bookable time slots only." },
+  { id: "hybrid", label: "Hybrid", desc: "Both walk-ins and bookings at once." },
+];
+
+function servicePlanPrice(svc, pricing) {
+  if (svc.planId === "custom") return (Number(svc.customDays) || 1) * pricing.customDailyRate;
+  const onSale = pricing.sale?.active && pricing.sale[svc.planId] != null;
+  return onSale ? pricing.sale[svc.planId] : pricing[svc.planId];
+}
+
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
 // `dark` switches the wordmark to a light colour for use on the navy band / header.
 function Logo({ size = 28, dark = false, withWord = true }) {
@@ -237,7 +249,7 @@ function Landing({ onStart, simulatedBadge }) {
         <div id="pricing" className="container" style={{ padding: "88px 0" }}>
           <span className="tag">Pricing</span>
           <h2 className="h2" style={{ marginTop: 14 }}>Try it before you commit</h2>
-          <p className="lead" style={{ marginBottom: 34 }}>Buy exactly as much time as you need to test it properly — per location.</p>
+          <p className="lead" style={{ marginBottom: 34 }}>Buy exactly as much time as you need to test it properly — per service.</p>
           {pricing.sale?.active && (
             <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, marginTop: -20, marginBottom: 20 }}>Sale on selected plans — see below</p>
           )}
@@ -254,7 +266,7 @@ function Landing({ onStart, simulatedBadge }) {
               );
             })}
           </div>
-          <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>All prices per location. Need something in between? Choose a custom period at signup.</p>
+          <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>All prices per service. Need something in between? Choose a custom period at signup.</p>
           <div className="row" style={{ gap: 16, marginTop: 28, flexWrap: "wrap", alignItems: "stretch" }}>
             <div className="card row" style={{ justifyContent: "space-between", flex: "1 1 320px", flexWrap: "wrap", gap: 12 }}>
               <div>
@@ -437,7 +449,7 @@ function Success({ result }) {
   );
 }
 
-const STEP_LABELS = ["Your details", "Pass & locations", "Payment"];
+const STEP_LABELS = ["Your details", "Locations", "Services", "Payment"];
 
 function StepHeader({ step }) {
   return (
@@ -512,6 +524,70 @@ function PaymentOption({ active, onClick, title, desc }) {
   );
 }
 
+function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, removable }) {
+  const needsSlotLength = svc.mode === "appointment" || svc.mode === "hybrid";
+  const price = servicePlanPrice(svc, pricing);
+  return (
+    <div className="card stack" style={{ gap: 10 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span className="muted" style={{ fontSize: 12, fontWeight: 600 }}>Service {index + 1}</span>
+        {removable && (
+          <button type="button" className="loc-remove" style={{ width: "auto", padding: "2px 8px" }} onClick={onRemove} aria-label={`Remove service ${index + 1}`}>✕</button>
+        )}
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Field label="Service name">
+          <input className="input" placeholder="e.g. Blood Test" value={svc.name} onChange={(e) => onChange({ ...svc, name: e.target.value })} />
+        </Field>
+        <Field label="Location">
+          <select className="input" value={svc.locationIndex} onChange={(e) => onChange({ ...svc, locationIndex: Number(e.target.value) })}>
+            {locationNames.map((n, i) => <option key={i} value={i}>{n.trim() || `Location ${i + 1}`}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Field label="Type">
+          <select className="input" value={svc.mode} onChange={(e) => onChange({ ...svc, mode: e.target.value })}>
+            {SERVICE_MODE_META.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </Field>
+        {needsSlotLength && (
+          <Field label="Slot length">
+            <select className="input" value={svc.slotMinutes} onChange={(e) => onChange({ ...svc, slotMinutes: Number(e.target.value) })}>
+              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </Field>
+        )}
+      </div>
+      <div className="muted" style={{ fontSize: 11 }}>{SERVICE_MODE_META.find((m) => m.id === svc.mode)?.desc} The name, type, slot length, and location can't be changed after setup — delete and recreate the service if you need to.</div>
+
+      <div style={{ borderTop: "1px solid var(--line)" }} />
+
+      <div className="plan-grid">
+        {PLAN_META.map((p) => {
+          const onSale = p.id !== "custom" && pricing.sale?.active && pricing.sale[p.id] != null;
+          const planPrice = p.id === "custom" ? null : (onSale ? pricing.sale[p.id] : pricing[p.id]);
+          return (
+            <button key={p.id} type="button" className={svc.planId === p.id ? "plan-option active" : "plan-option"} onClick={() => onChange({ ...svc, planId: p.id })}>
+              <span className="plan-option-label">{p.label}</span>
+              {planPrice != null && <span className="plan-option-price">£{planPrice}</span>}
+              {p.id === "custom" && <span className="plan-option-price">from £{pricing.customDailyRate}/day</span>}
+            </button>
+          );
+        })}
+      </div>
+      {svc.planId === "custom" && (
+        <Field label="Number of days">
+          <input className="input" type="number" min={1} value={svc.customDays} onChange={(e) => onChange({ ...svc, customDays: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+        </Field>
+      )}
+      <div className="row" style={{ justifyContent: "flex-end" }}>
+        <span className="muted" style={{ fontSize: 12 }}>License for this service: <strong style={{ color: "var(--ink)" }}>£{price}</strong></span>
+      </div>
+    </div>
+  );
+}
+
 function Signup({ onDone, setError, onBackToLanding }) {
   const [step, setStep] = useState(1);
 
@@ -525,14 +601,15 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const [companyCity, setCompanyCity] = useState("");
   const [companyPostcode, setCompanyPostcode] = useState("");
 
-  // Step 2 — pass + locations (combined, since the pass decides the per-location price)
-  const [planId, setPlanId] = useState("month");
-  const [customDays, setCustomDays] = useState(14);
+  // Step 2 — locations (free, unlimited — just a routing/staff-access concept)
   const [locationNames, setLocationNames] = useState([""]);
-  const locationCount = locationNames.length;
   const MAX_LOCATIONS = 20;
 
-  // Step 3 — payment
+  // Step 3 — services, each assigned to a location and bought with its own license
+  const [services, setServices] = useState([{ name: "", locationIndex: 0, mode: "hybrid", slotMinutes: 15, planId: "month", customDays: 14 }]);
+  const MAX_SERVICES = 30;
+
+  // Step 4 — payment
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [invoiceEmail, setInvoiceEmail] = useState("");
   const [poNumber, setPoNumber] = useState("");
@@ -546,19 +623,25 @@ function Signup({ onDone, setError, onBackToLanding }) {
   function addLocation() {
     setLocationNames((prev) => (prev.length >= MAX_LOCATIONS ? prev : [...prev, ""]));
   }
-
   function removeLocation(i) {
     setLocationNames((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)));
+    setServices((prev) => prev.map((s) => (s.locationIndex === i ? { ...s, locationIndex: 0 } : s.locationIndex > i ? { ...s, locationIndex: s.locationIndex - 1 } : s)));
   }
-
   function updateLocationName(i, value) {
     setLocationNames((prev) => prev.map((v, idx) => (idx === i ? value : v)));
   }
 
-  const selectedPlan = PLAN_META.find((p) => p.id === planId);
-  const salePrice = pricing.sale?.active && planId !== "custom" ? pricing.sale[planId] : null;
-  const perLocation = planId === "custom" ? customDays * pricing.customDailyRate : (salePrice ?? pricing[planId]);
-  const total = (perLocation * locationCount).toFixed(2);
+  function addService() {
+    setServices((prev) => (prev.length >= MAX_SERVICES ? prev : [...prev, { name: "", locationIndex: 0, mode: "hybrid", slotMinutes: 15, planId: "month", customDays: 14 }]));
+  }
+  function removeService(i) {
+    setServices((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)));
+  }
+  function updateService(i, next) {
+    setServices((prev) => prev.map((s, idx) => (idx === i ? next : s)));
+  }
+
+  const total = services.reduce((sum, s) => sum + (Number(servicePlanPrice(s, pricing)) || 0), 0).toFixed(2);
 
   const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
   const activeNames = locationNames.map((n) => n.trim());
@@ -566,24 +649,25 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const normalizedNames = activeNames.map((n) => n.toLowerCase());
   const hasDuplicateNames = namesFilled && new Set(normalizedNames).size !== normalizedNames.length;
   const step2Valid = namesFilled && !hasDuplicateNames;
-  const step3Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
+  const step3Valid = services.every((s) => s.name.trim() && s.planId && (s.planId !== "custom" || Number(s.customDays) > 0));
+  const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
 
-  function next() { setStep((s) => Math.min(3, s + 1)); }
+  function next() { setStep((s) => Math.min(4, s + 1)); }
   function back() { setStep((s) => Math.max(1, s - 1)); }
 
   async function submit() {
     setSubmitting(true);
     setError("");
     try {
-      const plan = PLAN_META.find((p) => p.id === planId);
-      const planDays = planId === "custom" ? customDays : plan.days;
       const payload = {
         businessName, firstName, lastName, email,
         companyAddress: combineAddress(companyLine1, companyLine2, companyCity, companyPostcode),
-        planId, planLabel: planId === "custom" ? `${customDays}-day custom plan` : plan.label,
-        planDays, price: total, pricePerLocation: perLocation, locationCount,
         paymentMethod, invoiceEmail, invoicePO: poNumber,
-        locationNames: locationNames.slice(0, locationCount),
+        locations: locationNames.map((n) => ({ name: n.trim() })),
+        services: services.map((s) => ({
+          name: s.name.trim(), locationIndex: s.locationIndex, mode: s.mode, slotMinutes: s.slotMinutes,
+          planId: s.planId, customDays: s.planId === "custom" ? Number(s.customDays) : undefined,
+        })),
       };
       const result = await api.signup(payload);
       onDone(result);
@@ -648,83 +732,44 @@ function Signup({ onDone, setError, onBackToLanding }) {
         )}
 
         {step === 2 && (
-          <div className="stack" style={{ gap: 20 }}>
-            <div className="stack" style={{ gap: 10 }}>
-              <div className="stack" style={{ gap: 2 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Choose your access period</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  You're not choosing a start date — access begins automatically the moment you set opening hours for
-                  your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
-                </div>
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="stack" style={{ gap: 2 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>Add your locations</div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Locations are free and unlimited — they're just how customers and staff get routed to the right place.
+                Name each one now; each name must be unique. You'll pick services and licenses next.
               </div>
-              <div className="plan-grid">
-                {PLAN_META.map((p) => {
-                  const onSale = p.id !== "custom" && pricing.sale?.active && pricing.sale[p.id] != null;
-                  const price = p.id === "custom" ? null : (onSale ? pricing.sale[p.id] : pricing[p.id]);
-                  return (
-                    <button key={p.id} type="button" className={planId === p.id ? "plan-option active" : "plan-option"} onClick={() => setPlanId(p.id)}>
-                      <span className="plan-option-label">{p.label}</span>
-                      {price != null && <span className="plan-option-price">£{price}</span>}
-                      {p.id === "custom" && <span className="plan-option-price">from £{pricing.customDailyRate}/day</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="muted" style={{ fontSize: 12 }}>{selectedPlan?.desc}</div>
-              {planId === "custom" && (
-                <Field label="Number of days">
-                  <input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} style={{ maxWidth: 120 }} />
-                </Field>
-              )}
             </div>
-
-            <div style={{ borderTop: "1px solid var(--line)" }} />
-
-            <div className="stack" style={{ gap: 10 }}>
-              <div className="stack" style={{ gap: 2 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Add your locations</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Name each location now — each name must be unique. Once you're in, you'll just need to add services,
-                  set working hours, and pick the dates you're open.
+            <div className="stack" style={{ gap: 8 }}>
+              {locationNames.map((name, i) => (
+                <div key={i} className="loc-row">
+                  <span className="loc-index">{i + 1}</span>
+                  <input
+                    className="input"
+                    aria-label={`Location ${i + 1} name`}
+                    placeholder={`Location ${i + 1} name`}
+                    value={name}
+                    onChange={(e) => updateLocationName(i, e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="loc-remove"
+                    onClick={() => removeLocation(i)}
+                    disabled={locationNames.length <= 1}
+                    aria-label={`Remove location ${i + 1}`}
+                    title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
+                  >
+                    ✕
+                  </button>
                 </div>
-              </div>
-              <div className="stack" style={{ gap: 8 }}>
-                {locationNames.map((name, i) => (
-                  <div key={i} className="loc-row">
-                    <span className="loc-index">{i + 1}</span>
-                    <input
-                      className="input"
-                      aria-label={`Location ${i + 1} name`}
-                      placeholder={`Location ${i + 1} name`}
-                      value={name}
-                      onChange={(e) => updateLocationName(i, e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="loc-remove"
-                      onClick={() => removeLocation(i)}
-                      disabled={locationNames.length <= 1}
-                      aria-label={`Remove location ${i + 1}`}
-                      title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="loc-add" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add another location</button>
-              </div>
-              {hasDuplicateNames && (
-                <div style={{ fontSize: 12, color: "var(--error)", fontWeight: 500 }}>
-                  Each location needs its own name — two locations currently share the same name.
-                </div>
-              )}
+              ))}
+              <button type="button" className="loc-add" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add another location</button>
             </div>
-
-            <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
-              <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
-              <strong>Total: £{total}</strong>
-            </div>
-
+            {hasDuplicateNames && (
+              <div style={{ fontSize: 12, color: "var(--error)", fontWeight: 500 }}>
+                Each location needs its own name — two locations currently share the same name.
+              </div>
+            )}
             <div className="row" style={{ justifyContent: "space-between" }}>
               <button className="btn-outline" onClick={back}>Back</button>
               <button className="btn" disabled={!step2Valid} onClick={next}>Continue</button>
@@ -733,6 +778,44 @@ function Signup({ onDone, setError, onBackToLanding }) {
         )}
 
         {step === 3 && (
+          <div className="stack" style={{ gap: 16 }}>
+            <div className="stack" style={{ gap: 2 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>Add your services</div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Each service belongs to one location and gets its own license — pick whatever length fits (a day, a week,
+                a month, a year, or a custom number of days). Access begins the moment you set opening hours for it,
+                whenever you're actually ready — nothing is wasted while you're still setting up.
+              </div>
+            </div>
+            <div className="stack" style={{ gap: 12 }}>
+              {services.map((svc, i) => (
+                <ServiceRow
+                  key={i}
+                  svc={svc}
+                  index={i}
+                  locationNames={locationNames}
+                  pricing={pricing}
+                  onChange={(next) => updateService(i, next)}
+                  onRemove={() => removeService(i)}
+                  removable={services.length > 1}
+                />
+              ))}
+              <button type="button" className="loc-add" onClick={addService} disabled={services.length >= MAX_SERVICES}>+ Add another service</button>
+            </div>
+
+            <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
+              <span className="muted" style={{ fontSize: 12 }}>{services.length} service license{services.length === 1 ? "" : "s"}</span>
+              <strong>Total: £{total}</strong>
+            </div>
+
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <button className="btn-outline" onClick={back}>Back</button>
+              <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
           <div className="stack">
             <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>How would you like to pay?</div>
@@ -763,13 +846,13 @@ function Signup({ onDone, setError, onBackToLanding }) {
             )}
 
             <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
-              <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>
-              <span>Total: <strong>£{total}</strong>{salePrice != null && <span className="muted" style={{ fontSize: 12 }}> (sale price applied)</span>}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{services.length} service license{services.length === 1 ? "" : "s"}</span>
+              <span>Total: <strong>£{total}</strong></span>
             </div>
 
             <div className="row" style={{ justifyContent: "space-between" }}>
               <button className="btn-outline" onClick={back}>Back</button>
-              <button className="btn" disabled={submitting || !step3Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+              <button className="btn" disabled={submitting || !step4Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
             </div>
           </div>
         )}

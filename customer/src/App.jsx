@@ -100,7 +100,7 @@ function CustomerWhatsApp({ tenantId }) {
       try {
         const r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes());
         if (!r.open) {
-          bot(r.reason === "outside_plan_window" ? "We're not taking bookings today." : `${svc.name} isn't available right now.`, [{ label: "Choose another service", action: "greet" }]);
+          bot(r.reason === "outside_license_window" ? "We're not taking bookings today." : `${svc.name} isn't available right now.`, [{ label: "Choose another service", action: "greet" }]);
           return;
         }
         const opts = [];
@@ -164,7 +164,7 @@ function CustomerWhatsApp({ tenantId }) {
       let text = "We're not open right now — nothing here is available today. Please check back during opening hours.";
       if (reasons.size === 1) {
         const reason = [...reasons][0];
-        if (reason === "outside_plan_window") text = "This location's license doesn't cover today's date — please contact the business directly.";
+        if (reason === "outside_license_window") text = "This service's license doesn't cover today's date — please contact the business directly.";
         else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
       }
       const opts = [];

@@ -25,28 +25,6 @@ export function isDateFullyPast(dateStr) {
   return target < today;
 }
 
-// Returns { start, end } (both 'YYYY-MM-DD') for the tenant's current access window, or null.
-export function getPlanWindow(tenant) {
-  if (tenant.plan_id === "day") return tenant.active_date ? { start: tenant.active_date, end: tenant.active_date } : null;
-  if (tenant.plan_id === "week") {
-    if (!tenant.week_start_date) return null;
-    const start = toDateOnly(tenant.week_start_date);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 6);
-    return { start: tenant.week_start_date, end: end.toISOString().slice(0, 10) };
-  }
-  if (["month", "year", "custom"].includes(tenant.plan_id)) {
-    return tenant.start_date && tenant.end_date ? { start: tenant.start_date, end: tenant.end_date } : null;
-  }
-  return null;
-}
-
-export function isWithinPaidWindow(tenant, dateStr) {
-  const window = getPlanWindow(tenant);
-  if (!window) return false;
-  return dateStr >= window.start && dateStr <= window.end;
-}
-
 export function addDays(dateStr, n) {
   const d = toDateOnly(dateStr);
   d.setUTCDate(d.getUTCDate() + n);
