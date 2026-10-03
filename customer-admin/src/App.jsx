@@ -865,10 +865,20 @@ function ServiceCalendar({ service, setError, refreshToken }) {
   const overallStart = windows.length ? windows.map((w) => w.start).sort()[0] : null;
   const overallEnd = windows.length ? windows.map((w) => w.end).sort().slice(-1)[0] : null;
 
-  // If the selected day fell outside a window that just changed (e.g. it was
-  // unscheduled), drop the selection rather than leave a now-invalid day "active".
+  // Whenever there's no valid day selected — opening the calendar fresh, or the
+  // previously-selected day just fell outside a window that changed (e.g. it was
+  // unscheduled) — jump straight to the first day of the earliest scheduled/active
+  // window, switching the visible month to match, instead of leaving it on a blank
+  // "pick a day" state the admin has to act on first.
   useEffect(() => {
-    if (selectedDate && !isWithinAnyWindow(selectedDate)) setSelectedDate(null);
+    if (selectedDate && isWithinAnyWindow(selectedDate)) return;
+    if (overallStart) {
+      setSelectedDate(overallStart);
+      const m = firstOfMonth(overallStart);
+      if (m !== calendarMonth) setCalendarMonth(m);
+    } else if (selectedDate) {
+      setSelectedDate(null);
+    }
   }, [windows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
