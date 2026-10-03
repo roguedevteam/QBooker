@@ -15,6 +15,7 @@
   --error-weak:#FBE9E7;
   --brand:#1D5C8A;
   --blue:#1D5C8A;
+  --blue-weak:#E6EEF3;
   --navy:#122B40;
 }
 * { box-sizing: border-box; }
@@ -81,3 +82,14 @@ tbody tr { border-top: 1px solid var(--line); }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); }
 .field-hint { font-size: 11px; color: var(--muted); }
+
+/* Marketing homepage — hero, section headings, tabs, mono labels */
+.mono { font-family: 'IBM Plex Mono', monospace; }
+.tag { font-size: 12px; font-weight: 600; color: var(--blue); background: var(--blue-weak); padding: 4px 10px; display: inline-block; }
+.h2 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 14px; }
+.lead { font-size: 17px; color: var(--muted); line-height: 1.6; max-width: 640px; margin: 0; }
+.btn-ink { background: var(--ink); color: #fff; border: none; border-radius: 2px; padding: 13px 22px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; }
+.btn-accent { background: var(--accent); color: #fff; border: none; border-radius: 2px; padding: 13px 22px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; }
+.navbtn { background: transparent; border: none; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; padding: 10px 16px; border-bottom: 2px solid transparent; }
+.navbtn.active { color: var(--ink); border-bottom-color: var(--blue); }
+.wide { max-width: 1160px; margin: 0 auto; padding: 0 32px; }

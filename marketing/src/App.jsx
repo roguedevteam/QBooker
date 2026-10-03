@@ -15,7 +15,6 @@ const PLAN_META = [
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
 // `dark` switches the wordmark to a light colour for use on the navy band / header.
 function Logo({ size = 28, dark = false, withWord = true }) {
-  const r = size / 44; // scale factor relative to the 44px source art
   return (
     <span className="logo">
       <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
@@ -41,176 +40,354 @@ export default function App() {
 
   return (
     <div>
-      <div className="header row" style={{ justifyContent: "space-between" }}>
-        <a href="#top" onClick={() => setScreen("landing")} style={{ textDecoration: "none" }}>
-          <Logo dark />
-        </a>
-        <div className="row">
-          {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
-          {!inCheckout && (
-            <nav className="row" style={{ gap: 18, marginRight: 8 }}>
-              <a href="#features" style={{ color: "#fff", fontSize: 13, opacity: 0.85, textDecoration: "none" }}>Features</a>
-              <a href="#pricing" style={{ color: "#fff", fontSize: 13, opacity: 0.85, textDecoration: "none" }}>Pricing</a>
-              <a href="#faq" style={{ color: "#fff", fontSize: 13, opacity: 0.85, textDecoration: "none" }}>FAQ</a>
-            </nav>
-          )}
-          <a href={ADMIN_APP_URL} style={{ color: "#fff", fontSize: 13 }}>
-            {inCheckout ? "Already have an account? Sign in →" : "Sign in →"}
+      {inCheckout && (
+        <div className="header row" style={{ justifyContent: "space-between" }}>
+          <a href="#top" onClick={() => setScreen("landing")} style={{ textDecoration: "none" }}>
+            <Logo dark />
           </a>
+          <div className="row">
+            {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
+            <a href={ADMIN_APP_URL} style={{ color: "#fff", fontSize: 13 }}>Already have an account? Sign in →</a>
+          </div>
         </div>
-      </div>
+      )}
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
-      {screen === "landing" && <Landing onStart={() => setScreen("signup")} />}
+      {screen === "landing" && (
+        <Landing
+          onStart={() => setScreen("signup")}
+          simulatedBadge={isSimulatedToday() ? todayIso() : null}
+        />
+      )}
       {screen === "signup" && <Signup setError={setError} onDone={(r) => { setResult(r); setScreen("success"); }} onBackToLanding={() => setScreen("landing")} />}
       {screen === "success" && result && <Success result={result} />}
     </div>
   );
 }
 
-const FEATURES = [
-  { icon: "⚡", title: "Rapid setup", text: "Sign up and be live in about 3 minutes — no onboarding call required." },
-  { icon: "🔀", title: "Queue, appointments, or both", text: "Set each service to queue-only, appointment-only, or hybrid — your choice, changeable anytime." },
-  { icon: "📄", title: "No lock-in contracts", text: "Pay for exactly the period you need — a day, a week, a month, or a year. Nothing auto-renews behind your back." },
-  { icon: "📍", title: "Priced per location", text: "One simple price per location, not per seat or per staff member." },
-  { icon: "👥", title: "Unlimited by design", text: "Unlimited staff, unlimited services, unlimited appointments — no artificial caps to hit." },
-  { icon: "🧭", title: "Flexible from day one", text: "Change plans, add locations, and reconfigure services as your business changes." },
+const TABS = [
+  {
+    id: 1,
+    label: "Booking",
+    items: [
+      { title: "Book by message", text: "Customers pick a time without leaving the chat they already have open." },
+      { title: "Reminders that send themselves", text: "Automatic confirmation and a reminder before the slot." },
+      { title: "Reschedule in one line", text: "No phone tag — they just reply to move it." },
+    ],
+  },
+  {
+    id: 2,
+    label: "Queue management",
+    items: [
+      { title: "Live queue, no hardware", text: "Walk-ins join by message; the counter screen updates itself." },
+      { title: "Wait time, told straight", text: "Customers get a real estimate, not a guess at the door." },
+      { title: "Multiple locations, one view", text: "Every location gets its own code and queue, all visible from one place." },
+    ],
+  },
+  {
+    id: 3,
+    label: "Client experience",
+    items: [
+      { title: "No app to download", text: "Everything happens in the chat app already on their phone." },
+      { title: "Answers, any time", text: "Opening hours and availability, answered automatically out of hours." },
+      { title: "Feels personal", text: "A real conversation, not a form — because it is one." },
+    ],
+  },
 ];
 
-// A full-bleed section band — alternates between the page background and a
-// bordered card band so the landing page reads as distinct, scannable sections.
-function Section({ id, variant, children }) {
-  const cls = variant === "card" ? "band band-card" : variant === "navy" ? "band band-navy" : "band";
-  return (
-    <div id={id} className={cls}>
-      <div className="container">{children}</div>
-    </div>
-  );
-}
+const INDUSTRIES = [
+  { icon: "✂", name: "Barbers & salons" },
+  { icon: "✚", name: "Clinics & practices" },
+  { icon: "🧖", name: "Spas & studios" },
+  { icon: "🔧", name: "Repair shops" },
+  { icon: "🛍", name: "Independent shops" },
+  { icon: "🐾", name: "Groomers & vets" },
+];
 
-function SectionHeading({ title, lead }) {
-  return (
-    <div className="stack" style={{ textAlign: "center", marginBottom: 28, gap: 6 }}>
-      <h2 style={{ fontSize: 22, margin: 0 }}>{title}</h2>
-      {lead && <p className="muted" style={{ margin: 0 }}>{lead}</p>}
-    </div>
-  );
-}
+const TESTIMONIALS = [
+  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
+  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
+  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
+];
 
-function Landing({ onStart }) {
+function Landing({ onStart, simulatedBadge }) {
   const [pricing, setPricing] = useState(null);
+  const [activeTab, setActiveTab] = useState(1);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
+  const currentTab = TABS.find((t) => t.id === activeTab);
+
   return (
     <div id="top">
-      <div className="container stack" style={{ textAlign: "center", paddingTop: 60, paddingBottom: 48 }}>
-        <h1>Let customers join the queue or book a slot — from a WhatsApp message.</h1>
-        <p className="muted">No app to install. Set up services, hours, and slots in minutes.</p>
-        <div><button className="btn" onClick={onStart}>Get started</button></div>
+      {/* NAV */}
+      <div style={{ background: "var(--surface-card)", borderBottom: "1px solid var(--line)" }}>
+        <div className="container row" style={{ justifyContent: "space-between", paddingTop: 18, paddingBottom: 18, flexWrap: "wrap", gap: 12 }}>
+          <Logo />
+          <nav className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Product</span>
+            <a href="#industries" style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Industries</a>
+            <a href="#pricing" style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Pricing</a>
+            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Resources</span>
+          </nav>
+          <div className="row" style={{ gap: 14 }}>
+            {simulatedBadge && <span className="badge badge-amber">Simulated date: {simulatedBadge}</span>}
+            <a href={ADMIN_APP_URL} style={{ fontSize: 14, fontWeight: 600, color: "var(--muted)" }}>Log in</a>
+            <button className="btn-ink" onClick={onStart}>Start free</button>
+          </div>
+        </div>
       </div>
 
-      <Section id="features" variant="card">
-        <SectionHeading title="Everything you need, nothing you don't" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-          {FEATURES.map((f) => (
-            <div key={f.title} className="card stack" style={{ gap: 6 }}>
-              <div style={{ fontSize: 22 }}>{f.icon}</div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{f.title}</div>
-              <div className="muted" style={{ fontSize: 13 }}>{f.text}</div>
+      {/* HERO */}
+      <div className="container" style={{ paddingTop: 72, paddingBottom: 72 }}>
+        <div style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 440px", minWidth: 0 }}>
+            <span className="tag">For clinics, salons and shops</span>
+            <h1 style={{ fontSize: 52, lineHeight: 1.08, fontWeight: 700, letterSpacing: "-0.03em", margin: "18px 0 20px" }}>
+              Booking, where your customers already message you
+            </h1>
+            <p className="lead">QBooker turns WhatsApp into your front desk — customers join the queue or book a slot by chatting, staff see it update live. No app for them to download.</p>
+            <div className="row" style={{ gap: 12, marginTop: 30, flexWrap: "wrap" }}>
+              <button className="btn-accent" onClick={onStart}>Start free</button>
+              <a href="#features"><button className="btn-outline">See how it works</button></a>
+            </div>
+            <div className="muted" style={{ marginTop: 16, fontSize: 13 }}>No card required · set up in an afternoon</div>
+          </div>
+          <div style={{ flex: "1 1 420px", minWidth: 0, display: "flex", gap: 16 }}>
+            <div className="card" style={{ flex: 1, padding: 18 }}>
+              <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 12 }}>The conversation</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--surface-page)", borderRadius: "10px 10px 10px 2px", padding: "9px 12px", fontSize: 13 }}>Hi — can I get a slot today?</div>
+                <div style={{ alignSelf: "flex-end", maxWidth: "85%", background: "var(--navy)", color: "#fff", borderRadius: "10px 10px 2px 10px", padding: "9px 12px", fontSize: 13 }}>You're #3 in the queue — about 20 min</div>
+                <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--surface-page)", borderRadius: "10px 10px 10px 2px", padding: "9px 12px", fontSize: 13 }}>Perfect, see you soon</div>
+              </div>
+            </div>
+            <div className="card" style={{ flex: 1, padding: 18 }}>
+              <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 12 }}>The dashboard</div>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span style={{ fontSize: 14, fontWeight: 700 }}>Riverside Clinic</span>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)", display: "inline-block" }} />
+              </div>
+              <div className="mono muted" style={{ fontSize: 11, margin: "6px 0 14px" }}>QB-7F3K2A</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#3 J. Patel</span><span className="mono muted">waiting</span></div>
+                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#2 S. Ahmed</span><span className="mono muted">waiting</span></div>
+                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#1 R. Okafor</span><span className="mono" style={{ color: "var(--accent)" }}>now serving</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SOCIAL PROOF */}
+      <div style={{ background: "var(--navy)", padding: "28px 0" }}>
+        <div className="container row" style={{ justifyContent: "center", gap: 48, flexWrap: "wrap", color: "#fff" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, opacity: 0.85 }}>Built for independent clinics, salons and shops across the UK</span>
+          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[locations live]</span>
+          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[bookings this month]</span>
+          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[avg. setup time: an afternoon]</span>
+        </div>
+      </div>
+
+      {/* FEATURE TABS */}
+      <div id="features" className="container" style={{ padding: "88px 0" }}>
+        <h2 className="h2">Everything the front desk used to do</h2>
+        <p className="lead" style={{ marginBottom: 34 }}>Three jobs, one chat thread.</p>
+        <div className="row" style={{ gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 32 }}>
+          {TABS.map((t) => (
+            <button key={t.id} className={activeTab === t.id ? "navbtn active" : "navbtn"} onClick={() => setActiveTab(t.id)}>{t.label}</button>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20 }}>
+          {currentTab.items.map((item) => (
+            <div key={item.title} className="card">
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{item.title}</div>
+              <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>{item.text}</div>
             </div>
           ))}
         </div>
-      </Section>
+      </div>
 
+      {/* INDUSTRIES */}
+      <div id="industries" style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)", padding: "88px 0" }}>
+        <div className="container">
+          <h2 className="h2">Built around how you already work</h2>
+          <p className="lead" style={{ marginBottom: 34 }}>Pick your trade — the setup is the same conversation either way.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+            {INDUSTRIES.map((ind) => (
+              <div key={ind.name} className="card row" style={{ gap: 12 }}>
+                <div style={{ width: 40, height: 40, background: "var(--surface-page)", border: "1px solid var(--line)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>{ind.icon}</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{ind.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* TRUST STRIP */}
+      <div className="container row" style={{ justifyContent: "center", gap: 40, flexWrap: "wrap", padding: "36px 0" }}>
+        <span className="mono muted" style={{ fontSize: 12 }}>WhatsApp Business API</span>
+        <span className="mono muted" style={{ fontSize: 12 }}>GDPR-ready</span>
+        <span className="mono muted" style={{ fontSize: 12 }}>UK-hosted data</span>
+        <span className="mono muted" style={{ fontSize: 12 }}>No long-term contract</span>
+      </div>
+
+      {/* PRICING — real data from the API */}
       {pricing && (
-        <Section id="pricing">
-          <SectionHeading title="Try it before you commit" lead="Buy exactly as much time as you need to test it properly — per location." />
+        <div id="pricing" className="container" style={{ padding: "88px 0" }}>
+          <span className="tag">Pricing</span>
+          <h2 className="h2" style={{ marginTop: 14 }}>Try it before you commit</h2>
+          <p className="lead" style={{ marginBottom: 34 }}>Buy exactly as much time as you need to test it properly — per location.</p>
           {pricing.sale?.active && (
-            <p style={{ textAlign: "center", fontSize: 13, color: "var(--accent)", fontWeight: 600, marginTop: -16 }}>Sale on selected plans — see below</p>
+            <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, marginTop: -20, marginBottom: 20 }}>Sale on selected plans — see below</p>
           )}
-          <div className="wrap" style={{ justifyContent: "center" }}>
+          <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
             {["day", "week", "month", "year"].map((k) => {
               const label = { day: "Day pass", week: "Week", month: "Month", year: "Year" }[k];
               const onSale = pricing.sale?.active && pricing.sale[k] != null;
               return (
-                <div key={k} className="card stack" style={{ minWidth: 140, textAlign: "center" }}>
+                <div key={k} className="card stack" style={{ minWidth: 160, textAlign: "center" }}>
                   {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>£{pricing[k]}</span>}
-                  <strong style={{ color: onSale ? "var(--accent)" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
+                  <strong style={{ fontSize: 22, color: onSale ? "var(--accent)" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
                   <span className="muted" style={{ fontSize: 12 }}>{label}</span>
                 </div>
               );
             })}
           </div>
-          <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>All prices per location. Need something in between? Choose a custom period at signup.</p>
-        </Section>
+          <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>All prices per location. Need something in between? Choose a custom period at signup.</p>
+          <div className="row" style={{ gap: 16, marginTop: 28, flexWrap: "wrap", alignItems: "stretch" }}>
+            <div className="card row" style={{ justifyContent: "space-between", flex: "1 1 320px", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Want a hand getting set up?</div>
+                <p className="muted" style={{ fontSize: 13, margin: "4px 0 0" }}>Our team will configure your services, hours, and staff for you — done in one session.</p>
+              </div>
+              <div className="row" style={{ gap: 10 }}>
+                <strong>£125</strong>
+                <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Get in touch</button></a>
+              </div>
+            </div>
+            <div className="card stack" style={{ flex: "1 1 320px" }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>Just need a simple queue?</div>
+              <p className="muted" style={{ fontSize: 13 }}>
+                If you already use Microsoft Bookings for appointments and only need queue management,
+                we offer integration on request — <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration" style={{ textDecoration: "underline" }}>get in touch</a> to discuss your setup.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
 
-      <Section variant="card">
-        <div className="card row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+      {/* FEATURE DEEP-DIVE 1 */}
+      <div style={{ padding: "88px 0" }}>
+        <div className="container" style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+            <div className="card" style={{ padding: 22 }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>Central Clinic</div>
+                  <div className="mono muted" style={{ fontSize: 11, marginTop: 3 }}>QB-7F3K2A</div>
+                </div>
+                <span style={{ padding: "4px 10px", background: "var(--accent-weak)", color: "var(--accent)", fontSize: 11, fontWeight: 700 }}>Live</span>
+              </div>
+              <div style={{ height: 1, background: "var(--line)", margin: "16px 0" }} />
+              <div className="muted" style={{ fontSize: 13 }}>Now serving</div>
+              <div className="mono" style={{ fontSize: 40, fontWeight: 600, marginTop: 4 }}>#12</div>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+            <span className="tag">Queue status</span>
+            <h2 className="h2" style={{ marginTop: 14 }}>Always live, never a guess</h2>
+            <p className="lead">Every location gets its own queue number and status, updated the moment someone's served — on the counter screen and in the chat, at the same time.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* FEATURE DEEP-DIVE 2 */}
+      <div style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)", padding: "88px 0" }}>
+        <div className="container" style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap", flexDirection: "row-reverse" }}>
+          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Central Clinic</span><span className="mono muted" style={{ fontSize: 11 }}>QB-7F3K2A</span></div>
+              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Riverside Clinic</span><span className="mono muted" style={{ fontSize: 11 }}>QB-91MZQ</span></div>
+              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Old High Street</span><span className="mono muted" style={{ fontSize: 11 }}>QB-3DT0P</span></div>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
+            <span className="tag">Multi-location</span>
+            <h2 className="h2" style={{ marginTop: 14 }}>One number, every location</h2>
+            <p className="lead">Add a second site in minutes — its own queue, its own code, no second setup to learn. Staff only ever see their own location's line.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* TESTIMONIALS */}
+      <div className="container" style={{ padding: "88px 0" }}>
+        <h2 className="h2" style={{ textAlign: "center" }}>What's working, from people using it</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20, marginTop: 34 }}>
+          {TESTIMONIALS.map((t, i) => (
+            <div key={i} className="card">
+              <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 16px" }}>"{t.quote}"</p>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</div>
+              <div className="muted" style={{ fontSize: 12 }}>{t.role}</div>
+            </div>
+          ))}
+        </div>
+        <div className="muted" style={{ textAlign: "center", marginTop: 18, fontSize: 12 }}>[real customer quotes go here]</div>
+      </div>
+
+      {/* FAQ */}
+      <div id="faq" style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", padding: "88px 0" }}>
+        <div className="container" style={{ maxWidth: 760 }}>
+          <h2 className="h2">Questions people ask before switching</h2>
+          <div style={{ marginTop: 24 }}>
+            <FaqItem q="Do my customers need to install anything?" a="No — booking and queueing happen inside WhatsApp, which almost everyone already has." />
+            <FaqItem q="What if a customer doesn't use WhatsApp?" a="They can still call or walk in as normal; staff add them to the same queue by hand." />
+            <FaqItem q="Can I run more than one location?" a="Yes — each location gets its own code and queue, and staff only see their own." />
+            <FaqItem q="How long does setup take?" a="Most businesses are taking their first booking the same afternoon. If you'd rather have it done for you, we offer paid setup assistance for £125." />
+            <FaqItem q="Is there a contract?" a="No long-term contract — buy a day, week, month or year at a time, cancel any time." />
+          </div>
+        </div>
+      </div>
+
+      {/* FINAL CTA */}
+      <div style={{ background: "var(--navy)", padding: "76px 0", textAlign: "center" }}>
+        <div className="container">
+          <h2 style={{ fontSize: 34, fontWeight: 700, letterSpacing: "-0.02em", color: "#fff", margin: "0 0 16px" }}>Ready to let the chat do the booking?</h2>
+          <p style={{ fontSize: 16, color: "rgba(255,255,255,0.7)", maxWidth: 480, margin: "0 auto 28px" }}>No card required. Set up your first location this afternoon.</p>
+          <button className="btn-accent" onClick={onStart}>Start free</button>
+        </div>
+      </div>
+
+      {/* FOOTER */}
+      <div style={{ padding: "56px 0 32px" }}>
+        <div className="container" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 32 }}>
           <div>
-            <div style={{ fontWeight: 600 }}>Want a hand getting set up?</div>
-            <p className="muted" style={{ fontSize: 13, margin: "4px 0 0" }}>
-              Our team will configure your services, hours, and staff for you — done in one session.
-            </p>
+            <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+              <Logo size={22} />
+            </div>
+            <p className="muted" style={{ fontSize: 13, maxWidth: 260, lineHeight: 1.6 }}>Booking and queue management over WhatsApp, for clinics, salons and shops.</p>
           </div>
-          <div className="row">
-            <strong>£125</strong>
-            <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Get in touch</button></a>
+          <div className="stack" style={{ gap: 10 }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Product</span>
+            <span className="muted" style={{ fontSize: 13 }}>Booking</span>
+            <span className="muted" style={{ fontSize: 13 }}>Queue management</span>
+            <a href="#pricing" className="muted" style={{ fontSize: 13 }}>Pricing</a>
           </div>
-        </div>
-        <div style={{ height: 16 }} />
-        <div className="card stack">
-          <div style={{ fontWeight: 600 }}>Just need a simple queue?</div>
-          <p className="muted" style={{ fontSize: 13 }}>
-            If you already use Microsoft Bookings for appointments and only need queue management,
-            we offer integration on request — <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration">get in touch</a> to discuss your setup.
-          </p>
-        </div>
-      </Section>
-
-      <Section>
-        <SectionHeading title="Built to be trusted with your business" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 20 }}>
-          <div className="card stack" style={{ gap: 4 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>🇬🇧 UK-hosted</div>
-            <div className="muted" style={{ fontSize: 12 }}>Your data stays in the UK, hosted with providers built for reliability.</div>
+          <div className="stack" style={{ gap: 10 }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Industries</span>
+            <span className="muted" style={{ fontSize: 13 }}>Clinics</span>
+            <span className="muted" style={{ fontSize: 13 }}>Salons &amp; spas</span>
+            <span className="muted" style={{ fontSize: 13 }}>Shops</span>
           </div>
-          <div className="card stack" style={{ gap: 4 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>🔒 Secure by design</div>
-            <div className="muted" style={{ fontSize: 12 }}>Every sign-in is one-time-code based — no passwords to leak or reuse.</div>
-          </div>
-          <div className="card stack" style={{ gap: 4 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>♿ Accessible</div>
-            <div className="muted" style={{ fontSize: 12 }}>Built with clear contrast, large touch targets, and simple navigation throughout.</div>
+          <div className="stack" style={{ gap: 10 }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Company</span>
+            <a href="mailto:hello@qbooker.example" className="muted" style={{ fontSize: 13 }}>Support</a>
+            <span className="muted" style={{ fontSize: 13 }}>About</span>
+            <span className="muted" style={{ fontSize: 13 }}>Privacy</span>
           </div>
         </div>
-        <div className="card stack">
-          <div style={{ fontWeight: 600 }}>Reliability</div>
-          <p className="muted" style={{ fontSize: 13 }}>
-            We take uptime seriously — this is where you'd state your specific commitment (e.g. a target
-            percentage or response-time promise) once you've decided what you're comfortable guaranteeing.
-          </p>
-        </div>
-      </Section>
-
-      <Section id="faq" variant="card">
-        <SectionHeading title="Questions" />
-        <div className="stack" style={{ maxWidth: 640, margin: "0 auto" }}>
-          <FaqItem q="Do I have to sign a contract?" a="No. You buy access for a day, week, month, or year at a time — nothing auto-renews, and there's no minimum term." />
-          <FaqItem q="What if I only need a queue, not appointments?" a="Set any service to queue-only in a couple of clicks — or use hybrid mode to offer both walk-ins and bookings side by side." />
-          <FaqItem q="Is there a limit on staff or services?" a="No — every plan includes unlimited staff, services, and appointments. You're only charged per location." />
-          <FaqItem q="How long does setup actually take?" a="Most businesses are live in about 3 minutes — business name, a plan, your first location, and you're in. If you'd rather have it done for you, we offer paid setup assistance." />
-        </div>
-      </Section>
-
-      <Section variant="navy">
-        <div className="stack" style={{ textAlign: "center", gap: 14, padding: "12px 0" }}>
-          <h2 style={{ fontSize: 22, margin: 0 }}>Ready to get started?</h2>
-          <p className="muted" style={{ margin: 0 }}>Be live in about 3 minutes — no onboarding call required.</p>
-          <div><button className="btn" onClick={onStart}>Get started</button></div>
-        </div>
-      </Section>
+        <div className="container" style={{ borderTop: "1px solid var(--line)", marginTop: 40, paddingTop: 20, fontSize: 12, color: "var(--muted)" }}>© QBooker</div>
+      </div>
     </div>
   );
 }
@@ -219,19 +396,19 @@ function FaqItem({ q, a }) {
   const [open, setOpen] = useState(false);
   const id = `faq-${q.length}-${q.slice(0, 8).replace(/\W/g, "")}`;
   return (
-    <div className="card">
+    <div style={{ borderBottom: "1px solid var(--line)" }}>
       <button
         type="button"
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((v) => !v)}
         className="row"
-        style={{ justifyContent: "space-between", width: "100%", background: "transparent", border: "none", padding: 0, textAlign: "left" }}
+        style={{ justifyContent: "space-between", width: "100%", background: "transparent", border: "none", padding: "18px 4px", textAlign: "left", fontFamily: "inherit", fontSize: 15, fontWeight: 600, cursor: "pointer", color: "var(--ink)" }}
       >
-        <strong style={{ fontSize: 14 }}>{q}</strong>
-        <span className="muted" aria-hidden="true">{open ? "−" : "+"}</span>
+        <span>{q}</span>
+        <span className="muted" style={{ fontSize: 18 }} aria-hidden="true">{open ? "–" : "+"}</span>
       </button>
-      {open && <p id={id} className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>{a}</p>}
+      {open && <p id={id} className="muted" style={{ fontSize: 14, lineHeight: 1.6, padding: "0 4px 18px", margin: 0 }}>{a}</p>}
     </div>
   );
 }
