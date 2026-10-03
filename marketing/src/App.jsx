@@ -12,12 +12,6 @@ const PLAN_META = [
   { id: "custom", label: "Custom", days: null, desc: "Choose exactly how many days you need." },
 ];
 
-const SERVICE_MODE_META = [
-  { id: "queue", label: "Queue", desc: "Walk-ins only, called forward in order." },
-  { id: "appointment", label: "Appointment", desc: "Bookable time slots only." },
-  { id: "hybrid", label: "Hybrid", desc: "Both walk-ins and bookings at once." },
-];
-
 function servicePlanPrice(svc, pricing) {
   if (svc.planId === "custom") return (Number(svc.customDays) || 1) * pricing.customDailyRate;
   const onSale = pricing.sale?.active && pricing.sale[svc.planId] != null;
@@ -525,7 +519,6 @@ function PaymentOption({ active, onClick, title, desc }) {
 }
 
 function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, removable }) {
-  const needsSlotLength = svc.mode === "appointment" || svc.mode === "hybrid";
   const price = servicePlanPrice(svc, pricing);
   return (
     <div className="card stack" style={{ gap: 10 }}>
@@ -545,21 +538,7 @@ function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, re
           </select>
         </Field>
       </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        <Field label="Type">
-          <select className="input" value={svc.mode} onChange={(e) => onChange({ ...svc, mode: e.target.value })}>
-            {SERVICE_MODE_META.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
-        </Field>
-        {needsSlotLength && (
-          <Field label="Slot length">
-            <select className="input" value={svc.slotMinutes} onChange={(e) => onChange({ ...svc, slotMinutes: Number(e.target.value) })}>
-              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-            </select>
-          </Field>
-        )}
-      </div>
-      <div className="muted" style={{ fontSize: 11 }}>{SERVICE_MODE_META.find((m) => m.id === svc.mode)?.desc} The name, type, slot length, and location can't be changed after setup — delete and recreate the service if you need to.</div>
+      <div className="muted" style={{ fontSize: 11 }}>Set up as a hybrid service (walk-ins and bookings) with 15-minute slots by default.</div>
 
       <div style={{ borderTop: "1px solid var(--line)" }} />
 
