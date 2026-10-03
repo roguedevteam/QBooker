@@ -444,11 +444,13 @@ function Success({ result }) {
 }
 
 const STEP_LABELS = ["Your details", "Locations", "Services", "Payment"];
+const STEP_LABELS_FREE = ["Your details", "Locations", "Services"];
 
-function StepHeader({ step }) {
+function StepHeader({ step, labels }) {
+  const stepLabels = labels || STEP_LABELS;
   return (
     <div className="stepper">
-      {STEP_LABELS.map((label, i) => {
+      {stepLabels.map((label, i) => {
         const n = i + 1;
         const active = n === step;
         const done = n < step;
@@ -466,7 +468,7 @@ function StepHeader({ step }) {
               </span>
               <span className="step-label muted" style={{ color: active ? "var(--accent)" : undefined, fontWeight: active ? 600 : 400 }}>{label}</span>
             </span>
-            {n < STEP_LABELS.length && <span className="seg" style={{ background: done ? "var(--accent)" : "var(--line)" }} />}
+            {n < stepLabels.length && <span className="seg" style={{ background: done ? "var(--accent)" : "var(--line)" }} />}
           </span>
         );
       })}
@@ -621,6 +623,12 @@ function Signup({ onDone, setError, onBackToLanding }) {
   }
 
   const total = services.reduce((sum, s) => sum + (Number(servicePlanPrice(s, pricing)) || 0), 0).toFixed(2);
+  const needsPayment = Number(total) > 0;
+  const stepLabels = needsPayment ? STEP_LABELS : STEP_LABELS_FREE;
+  const lastStep = stepLabels.length;
+  // If editing services back on step 3 drops the total to free (or raises it back above
+  // free) while already past where the payment step would be, keep the step in range.
+  useEffect(() => { setStep((s) => Math.min(s, lastStep)); }, [lastStep]);
 
   const step1Valid = businessName.trim() && firstName.trim() && lastName.trim() && email.trim();
   const activeNames = locationNames.map((n) => n.trim());
@@ -631,17 +639,23 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const step3Valid = services.every((s) => s.name.trim() && s.planId && (s.planId !== "custom" || Number(s.customDays) > 0));
   const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
 
-  function next() { setStep((s) => Math.min(4, s + 1)); }
+  function next() { setStep((s) => Math.min(lastStep, s + 1)); }
   function back() { setStep((s) => Math.max(1, s - 1)); }
 
   async function submit() {
     setSubmitting(true);
     setError("");
     try {
+      // Nothing to charge — every service's license came out free (e.g. a sale or £0
+      // pricing), so there's no payment method to collect; bill as "card" with no
+      // invoice fields since there's nothing to invoice either.
+      const effectivePaymentMethod = needsPayment ? paymentMethod : "card";
       const payload = {
         businessName, firstName, lastName, email,
         companyAddress: combineAddress(companyLine1, companyLine2, companyCity, companyPostcode),
-        paymentMethod, invoiceEmail, invoicePO: poNumber,
+        paymentMethod: effectivePaymentMethod,
+        invoiceEmail: needsPayment ? invoiceEmail : "",
+        invoicePO: needsPayment ? poNumber : "",
         locations: locationNames.map((n) => ({ name: n.trim() })),
         services: services.map((s) => ({
           name: s.name.trim(), locationIndex: s.locationIndex, mode: s.mode, slotMinutes: s.slotMinutes,
@@ -670,7 +684,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
           ← Back to overview
         </button>
       </div>
-      <StepHeader step={step} />
+      <StepHeader step={step} labels={stepLabels} />
 
       <div className="card stack" style={{ padding: 24 }}>
         {step === 1 && (
@@ -789,12 +803,16 @@ function Signup({ onDone, setError, onBackToLanding }) {
 
             <div className="row" style={{ justifyContent: "space-between" }}>
               <button className="btn-outline" onClick={back}>Back</button>
-              <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
+              {needsPayment ? (
+                <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
+              ) : (
+                <button className="btn" disabled={!step3Valid || submitting} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+              )}
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 4 && needsPayment && (
           <div className="stack">
             <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>How would you like to pay?</div>
