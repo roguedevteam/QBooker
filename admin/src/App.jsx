@@ -87,10 +87,10 @@ function Dashboard({ setError, error, onSignOut }) {
   return (
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
-        <Logo dark />
+        <Logo />
         <div className="row">
-          <span style={{ fontSize: 13, opacity: 0.85 }}>System Admin</span>
-          <button className="btn-outline" style={{ background: "transparent", color: "#fff", borderColor: "rgba(255,255,255,0.4)" }} onClick={onSignOut}>Sign out</button>
+          <span className="muted" style={{ fontSize: 13 }}>System Admin</span>
+          <button className="btn-outline" onClick={onSignOut}>Sign out</button>
         </div>
       </div>
       <div className="container stack">

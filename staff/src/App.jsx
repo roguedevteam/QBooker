@@ -57,8 +57,8 @@ export default function App() {
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
         <div className="row" style={{ gap: 10 }}>
-          <Logo dark />
-          {tenant && <span style={{ fontSize: 13, opacity: 0.85 }}>— {tenant.business_name} Staff Kiosk</span>}
+          <Logo />
+          {tenant && <span className="muted" style={{ fontSize: 13 }}>— {tenant.business_name} Staff Kiosk</span>}
         </div>
         {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
       </div>

@@ -112,16 +112,16 @@ export default function App() {
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
         <div className="row" style={{ gap: 10 }}>
-          <Logo dark />
-          {tenant && <span style={{ fontSize: 13, opacity: 0.85 }}>— {tenant.business_name}</span>}
+          <Logo />
+          {tenant && <span className="muted" style={{ fontSize: 13 }}>— {tenant.business_name}</span>}
         </div>
         <div className="row">
           {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
-          {tenant && <span style={{ fontSize: 12, opacity: 0.85 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
+          {tenant && <span className="muted" style={{ fontSize: 12 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
           {tenant ? (
-            <button className="btn-outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.4)" }} onClick={doSignOut}>Sign out</button>
+            <button className="btn-outline" onClick={doSignOut}>Sign out</button>
           ) : (
-            <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "#fff", fontSize: 13 }}>New here? Sign up →</a>
+            <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "var(--brand)", fontSize: 13, fontWeight: 600 }}>New here? Sign up →</a>
           )}
         </div>
       </div>

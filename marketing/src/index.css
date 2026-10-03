@@ -52,7 +52,7 @@ tbody tr { border-top: 1px solid var(--line); }
 .nav { background: var(--surface-card); border-bottom: 1px solid var(--line); padding: 8px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
 .nav button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 6px; font-size: 12px; color: var(--muted); font-weight: 500; }
 .nav button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
-.header { background: var(--brand); color: var(--surface-card); padding: 16px 24px; }
+.header { background: var(--surface-card); color: var(--ink); border-bottom: 1px solid var(--line); padding: 16px 24px; }
 .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .narrow { max-width: 460px; margin: 0 auto; padding: 20px; }
 

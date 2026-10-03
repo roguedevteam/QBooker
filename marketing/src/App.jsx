@@ -55,11 +55,11 @@ export default function App() {
       {inCheckout && (
         <div className="header row" style={{ justifyContent: "space-between" }}>
           <a href="#top" onClick={() => setScreen("landing")} style={{ textDecoration: "none" }}>
-            <Logo dark />
+            <Logo />
           </a>
           <div className="row">
             {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
-            <a href={ADMIN_APP_URL} style={{ color: "#fff", fontSize: 13 }}>Already have an account? Sign in →</a>
+            <a href={ADMIN_APP_URL} style={{ color: "var(--muted)", fontSize: 13, fontWeight: 600 }}>Already have an account? Sign in →</a>
           </div>
         </div>
       )}
