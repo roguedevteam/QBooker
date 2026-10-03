@@ -245,7 +245,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="wrap">
-        {["dashboard", "locations", "billing", "audit", "shop"].map((t) => (
+        {["dashboard", "locations", "audit"].map((t) => (
           <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
@@ -336,13 +336,14 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                     setError={setError}
                     onCancel={() => setAddingServiceFor(null)}
                     onDone={() => { setAddingServiceFor(null); refreshCore(); }}
+                    tenant={tenant}
                   />
                 )}
 
                 {isOpen && (
                   <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
                     {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No {serviceFilter === "active" ? "" : serviceFilter + " "}services here{serviceFilter === "active" ? " yet — click \"Add service\" above" : ""}.</div>}
-                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} />)}
+                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} tenant={tenant} />)}
                   </div>
                 )}
               </div>
@@ -351,10 +352,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
         </div>
       )}
 
-      {tab === "billing" && (
-        <BillingTab tenant={tenant} setError={setError} />
-      )}
-
+      {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
+          until "shop" is added back to the tab list above. */}
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
       {tab === "dashboard" && (
@@ -405,26 +404,6 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
           {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
         </div>
       )}
-    </div>
-  );
-}
-
-function BillingTab({ tenant, setError }) {
-  return (
-    <div className="stack">
-      <PendingPaymentBanner tenant={tenant} />
-      <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Payment</div>
-        <div className="muted" style={{ fontSize: 13 }}>
-          {tenant.payment_method === "invoice"
-            ? "You're billed by invoice — licenses bought on the Locations tab are added to your next invoice."
-            : "You're billed by card — licenses bought on the Locations tab are charged to your card on file."}
-        </div>
-        <div className="muted" style={{ fontSize: 12 }}>
-          Locations are free and unlimited. What you pay for is a license per service — buy, schedule, move, or refund them
-          from each service's panel on the Locations tab.
-        </div>
-      </div>
     </div>
   );
 }
@@ -508,7 +487,7 @@ function ShopTab({ tenant, locations }) {
   );
 }
 
-function ServiceEditor({ service, allServices, onChange, setError }) {
+function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -542,7 +521,7 @@ function ServiceEditor({ service, allServices, onChange, setError }) {
 
       {expanded && (
         <div className="stack">
-          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} />
+          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} tenant={tenant} />
           <ServiceCalendar service={service} setError={setError} />
         </div>
       )}
@@ -562,7 +541,7 @@ const LICENSE_STATUS_META = {
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -600,6 +579,37 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged }) {
   async function refund(lic) {
     if (!confirm("Refund this license? This can't be undone.")) return;
     try { await api.refundServiceLicense(service.id, lic.id); await load(); onChanged?.(); } catch (err) { setError(err.message); }
+  }
+  function printReceipt(lic) {
+    const businessName = tenant?.business_name || "";
+    const rows = [
+      ["Service", service.name],
+      ["Plan", lic.plan_label],
+      ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
+      ...(lic.start_date ? [["Dates", `${lic.start_date} to ${lic.end_date}`]] : []),
+      ["Price", lic.price != null ? `£${lic.price}` : "—"],
+      ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
+    ];
+    const html = `<!doctype html><html><head><title>Receipt — ${businessName}</title>
+      <meta charset="utf-8" />
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:40px auto;color:#1B1D1F;}
+        h1{font-size:20px;margin-bottom:2px;}
+        .sub{color:#5F615B;font-size:13px;margin-bottom:24px;}
+        table{width:100%;border-collapse:collapse;}
+        td{padding:8px 0;border-bottom:1px solid #E6E6E1;font-size:14px;}
+        td:first-child{color:#5F615B;width:40%;}
+        td:last-child{font-weight:600;text-align:right;}
+      </style>
+      </head><body>
+        <h1>${businessName}</h1>
+        <div class="sub">License receipt</div>
+        <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+      </body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, "_blank");
+    if (w) w.onload = () => w.print();
   }
 
   const visible = licenses.filter((l) => l.status !== "refunded");
@@ -658,15 +668,29 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged }) {
                   </button>
                 )}
                 {lic.status === "scheduled" && <button className="btn-outline" onClick={() => unschedule(lic)}>Unschedule</button>}
-                {lic.status === "available" && otherServices.length > 0 && (
-                  movingId === lic.id ? (
-                    <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
-                      <option value="" disabled>Move to…</option>
-                      {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  ) : <button className="btn-outline" onClick={() => setMovingId(lic.id)}>Move to another service</button>
+                {movingId === lic.id ? (
+                  <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
+                    <option value="" disabled>Move to…</option>
+                    {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : (
+                  <select
+                    className="btn-outline"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const action = e.target.value;
+                      e.target.value = "";
+                      if (action === "refund") refund(lic);
+                      else if (action === "print") printReceipt(lic);
+                      else if (action === "move") setMovingId(lic.id);
+                    }}
+                  >
+                    <option value="" disabled>Actions</option>
+                    {lic.status === "available" && <option value="refund">Refund</option>}
+                    <option value="print">Print Receipt</option>
+                    {lic.status === "available" && otherServices.length > 0 && <option value="move">Move License</option>}
+                  </select>
                 )}
-                {lic.status === "available" && <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => refund(lic)}>Refund</button>}
               </div>
             </div>
             {schedulingId === lic.id && (
@@ -996,7 +1020,7 @@ const SERVICE_MODE_INFO = [
   { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
 ];
 
-function ServiceWizard({ locationId, allServices, onDone, onCancel, setError }) {
+function ServiceWizard({ locationId, allServices, onDone, onCancel, setError, tenant }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("hybrid");
@@ -1058,7 +1082,7 @@ function ServiceWizard({ locationId, allServices, onDone, onCancel, setError }) 
       <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 3: buy a license for "{createdService.name}"</div>
         <div className="muted" style={{ fontSize: 12 }}>This license is bound to this service. Assign it to calendar dates now, or later from the service's own panel.</div>
-        <ServiceLicensesPanel service={createdService} allServices={allServices || []} setError={setError} onChanged={() => {}} />
+        <ServiceLicensesPanel service={createdService} allServices={allServices || []} setError={setError} onChanged={() => {}} tenant={tenant} />
         <div className="row">
           <button className="btn" onClick={() => setStep(3)}>Next: set hours →</button>
         </div>
