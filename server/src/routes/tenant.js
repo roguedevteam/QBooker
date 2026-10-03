@@ -181,8 +181,14 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
       `update service_licenses set start_date=null, end_date=null, status='available' where id=$1 returning *`,
       [license.id]
     );
+    // A "scheduled" license's whole window is still in the future (it flips to "active" the
+    // moment start_date arrives), so it's safe to wipe any hours configured across it —
+    // otherwise they'd silently reappear if this service is later rescheduled over the same
+    // dates, with no sign anything had been cleared.
+    await query(`delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
+      [req.service.id, license.start_date, license.end_date]);
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [req.tenant.id, `License unscheduled for "${req.service.name}" — ${license.plan_label} (${license.start_date} to ${license.end_date})`]);
+      [req.tenant.id, `License unscheduled for "${req.service.name}" — ${license.plan_label} (${license.start_date} to ${license.end_date}), hours cleared`]);
     return res.json({ license: result.rows[0] });
   }
 

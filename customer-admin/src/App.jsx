@@ -669,7 +669,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
     try { await api.scheduleServiceLicense(service.id, lic.id, startDate); setSchedulingId(null); await load(); onChanged?.(); } catch (err) { setError(err.message); }
   }
   async function unschedule(lic) {
-    if (!confirm("Unschedule this license? Its dates will be cleared and it goes back to Available.")) return;
+    if (!confirm("Unschedule this license? Its dates — and any hours already set across them — will be cleared, and it goes back to Available.")) return;
     try { await api.unscheduleServiceLicense(service.id, lic.id); await load(); onChanged?.(); } catch (err) { setError(err.message); }
   }
   async function move(lic, targetServiceId) {
