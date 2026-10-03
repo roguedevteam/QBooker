@@ -2,7 +2,7 @@ import { Router } from "express";
 import { query } from "../db/pool.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock } from "../lib/scheduling.js";
-import { isLocationWithinWindow, ensureLicenseStarted } from "../lib/licenseTrigger.js";
+import { isServiceLicensedOn } from "../lib/serviceLicense.js";
 
 const router = Router();
 
@@ -29,8 +29,15 @@ router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   res.json({ locations: result.rows });
 }));
 
+// A service is only ever shown to customers once it has a scheduled or active license —
+// never while archived, and never while every license on it is still unscheduled/expired.
 router.get("/:tenantId/services", asyncHandler(async (req, res) => {
-  const result = await query(`select id, name, location_id, mode from services where tenant_id=$1 order by created_at`, [req.tenant.id]);
+  const result = await query(
+    `select distinct s.id, s.name, s.location_id, s.mode from services s
+     join service_licenses sl on sl.service_id = s.id and sl.status in ('scheduled','active')
+     where s.tenant_id=$1 and s.archived=false order by s.name`,
+    [req.tenant.id]
+  );
   res.json({ services: result.rows });
 }));
 
@@ -40,11 +47,9 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id]);
   if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
   const service = svcResult.rows[0];
-  let location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
-  if (location) location = await ensureLicenseStarted(location);
 
-  if (!location || !isLocationWithinWindow(location, date)) {
-    return res.json({ open: false, reason: "outside_plan_window" });
+  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
+    return res.json({ open: false, reason: "outside_license_window" });
   }
 
   if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
@@ -98,9 +103,7 @@ router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, r
   const { type, slotTime, hourBlock, date } = req.body;
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
-  let location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
-  if (location) location = await ensureLicenseStarted(location);
-  if (!location || !isLocationWithinWindow(location, date)) {
+  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
     return res.status(409).json({ error: "We're not taking bookings today." });
   }
 

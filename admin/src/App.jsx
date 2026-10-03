@@ -130,7 +130,7 @@ function Dashboard({ setError, error, onSignOut }) {
         {tab === "customers" && (
           <div className="card">
             <table>
-              <thead><tr><th>Business</th><th>Email</th><th>Plan</th><th>Locations</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Business</th><th>Email</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {tenants.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
                 {tenants.map((t) => (
@@ -143,12 +143,12 @@ function Dashboard({ setError, error, onSignOut }) {
                       <input className="input" style={{ width: 160 }} defaultValue={t.email}
                         onBlur={async (e) => { if (e.target.value !== t.email) { await api.updateTenant(t.id, { email: e.target.value }); refresh(); } }} />
                     </td>
-                    <td>{t.plan_label}</td>
+                    <td>{t.service_count}</td>
                     <td>
                       <input className="input" type="number" style={{ width: 60 }} defaultValue={t.location_count}
                         onBlur={async (e) => { if (Number(e.target.value) !== t.location_count) { await api.updateTenant(t.id, { locationCount: Number(e.target.value) }); refresh(); } }} />
                     </td>
-                    <td>£{t.price}</td>
+                    <td>£{Number(t.total_spend).toFixed(2)}</td>
                     <td><span className={`badge badge-${t.status === "active" ? "green" : "amber"}`}>{t.status}</span></td>
                     <td className="row">
                       {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}

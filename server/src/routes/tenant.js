@@ -7,9 +7,13 @@ import { createLocationCode } from "../lib/codes.js";
 import {
   getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
 } from "../lib/scheduling.js";
-import { isDateLocked, isDateFullyPast, getPlanWindow, isWithinPaidWindow, addDays } from "../lib/plan.js";
+import { isDateFullyPast, addDays } from "../lib/plan.js";
 import { getToday } from "../lib/clock.js";
-import { getLocationWindow, isLocationWithinWindow, ensureLicenseStarted } from "../lib/licenseTrigger.js";
+import {
+  resolveServiceLicenses, resolveServiceLicense, activeAndScheduledWindows,
+  isServiceLicensedOn, checkSchedulable, computeEndDate, isWithinRefundWindow,
+  planPricing, resolvePlan,
+} from "../lib/serviceLicense.js";
 
 const router = Router();
 
@@ -30,74 +34,7 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
-// --- Plan window & rescheduling ------------------------------------------------
-router.get("/plan", (req, res) => {
-  const window = getPlanWindow(req.tenant);
-  res.json({
-    planId: req.tenant.plan_id,
-    window,
-    locked: window ? isDateLocked(window.start) : true,
-  });
-});
-
-router.patch("/plan", adminOnly, asyncHandler(async (req, res) => {
-  const { activeDate, weekStartDate, startDate } = req.body;
-  const tenant = req.tenant;
-
-  if (tenant.plan_id === "day") {
-    if (isDateLocked(tenant.active_date)) return res.status(409).json({ error: "This day has already started — it can no longer be rescheduled." });
-    if (!activeDate) return res.status(400).json({ error: "activeDate required." });
-    const r = await query(`update tenants set active_date=$1 where id=$2 returning *`, [activeDate, tenant.id]);
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Day pass rescheduled to ${activeDate}`]);
-    return res.json({ tenant: r.rows[0] });
-  }
-  if (tenant.plan_id === "week") {
-    if (isDateLocked(tenant.week_start_date)) return res.status(409).json({ error: "Day 1 has already started — the week can no longer be rescheduled." });
-    if (!weekStartDate) return res.status(400).json({ error: "weekStartDate required." });
-    const r = await query(`update tenants set week_start_date=$1 where id=$2 returning *`, [weekStartDate, tenant.id]);
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Week pass rescheduled to start ${weekStartDate}`]);
-    return res.json({ tenant: r.rows[0] });
-  }
-  if (["month", "year", "custom"].includes(tenant.plan_id)) {
-    if (isDateLocked(tenant.start_date)) return res.status(409).json({ error: "Your access start date has already passed — it can no longer be rescheduled." });
-    if (!startDate) return res.status(400).json({ error: "startDate required." });
-    const newEnd = addDays(startDate, tenant.plan_days - 1);
-    const r = await query(`update tenants set start_date=$1, end_date=$2 where id=$3 returning *`, [startDate, newEnd, tenant.id]);
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Access start rescheduled to ${startDate}`]);
-    return res.json({ tenant: r.rows[0] });
-  }
-  res.status(400).json({ error: "Unknown plan type." });
-}));
-
-// Renew for another full period of the same length, charged at the tenant's existing
-// price. Starts the day after the current window ends if it hasn't expired yet, or today
-// if it already has — so renewing early never loses paid-for time.
-router.post("/plan/extend", adminOnly, asyncHandler(async (req, res) => {
-  const tenant = req.tenant;
-  const today = getToday();
-
-  if (tenant.plan_id === "day") {
-    const newDate = tenant.active_date && tenant.active_date >= today ? addDays(tenant.active_date, 1) : today;
-    const r = await query(`update tenants set active_date=$1 where id=$2 returning *`, [newDate, tenant.id]);
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — new day pass for ${newDate}, £${tenant.price} charged`]);
-    return res.json({ tenant: r.rows[0] });
-  }
-  if (tenant.plan_id === "week") {
-    const currentEnd = tenant.week_start_date ? addDays(tenant.week_start_date, 6) : null;
-    const newStart = currentEnd && currentEnd >= today ? addDays(currentEnd, 1) : today;
-    const r = await query(`update tenants set week_start_date=$1 where id=$2 returning *`, [newStart, tenant.id]);
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended — another week from ${newStart}, £${tenant.price} charged`]);
-    return res.json({ tenant: r.rows[0] });
-  }
-  // month / year / custom
-  const newStart = tenant.end_date && tenant.end_date >= today ? addDays(tenant.end_date, 1) : today;
-  const newEnd = addDays(newStart, tenant.plan_days - 1);
-  const r = await query(`update tenants set start_date=$1, end_date=$2 where id=$3 returning *`, [newStart, newEnd, tenant.id]);
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenant.id, `Plan extended to ${newEnd} — £${tenant.price} charged`]);
-  res.json({ tenant: r.rows[0] });
-}));
-
-// --- Locations ---------------------------------------------------------------
+// --- Locations — free, unlimited; a routing + staff-access concept only -------------
 router.get("/locations", asyncHandler(async (req, res) => {
   const result = await query(
     `select l.*, lc.code from locations l
@@ -105,38 +42,23 @@ router.get("/locations", asyncHandler(async (req, res) => {
      where l.tenant_id=$1 order by l.created_at`,
     [req.tenant.id]
   );
-  const locations = [];
-  for (const loc of result.rows) {
-    const resolved = await ensureLicenseStarted(loc);
-    locations.push({ ...resolved, code: loc.code });
-  }
-  res.json({ locations });
+  res.json({ locations: result.rows });
 }));
 
 router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
-  const { name } = req.body;
+  const { name, address } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: "Name required." });
   const t = req.tenant;
   const staffAccessCode = genAccessCode();
   const loc = await query(
-    `insert into locations
-      (tenant_id, name, plan_id, plan_label, plan_days, license_price, staff_access_code, license_not_before)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
-    [t.id, name.trim(), t.plan_id, t.plan_label, t.plan_days, t.price_per_location, staffAccessCode, getToday()]
+    `insert into locations (tenant_id, name, address, staff_access_code) values ($1,$2,$3,$4) returning *`,
+    [t.id, name.trim(), address || "", staffAccessCode]
   );
   const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
-  await query(
-    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [loc.rows[0].id, t.id, t.plan_id, t.plan_label, t.plan_days, null, null, t.price_per_location]
-  );
-  const chargeNote = req.tenant.payment_method === "invoice"
-    ? `£${req.tenant.price_per_location} added to next invoice`
-    : `£${req.tenant.price_per_location} charged to card on file`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Bought an additional location "${name.trim()}" — ${chargeNote}`]);
-  res.json({ location: { ...loc.rows[0], code }, charge: { amount: req.tenant.price_per_location, note: chargeNote } });
+    [req.tenant.id, `Location "${name.trim()}" added`]);
+  res.json({ location: { ...loc.rows[0], code } });
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
@@ -148,80 +70,24 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   res.json({ location: result.rows[0] });
 }));
 
-router.get("/locations/:id/license-history", asyncHandler(async (req, res) => {
-  let loc = (await query(`select * from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
-  if (!loc) return res.status(404).json({ error: "Location not found." });
-  loc = await ensureLicenseStarted(loc);
-  const purchases = await query(
-    `select * from location_license_purchases where location_id=$1 order by purchased_at desc`,
-    [req.params.id]
-  );
-  res.json({ location: loc, purchases: purchases.rows });
-}));
-
 router.delete("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   res.json({ ok: true });
 }));
 
-const PLAN_META = {
-  day: { label: "Day pass", days: 1 },
-  week: { label: "Week", days: 7 },
-  month: { label: "Month", days: 30 },
-  year: { label: "Year", days: 365 },
-};
-
-// Extends (or assigns, if it never had one) a single location's own license — independent
-// of every other location on the account. The new license is also dormant/Purchased — it
-// won't start until hours are defined for it, and can't start before the current license's
-// end date (if any), so back-to-back periods never overlap.
-router.post("/locations/:id/extend-license", adminOnly, asyncHandler(async (req, res) => {
-  const { planId, customDays } = req.body;
-  let loc = (await query(`select * from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
-  if (!loc) return res.status(404).json({ error: "Location not found." });
-  loc = await ensureLicenseStarted(loc); // resolve first, so "current" reflects reality
-
-  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
-  const pricing = pricingRow?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
-  const sale = pricing.sale?.active ? pricing.sale : null;
-
-  let planLabel, planDays, price;
-  if (planId === "custom") {
-    planDays = Math.max(1, Number(customDays) || 1);
-    planLabel = `${planDays}-day custom plan`;
-    price = (planDays * pricing.customDailyRate).toFixed(2);
-  } else if (PLAN_META[planId]) {
-    planDays = PLAN_META[planId].days;
-    planLabel = PLAN_META[planId].label;
-    price = sale && sale[planId] != null ? sale[planId] : pricing[planId];
-  } else {
-    return res.status(400).json({ error: "Unknown plan type." });
-  }
-
-  // Can't start before the current license ends (if it has resolved dates); otherwise
-  // today — either way, it still won't actually start until hours are defined for it.
-  const notBefore = loc.end_date ? addDays(loc.end_date, 1) : getToday();
-
-  const result = await query(
-    `update locations set
-       plan_id=$1, plan_label=$2, plan_days=$3, license_price=$4,
-       start_date=null, end_date=null, license_not_before=$5
-     where id=$6 returning *`,
-    [planId, planLabel, planDays, price, notBefore, loc.id]
-  );
-  await query(
-    `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [loc.id, req.tenant.id, planId, planLabel, planDays, null, null, price]
-  );
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `License extended for "${loc.name}" — ${planLabel}, £${price} charged (starts once hours are set)`]);
-  res.json({ location: result.rows[0] });
-}));
-
-// --- Services ------------------------------------------------------------------
+// --- Services --------------------------------------------------------------------
+// A service's location, name, mode and slot length are fixed the moment it's created
+// (delete-and-recreate is the escape hatch) — staff access, customer routing and ticket
+// history all depend on that staying put. Archiving just hides a service from the default
+// list and from customers; it never touches its licenses.
 router.get("/services", asyncHandler(async (req, res) => {
-  const result = await query(`select * from services where tenant_id=$1 order by created_at`, [req.tenant.id]);
+  const { includeArchived } = req.query;
+  const result = await query(
+    includeArchived === "true"
+      ? `select * from services where tenant_id=$1 order by created_at`
+      : `select * from services where tenant_id=$1 and archived=false order by created_at`,
+    [req.tenant.id]
+  );
   res.json({ services: result.rows });
 }));
 
@@ -237,17 +103,24 @@ router.post("/services", adminOnly, asyncHandler(async (req, res) => {
 }));
 
 router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, slotMinutes, mode, queuePaused, queueStaffCount } = req.body;
+  const { name, slotMinutes, mode, queuePaused, queueStaffCount, archived } = req.body;
+  const existing = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: "Service not found." });
   const result = await query(
     `update services set
        name = coalesce($1, name),
        slot_minutes = coalesce($2, slot_minutes),
        mode = coalesce($3, mode),
        queue_paused = coalesce($4, queue_paused),
-       queue_staff_count = coalesce($5, queue_staff_count)
-     where id=$6 and tenant_id=$7 returning *`,
-    [name, slotMinutes, mode, queuePaused, queueStaffCount, req.params.id, req.tenant.id]
+       queue_staff_count = coalesce($5, queue_staff_count),
+       archived = coalesce($6, archived)
+     where id=$7 and tenant_id=$8 returning *`,
+    [name, slotMinutes, mode, queuePaused, queueStaffCount, archived, req.params.id, req.tenant.id]
   );
+  if (typeof archived === "boolean" && archived !== existing.archived) {
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `Service "${existing.name}" ${archived ? "archived" : "unarchived"}`]);
+  }
   res.json({ service: result.rows[0] });
 }));
 
@@ -256,15 +129,117 @@ router.delete("/services/:id", adminOnly, asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// --- Service licenses --------------------------------------------------------------
+// Lifecycle: Available (bought, bound to this service, no dates — movable to another
+// service) -> Scheduled (dates assigned, locked to this service — movable only to other
+// dates) -> Active (today falls within the window) -> Expired. Available licenses can also
+// be Refunded, within 90 days of purchase. One license can ever cover a given calendar day
+// on a service — never zero-or-more-than-one in an ambiguous way — so scheduling always
+// checks for overlap against the service's own other scheduled/active licenses.
+async function loadService(req, res, next) {
+  const result = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
+  if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+  req.service = result.rows[0];
+  next();
+}
+
+router.get("/services/:id/licenses", asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const licenses = await resolveServiceLicenses(req.service.id);
+  res.json({ licenses });
+}));
+
+router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const { planId, customDays } = req.body;
+  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
+  const plan = resolvePlan(planId, customDays, planPricing(pricingRow));
+  if (!plan) return res.status(400).json({ error: "Unknown plan type." });
+
+  const result = await query(
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
+     values ($1,$2,$3,$4,$5,$6,'available') returning *`,
+    [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price]
+  );
+  const chargeNote = req.tenant.payment_method === "invoice"
+    ? `£${plan.price} added to next invoice`
+    : `£${plan.price} charged to card on file`;
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `License bought for "${req.service.name}" — ${plan.planLabel}, ${chargeNote} (not yet scheduled)`]);
+  res.json({ license: result.rows[0], charge: { amount: plan.price, note: chargeNote } });
+}));
+
+// Assign (or move) the calendar dates a license covers — one click on a start date, the
+// end date is always derived from the plan's fixed length. Only Available/Scheduled
+// licenses can be (re)scheduled; Active ones are locked.
+router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const { startDate, unschedule } = req.body;
+  const license = await resolveServiceLicense(req.params.licenseId);
+  if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
+
+  if (unschedule) {
+    if (license.status !== "scheduled") return res.status(409).json({ error: "Only a scheduled (not yet active) license can be unscheduled." });
+    const result = await query(
+      `update service_licenses set start_date=null, end_date=null, status='available' where id=$1 returning *`,
+      [license.id]
+    );
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `License unscheduled for "${req.service.name}" — ${license.plan_label} (${license.start_date} to ${license.end_date})`]);
+    return res.json({ license: result.rows[0] });
+  }
+
+  if (!startDate) return res.status(400).json({ error: "startDate required." });
+  if (license.status !== "available" && license.status !== "scheduled") {
+    return res.status(409).json({ error: "An active license's dates can't be changed." });
+  }
+  const endDate = computeEndDate(startDate, license.plan_days);
+  const check = await checkSchedulable(req.service.id, startDate, endDate, license.id);
+  if (!check.ok) return res.status(409).json({ error: check.error });
+
+  const status = startDate <= getToday() ? "active" : "scheduled";
+  const result = await query(
+    `update service_licenses set start_date=$1, end_date=$2, status=$3 where id=$4 returning *`,
+    [startDate, endDate, status, license.id]
+  );
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `License ${license.status === "available" ? "scheduled" : "moved"} for "${req.service.name}" — ${license.plan_label}, ${startDate} to ${endDate}`]);
+  res.json({ license: result.rows[0] });
+}));
+
+// Move an Available (never-scheduled) license to a different service. Once Scheduled or
+// Active it's locked to its service for good.
+router.post("/services/:id/licenses/:licenseId/move", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const { targetServiceId } = req.body;
+  const license = await resolveServiceLicense(req.params.licenseId);
+  if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
+  if (license.status !== "available") return res.status(409).json({ error: "Only an unscheduled license can be moved to another service." });
+  const target = (await query(`select * from services where id=$1 and tenant_id=$2`, [targetServiceId, req.tenant.id])).rows[0];
+  if (!target) return res.status(404).json({ error: "Target service not found." });
+
+  const result = await query(`update service_licenses set service_id=$1 where id=$2 returning *`, [target.id, license.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `License moved from "${req.service.name}" to "${target.name}" — ${license.plan_label}`]);
+  res.json({ license: result.rows[0] });
+}));
+
+// Refund stub — records the cancellation now; real money moves once Stripe is wired up.
+router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const license = await resolveServiceLicense(req.params.licenseId);
+  if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
+  if (license.status !== "available") return res.status(409).json({ error: "Only an unscheduled license can be refunded." });
+  if (!isWithinRefundWindow(license)) return res.status(409).json({ error: "This license was bought more than 3 months ago and can no longer be refunded." });
+
+  const result = await query(`update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`, [license.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `License refunded for "${req.service.name}" — ${license.plan_label}, £${license.price}`]);
+  res.json({ license: result.rows[0] });
+}));
+
 // --- Per-day hours & staffing ----------------------------------------------------
-async function getServiceLocation(serviceId, tenantId) {
+async function getServiceWithLicenses(serviceId, tenantId) {
   const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, tenantId]);
   const service = svcResult.rows[0];
-  if (!service) return { service: null, location: null };
-  const locResult = await query(`select * from locations where id=$1`, [service.location_id]);
-  if (!locResult.rows[0]) return { service, location: null };
-  const location = await ensureLicenseStarted(locResult.rows[0]);
-  return { service, location };
+  if (!service) return { service: null, licenses: [] };
+  const licenses = await resolveServiceLicenses(serviceId);
+  return { service, licenses };
 }
 
 router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
@@ -273,22 +248,21 @@ router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
     `select * from service_daily_config where service_id=$1 and date >= $2 and date <= $3 order by date`,
     [req.params.id, from, to]
   );
-  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
-  const window = location ? getLocationWindow(location) : null;
+  const { licenses } = await getServiceWithLicenses(req.params.id, req.tenant.id);
+  const windows = activeAndScheduledWindows(licenses);
   res.json({
     dailyConfig: result.rows,
-    window,
-    lockedFrom: window ? window.start : null,
+    windows,
+    lockedFrom: windows.length ? windows.map((w) => w.start).sort()[0] : null,
   });
 }));
 
 router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res) => {
   const { date, hours, staffCount, bookingStaffCount } = req.body;
-  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
-  if (!location) return res.status(404).json({ error: "Service not found." });
-  const window = getLocationWindow(location);
-  if (window && (date < window.start || date > window.end)) {
-    return res.status(409).json({ error: "That date is outside this location's licensed period." });
+  const { service } = await getServiceWithLicenses(req.params.id, req.tenant.id);
+  if (!service) return res.status(404).json({ error: "Service not found." });
+  if (!(await isServiceLicensedOn(service.id, date))) {
+    return res.status(409).json({ error: "That date isn't covered by a license for this service." });
   }
   if (isDateFullyPast(date)) return res.status(409).json({ error: "That date has already passed." });
   const result = await query(
@@ -304,14 +278,12 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
 
 router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (req, res) => {
   const { fromDate, toDates } = req.body;
-  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
-  const window = location ? getLocationWindow(location) : null;
   const sourceResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [req.params.id, fromDate]);
   const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1 };
   let applied = 0;
   for (const date of toDates || []) {
     if (isDateFullyPast(date)) continue;
-    if (window && (date < window.start || date > window.end)) continue;
+    if (!(await isServiceLicensedOn(req.params.id, date))) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
        values ($1,$2,$3,$4,$5)
@@ -324,31 +296,33 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
   res.json({ ok: true, count: applied, skipped: (toDates || []).length - applied });
 }));
 
-// Clears hours across the entire licensed period in one call. For today specifically, the
-// client tells us which blocks have already passed (it knows the real time; the server
-// only knows the date) so they're preserved rather than wiped.
+// Clears hours across every one of the service's current scheduled/active windows in one
+// call. For today specifically, the client tells us which blocks have already passed (it
+// knows the real time; the server only knows the date) so they're preserved rather than wiped.
 router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(async (req, res) => {
   const { keepHoursForToday } = req.body;
-  const { location } = await getServiceLocation(req.params.id, req.tenant.id);
-  const window = location ? getLocationWindow(location) : null;
-  if (!window) return res.json({ ok: true, count: 0 });
+  const { licenses } = await getServiceWithLicenses(req.params.id, req.tenant.id);
+  const windows = activeAndScheduledWindows(licenses);
+  if (!windows.length) return res.json({ ok: true, count: 0 });
   const today = getToday();
   let applied = 0;
-  let d = window.start;
-  let guard = 0;
-  while (d <= window.end && guard < 400) {
-    if (!isDateFullyPast(d)) {
-      const hours = d === today ? (keepHoursForToday || []) : [];
-      await query(
-        `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-         values ($1,$2,$3,2,1)
-         on conflict (service_id, date) do update set hours = excluded.hours`,
-        [req.params.id, d, hours]
-      );
-      applied++;
+  for (const window of windows) {
+    let d = window.start;
+    let guard = 0;
+    while (d <= window.end && guard < 400) {
+      if (!isDateFullyPast(d)) {
+        const hours = d === today ? (keepHoursForToday || []) : [];
+        await query(
+          `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
+           values ($1,$2,$3,2,1)
+           on conflict (service_id, date) do update set hours = excluded.hours`,
+          [req.params.id, d, hours]
+        );
+        applied++;
+      }
+      d = addDays(d, 1);
+      guard++;
     }
-    d = addDays(d, 1);
-    guard++;
   }
   res.json({ ok: true, count: applied });
 }));
@@ -487,10 +461,10 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
 router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   const { date, clockMinutes } = req.query;
 
-  const { service, location } = await getServiceLocation(req.params.id, req.tenant.id);
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
-  if (!location || !isLocationWithinWindow(location, date)) {
-    return res.json({ open: false, reason: "outside_plan_window" });
+  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
+    return res.json({ open: false, reason: "outside_license_window" });
   }
 
   // Pause/Resume is a live override that sits on top of the scheduled hours below —
@@ -529,10 +503,10 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
 
 router.post("/services/:id/tickets", asyncHandler(async (req, res) => {
   const { type, slotTime, hourBlock, date } = req.body;
-  const { service, location } = await getServiceLocation(req.params.id, req.tenant.id);
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
-  if (!location || !isLocationWithinWindow(location, date)) {
-    return res.status(409).json({ error: "We're not taking bookings today — outside this location's licensed period." });
+  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
+    return res.status(409).json({ error: "We're not taking bookings today — outside this service's licensed period." });
   }
 
   const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);

@@ -5,33 +5,35 @@ import { signSession } from "../lib/auth.js";
 import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
-import { addDays } from "../lib/plan.js";
-import { getToday } from "../lib/clock.js";
+import { planPricing, resolvePlan } from "../lib/serviceLicense.js";
 
 const router = Router();
 
 // --- Signup ---------------------------------------------------------------
+// Four steps on the client: account details -> free locations -> services (each assigned
+// to a location, with its own license) -> payment. Locations cost nothing and don't limit
+// anything; what's bought here is one license per service.
 router.post("/signup", asyncHandler(async (req, res) => {
   const {
     businessName, firstName, lastName, email, companyAddress,
-    planId, planLabel, planDays,
-    activeDate, weekStartDate, startDate,
-    price, pricePerLocation, locationCount,
     paymentMethod, invoiceEmail, invoicePO,
-    locationNames, locationAddresses,
+    locations, services,
   } = req.body;
 
-  if (!email || !businessName || !firstName || !lastName || !planId || !locationNames?.length) {
+  if (!email || !businessName || !firstName || !lastName || !locations?.length || !services?.length) {
     return res.status(400).json({ error: "Missing required signup fields." });
   }
-  if (locationNames.some((n) => !n?.trim())) {
+  if (locations.some((l) => !l?.name?.trim())) {
     return res.status(400).json({ error: "Every location needs a name." });
   }
   // Location names must be unique per customer — this is how staff and customers tell locations
   // apart, so two locations on the same account can't share one.
-  const normalizedNames = locationNames.map((n) => n.trim().toLowerCase());
+  const normalizedNames = locations.map((l) => l.name.trim().toLowerCase());
   if (new Set(normalizedNames).size !== normalizedNames.length) {
     return res.status(400).json({ error: "Location names must be unique." });
+  }
+  if (services.some((s) => !s?.name?.trim() || s.locationIndex == null || !s.planId)) {
+    return res.status(400).json({ error: "Every service needs a name, a location, and a license plan." });
   }
   if (paymentMethod === "invoice" && !invoicePO?.trim()) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
@@ -49,9 +51,12 @@ router.post("/signup", asyncHandler(async (req, res) => {
     return res.json({ alreadyExists: true, demoOtp: code, businessName: tenant.business_name });
   }
 
-  // The client only ever sends a start date for month/year/custom plans — the end date is
-  // always derived from it here, rather than trusted from the client.
-  const endDate = startDate && planDays ? addDays(startDate, planDays - 1) : null;
+  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
+  const pricing = planPricing(pricingRow);
+  const resolvedServices = services.map((s) => ({ ...s, plan: resolvePlan(s.planId, s.customDays, pricing) }));
+  if (resolvedServices.some((s) => !s.plan)) {
+    return res.status(400).json({ error: "Unknown license plan type." });
+  }
 
   let client;
   try {
@@ -62,43 +67,49 @@ router.post("/signup", asyncHandler(async (req, res) => {
     const status = paymentMethod === "invoice" ? "pending" : "active";
     const tenantResult = await client.query(
       `insert into tenants
-        (business_name, email, plan_id, plan_label, plan_days, active_date, week_start_date, start_date, end_date,
-         price, price_per_location, location_count, access_code, payment_method, status, invoice_email, invoice_po,
+        (business_name, email, location_count, access_code, payment_method, status, invoice_email, invoice_po,
          first_name, last_name, company_address)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        returning *`,
-      [businessName, email, planId, planLabel, planDays, activeDate || null, weekStartDate || null, startDate || null, endDate || null,
-        price, pricePerLocation, locationCount, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null,
+      [businessName, email, locations.length, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null,
         firstName, lastName, companyAddress || null]
     );
     const tenant = tenantResult.rows[0];
 
-    // Every location's license starts "Purchased" — plan and price are set, but no dates at
-    // all. It only resolves (start_date/end_date get written, permanently) the moment the
-    // first opening-hour block defined for any service here is actually reached.
-    const notBefore = getToday();
+    // Locations are free and unlimited — just a routing/staff-access concept.
     const locationRows = [];
-    for (let i = 0; i < locationNames.length; i++) {
+    for (let i = 0; i < locations.length; i++) {
       const staffAccessCode = genAccessCode();
       const r = await client.query(
-        `insert into locations
-          (tenant_id, name, address, plan_id, plan_label, plan_days, license_price, staff_access_code, license_not_before)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-        [tenant.id, locationNames[i] || `Location ${i + 1}`, locationAddresses?.[i] || "",
-          planId, planLabel, planDays, pricePerLocation, staffAccessCode, notBefore]
+        `insert into locations (tenant_id, name, address, staff_access_code) values ($1,$2,$3,$4) returning *`,
+        [tenant.id, locations[i].name.trim(), locations[i].address || "", staffAccessCode]
       );
       const code = await createLocationCode((sql, params) => client.query(sql, params), tenant.id, r.rows[0].id);
       locationRows.push({ ...r.rows[0], code });
-      await client.query(
-        `insert into location_license_purchases (location_id, tenant_id, plan_id, plan_label, plan_days, start_date, end_date, price)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [r.rows[0].id, tenant.id, planId, planLabel, planDays, null, null, pricePerLocation]
+    }
+
+    // Each service is created against its location (fixed for good) and immediately gets
+    // one Available license bound to it — not scheduled yet; the admin assigns dates from
+    // the service's own calendar once they're in.
+    let totalCharge = 0;
+    for (const s of resolvedServices) {
+      const location = locationRows[s.locationIndex];
+      if (!location) throw Object.assign(new Error("A service referenced a location that doesn't exist."), { statusCode: 400 });
+      const svcResult = await client.query(
+        `insert into services (tenant_id, location_id, name, mode, slot_minutes) values ($1,$2,$3,$4,$5) returning *`,
+        [tenant.id, location.id, s.name.trim(), s.mode || "hybrid", s.slotMinutes || 15]
       );
+      await client.query(
+        `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
+         values ($1,$2,$3,$4,$5,$6,'available')`,
+        [tenant.id, svcResult.rows[0].id, s.plan.planId, s.plan.planLabel, s.plan.planDays, s.plan.price]
+      );
+      totalCharge += Number(s.plan.price) || 0;
     }
 
     await client.query(
       `insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [tenant.id, `Account activated for ${businessName} — plan: ${planLabel} × ${locationCount} location(s)`]
+      [tenant.id, `Account activated for ${businessName} — ${locations.length} location(s), ${services.length} service(s), £${totalCharge.toFixed(2)} charged`]
     );
 
     await client.query("COMMIT");

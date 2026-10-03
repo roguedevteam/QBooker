@@ -8,7 +8,17 @@ const router = Router();
 router.use(requireAuth("system_admin"));
 
 router.get("/tenants", asyncHandler(async (req, res) => {
-  const result = await query(`select * from tenants order by created_at desc`);
+  const result = await query(
+    `select t.*,
+       coalesce(sl.service_count, 0) as service_count,
+       coalesce(sl.total_spend, 0) as total_spend
+     from tenants t
+     left join (
+       select tenant_id, count(distinct service_id) as service_count, sum(price) as total_spend
+       from service_licenses where status != 'refunded' group by tenant_id
+     ) sl on sl.tenant_id = t.id
+     order by t.created_at desc`
+  );
   res.json({ tenants: result.rows });
 }));
 
@@ -51,15 +61,27 @@ router.put("/pricing", asyncHandler(async (req, res) => {
   res.json({ pricing: value });
 }));
 
+// Revenue now lives on service_licenses (one purchase per service), not on the tenant
+// as a whole — a tenant's "pending" status (unconfirmed invoice) still gates whether its
+// licenses are treated as billed, same as it used to gate the old account-wide plan.
 router.get("/reports/overview", asyncHandler(async (req, res) => {
   const tenants = (await query(`select * from tenants`)).rows;
-  const active = tenants.filter((t) => t.status === "active");
-  const pending = tenants.filter((t) => t.status === "pending");
-  const totalRevenue = active.reduce((sum, t) => sum + Number(t.price || 0), 0);
-  const pendingRevenue = pending.reduce((sum, t) => sum + Number(t.price || 0), 0);
-  const totalLocations = tenants.reduce((sum, t) => sum + (t.location_count || 0), 0);
+  const pending = new Set(tenants.filter((t) => t.status === "pending").map((t) => t.id));
+  const licenses = (await query(`select tenant_id, plan_id, price from service_licenses where status != 'refunded'`)).rows;
+
+  let totalRevenue = 0;
+  let pendingRevenue = 0;
   const revenueByPlan = {};
-  active.forEach((t) => { revenueByPlan[t.plan_id] = (revenueByPlan[t.plan_id] || 0) + Number(t.price || 0); });
+  for (const lic of licenses) {
+    const price = Number(lic.price || 0);
+    if (pending.has(lic.tenant_id)) {
+      pendingRevenue += price;
+    } else {
+      totalRevenue += price;
+      revenueByPlan[lic.plan_id] = (revenueByPlan[lic.plan_id] || 0) + price;
+    }
+  }
+  const totalLocations = tenants.reduce((sum, t) => sum + (t.location_count || 0), 0);
   res.json({
     customerCount: tenants.length,
     totalRevenue,
