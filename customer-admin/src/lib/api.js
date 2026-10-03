@@ -32,21 +32,23 @@ export const api = {
   verifyAdminOtp: (email, code) => request("/api/auth/admin/verify-otp", { method: "POST", body: { email, code }, auth: false }),
 
   me: () => request("/api/tenant/me"),
-  getPlan: () => request("/api/tenant/plan"),
-  reschedulePlan: (payload) => request("/api/tenant/plan", { method: "PATCH", body: payload }),
-  extendPlan: () => request("/api/tenant/plan/extend", { method: "POST" }),
 
   getLocations: () => request("/api/tenant/locations"),
-  addLocation: (name) => request("/api/tenant/locations", { method: "POST", body: { name } }),
-  extendLocationLicense: (locationId, payload) => request(`/api/tenant/locations/${locationId}/extend-license`, { method: "POST", body: payload }),
-  getLicenseHistory: (locationId) => request(`/api/tenant/locations/${locationId}/license-history`),
+  addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),
   deleteLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "DELETE" }),
 
-  getServices: () => request("/api/tenant/services"),
+  getServices: (includeArchived) => request(`/api/tenant/services${includeArchived ? "?includeArchived=true" : ""}`),
   addService: (name, locationId) => request("/api/tenant/services", { method: "POST", body: { name, locationId } }),
   updateService: (id, patch) => request(`/api/tenant/services/${id}`, { method: "PATCH", body: patch }),
   deleteService: (id) => request(`/api/tenant/services/${id}`, { method: "DELETE" }),
+
+  getServiceLicenses: (serviceId) => request(`/api/tenant/services/${serviceId}/licenses`),
+  buyServiceLicense: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/licenses`, { method: "POST", body: payload }),
+  scheduleServiceLicense: (serviceId, licenseId, startDate) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}`, { method: "PATCH", body: { startDate } }),
+  unscheduleServiceLicense: (serviceId, licenseId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}`, { method: "PATCH", body: { unschedule: true } }),
+  moveServiceLicense: (serviceId, licenseId, targetServiceId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}/move`, { method: "POST", body: { targetServiceId } }),
+  refundServiceLicense: (serviceId, licenseId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}/refund`, { method: "POST" }),
 
   getDailyConfig: (serviceId, from, to) => request(`/api/tenant/services/${serviceId}/daily-config?from=${from}&to=${to}`),
   putDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config`, { method: "PUT", body: payload }),

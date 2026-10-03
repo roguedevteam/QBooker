@@ -205,6 +205,9 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [services, setServices] = useState([]);
   const [expandedLocations, setExpandedLocations] = useState({});
   const [addingServiceFor, setAddingServiceFor] = useState(null);
+  const [addingLocation, setAddingLocation] = useState(false);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("active"); // active | archived | all
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
@@ -215,10 +218,11 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
   async function refreshCore() {
     try {
-      const [locRes, svcRes] = await Promise.all([api.getLocations(), api.getServices()]);
+      const [locRes, svcRes] = await Promise.all([api.getLocations(), api.getServices(true)]);
       setLocations(locRes.locations); setServices(svcRes.services);
     } catch (err) { setError(err.message); }
   }
+  const visibleServices = services.filter((s) => serviceFilter === "all" ? true : serviceFilter === "archived" ? s.archived : !s.archived);
   async function refreshQueue() {
     try {
       const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
@@ -261,8 +265,32 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
             </div>
             <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
           </div>
+
+          <div className="card stack">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
+              <div className="row">
+                <span className="muted" style={{ fontSize: 12 }}>Services:</span>
+                <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)}>
+                  <option value="active">Active</option>
+                  <option value="archived">Archived</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
+            {!addingLocation && <div><button className="btn-outline" onClick={() => setAddingLocation(true)}>+ Add location</button></div>}
+            {addingLocation && (
+              <div className="row">
+                <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
+                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
+                <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
+              </div>
+            )}
+          </div>
+
           {locations.map((loc) => {
-            const locServices = services.filter((s) => s.location_id === loc.id);
+            const locServices = visibleServices.filter((s) => s.location_id === loc.id);
             const isOpen = !!expandedLocations[loc.id];
             const addingHere = addingServiceFor === loc.id;
             return (
@@ -304,6 +332,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                 {addingHere && (
                   <ServiceWizard
                     locationId={loc.id}
+                    allServices={services}
                     setError={setError}
                     onCancel={() => setAddingServiceFor(null)}
                     onDone={() => { setAddingServiceFor(null); refreshCore(); }}
@@ -312,8 +341,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
                 {isOpen && (
                   <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
-                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
-                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} onChange={refreshCore} setError={setError} />)}
+                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No {serviceFilter === "active" ? "" : serviceFilter + " "}services here{serviceFilter === "active" ? " yet — click \"Add service\" above" : ""}.</div>}
+                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} />)}
                   </div>
                 )}
               </div>
@@ -323,7 +352,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       )}
 
       {tab === "billing" && (
-        <BillingTab tenant={tenant} locations={locations} setError={setError} onLocationsChanged={refreshCore} />
+        <BillingTab tenant={tenant} setError={setError} />
       )}
 
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
@@ -333,7 +362,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
           <div className="wrap">
             <div className="card">{locations.length}<div className="muted" style={{ fontSize: 11 }}>Location{locations.length === 1 ? "" : "s"}</div></div>
-            <div className="card">{services.filter((s) => locationStatus(locations.find((l) => l.id === s.location_id) || {}) === "live").length}<div className="muted" style={{ fontSize: 11 }}>Live services</div></div>
+            <div className="card">{services.filter((s) => !s.archived).length}<div className="muted" style={{ fontSize: 11 }}>Active service{services.length === 1 ? "" : "s"}</div></div>
           </div>
           {stats && (
             <div className="wrap">
@@ -380,210 +409,22 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   );
 }
 
-function locationWindow(loc) {
-  return loc.start_date && loc.end_date ? { start: loc.start_date, end: loc.end_date } : null;
-}
-function locationStatus(loc) {
-  if (!loc.plan_id) return "none";
-  if (!loc.start_date) return "purchased"; // bought, dormant — hasn't started yet
-  const today = todayIso();
-  return today > loc.end_date ? "expired" : "live";
-}
-
-function BillingTab({ tenant, locations, setError, onLocationsChanged }) {
-  const [buyingLocation, setBuyingLocation] = useState(false);
-  const [newLocationName, setNewLocationName] = useState("");
-  const [pricing, setPricing] = useState(null);
-
-  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
-
+function BillingTab({ tenant, setError }) {
   return (
     <div className="stack">
       <PendingPaymentBanner tenant={tenant} />
-
       <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Buy another location</div>
-        {!buyingLocation && <div><button className="btn" onClick={() => setBuyingLocation(true)}>Buy another location</button></div>}
-        {buyingLocation && (
-          <div className="stack" style={{ background: "#FBEEDD", borderRadius: 8, padding: 12 }}>
-            <div style={{ fontSize: 13 }}>
-              Adding a location costs <strong>£{tenant.price_per_location}</strong> for your current plan
-              {tenant.payment_method === "invoice" ? " — added to your next invoice." : " — charged to your card on file."}
-              {" "}It gets its own {tenant.plan_label?.toLowerCase()} license, which starts the moment you set opening hours for a service there — independent of your other locations.
-            </div>
-            <div className="row">
-              <input className="input" placeholder="New location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
-              <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName); setNewLocationName(""); setBuyingLocation(false); onLocationsChanged(); } catch (err) { setError(err.message); } }}>Buy &amp; add</button>
-              <button className="btn-outline" onClick={() => { setBuyingLocation(false); setNewLocationName(""); }}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Locations &amp; licenses</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Payment</div>
+        <div className="muted" style={{ fontSize: 13 }}>
+          {tenant.payment_method === "invoice"
+            ? "You're billed by invoice — licenses bought on the Locations tab are added to your next invoice."
+            : "You're billed by card — licenses bought on the Locations tab are charged to your card on file."}
+        </div>
         <div className="muted" style={{ fontSize: 12 }}>
-          Each location's license runs independently — extend one without affecting the others. Expand a location to see
-          everything bought for it and download a receipt.
+          Locations are free and unlimited. What you pay for is a license per service — buy, schedule, move, or refund them
+          from each service's panel on the Locations tab.
         </div>
-        {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
-        {locations.map((loc) => (
-          <LocationLicenseRow key={loc.id} loc={loc} tenant={tenant} pricing={pricing} setError={setError} onChanged={onLocationsChanged} />
-        ))}
       </div>
-    </div>
-  );
-}
-
-function LocationLicenseRow({ loc, tenant, pricing, setError, onChanged }) {
-  const [choosing, setChoosing] = useState(false);
-  const [chosenPlan, setChosenPlan] = useState(null);
-  const [extending, setExtending] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [history, setHistory] = useState(null);
-
-  const licenseWindow = locationWindow(loc);
-  const status = locationStatus(loc);
-  const statusMeta = {
-    live: { label: "Live", color: "green" },
-    expired: { label: "License expired", color: "red" },
-    purchased: { label: "Purchased — not started", color: "amber" },
-    none: { label: "No license assigned", color: "amber" },
-  }[status];
-
-  const windowText = !loc.plan_label
-    ? "No license assigned yet"
-    : !licenseWindow
-      ? `${loc.plan_label} — starts the moment you set opening hours for a service here`
-      : loc.plan_days === 1
-        ? `${loc.plan_label} — ${licenseWindow.start}, until midnight`
-        : `${loc.plan_label} — ${licenseWindow.start} to ${licenseWindow.end}`;
-
-  const sale = pricing?.sale?.active ? pricing.sale : null;
-  function planPrice(p) {
-    if (sale && sale[p] != null) return sale[p];
-    return pricing?.[p];
-  }
-
-  async function loadHistory() {
-    try {
-      const r = await api.getLicenseHistory(loc.id);
-      setHistory(r.purchases);
-    } catch (err) { setError(err.message); }
-  }
-  function toggleExpand() {
-    setExpanded((v) => {
-      if (!v && !history) loadHistory();
-      return !v;
-    });
-  }
-
-  function downloadReceipt(purchase) {
-    const lines = [
-      "QBOOKER — RECEIPT",
-      "==================",
-      "",
-      `Business: ${tenant.business_name}`,
-      `Location: ${loc.name}`,
-      "",
-      `Plan: ${purchase.plan_label}`,
-      `Price: £${purchase.price}`,
-      purchase.start_date ? `Covers: ${purchase.start_date}${purchase.end_date && purchase.end_date !== purchase.start_date ? ` to ${purchase.end_date}` : ""}` : null,
-      `Date bought: ${new Date(purchase.purchased_at).toLocaleDateString()}`,
-      "",
-      `Payment method: ${tenant.payment_method === "invoice" ? "Invoice" : "Card"}`,
-      tenant.invoice_po ? `PO / reference number: ${tenant.invoice_po}` : null,
-      `Account status: ${tenant.status === "active" ? "Active" : "Payment pending"}`,
-      "",
-      `Issued: ${new Date().toLocaleDateString()}`,
-    ].filter(Boolean);
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `qbooker-receipt-${loc.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${new Date(purchase.purchased_at).toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function confirmExtend() {
-    setExtending(true);
-    try {
-      await api.extendLocationLicense(loc.id, { planId: chosenPlan });
-      setChoosing(false);
-      setChosenPlan(null);
-      setHistory(null);
-      onChanged();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setExtending(false);
-    }
-  }
-
-  return (
-    <div className="card stack">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-        <div className="row">
-          <button className="btn-outline" onClick={toggleExpand} title={expanded ? "Collapse" : "Expand"}>{expanded ? "▾" : "▸"}</button>
-          <strong>{loc.name}</strong>
-          <span className={`badge badge-${statusMeta.color}`}>{statusMeta.label}</span>
-        </div>
-        {!choosing && <button className="btn-outline" onClick={() => setChoosing(true)}>Extend license</button>}
-      </div>
-      <div className="muted" style={{ fontSize: 12 }}>{windowText}</div>
-
-      {choosing && !chosenPlan && (
-        <div className="wrap">
-          {["day", "week", "month", "year"].map((p) => (
-            <button key={p} className="btn-outline" onClick={() => setChosenPlan(p)}>
-              {p[0].toUpperCase() + p.slice(1)} — {sale && sale[p] != null && (
-                <span className="muted" style={{ textDecoration: "line-through" }}>£{pricing?.[p]}</span>
-              )} £{planPrice(p) ?? "…"}
-            </button>
-          ))}
-          <button className="btn-outline" onClick={() => setChoosing(false)}>Cancel</button>
-        </div>
-      )}
-
-      {chosenPlan && (
-        <div className="stack" style={{ background: "#FBEEDD", borderRadius: 8, padding: 12 }}>
-          <div style={{ fontSize: 13 }}>
-            Extend "{loc.name}" with a {chosenPlan} pass — <strong>£{planPrice(chosenPlan)}</strong>.
-            {status === "live"
-              ? ` It'll pick up automatically the day your current license ends (${licenseWindow.end}) and hours are set for it — never before.`
-              : " It'll start the moment you set opening hours for a service here."}
-          </div>
-          <div className="row">
-            <button className="btn" disabled={extending} onClick={confirmExtend}>{extending ? "Extending…" : "Confirm & extend"}</button>
-            <button className="btn-outline" onClick={() => setChosenPlan(null)}>Back</button>
-          </div>
-        </div>
-      )}
-
-      {expanded && (
-        <div className="stack" style={{ borderTop: "1px solid #DEDDD6", paddingTop: 10 }}>
-          <span className="muted" style={{ fontSize: 12 }}>Licenses bought for this location</span>
-          {!history && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
-          {history && history.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Nothing recorded yet.</div>}
-          {history && history.length > 0 && (
-            <table>
-              <thead><tr><th>Date bought</th><th>Plan</th><th>Covers</th><th>Price</th><th></th></tr></thead>
-              <tbody>
-                {history.map((p) => (
-                  <tr key={p.id}>
-                    <td>{new Date(p.purchased_at).toLocaleDateString()}</td>
-                    <td>{p.plan_label}</td>
-                    <td>{p.start_date ? (p.end_date && p.end_date !== p.start_date ? `${p.start_date} – ${p.end_date}` : p.start_date) : "—"}</td>
-                    <td>£{p.price}</td>
-                    <td><button className="btn-outline" onClick={() => downloadReceipt(p)}>Receipt</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -667,18 +508,22 @@ function ShopTab({ tenant, locations }) {
   );
 }
 
-function ServiceEditor({ service, onChange, setError }) {
+function ServiceEditor({ service, allServices, onChange, setError }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="card stack">
+    <div className="card stack" style={service.archived ? { opacity: 0.6 } : undefined}>
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <div className="row" style={{ flexWrap: "wrap" }}>
           <strong>{service.name}</strong>
           <span className="badge badge-blue" style={{ textTransform: "capitalize" }}>{service.mode}</span>
           {service.mode !== "queue" && <span className="muted" style={{ fontSize: 12 }}>{service.slot_minutes} min slots</span>}
+          {service.archived && <span className="badge badge-amber">Archived</span>}
         </div>
         <div className="row">
+          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { archived: !service.archived }); onChange(); }}>
+            {service.archived ? "Unarchive" : "Archive"}
+          </button>
           <button className="btn-outline" onClick={async () => { if (confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); } }}>Delete</button>
           <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
             {expanded ? "▾" : "▸"}
@@ -695,7 +540,147 @@ function ServiceEditor({ service, onChange, setError }) {
         </div>
       )}
 
-      {expanded && <ServiceCalendar service={service} setError={setError} />}
+      {expanded && (
+        <div className="stack">
+          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} />
+          <ServiceCalendar service={service} setError={setError} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LICENSE_STATUS_META = {
+  available: { label: "Available", color: "amber" },
+  scheduled: { label: "Scheduled", color: "blue" },
+  active: { label: "Active", color: "green" },
+  expired: { label: "Expired", color: "red" },
+  refunded: { label: "Refunded", color: "red" },
+};
+
+// A license is bought for, and permanently bound to, this specific service. Available
+// (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
+// (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
+// fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
+function ServiceLicensesPanel({ service, allServices, setError, onChanged }) {
+  const [licenses, setLicenses] = useState([]);
+  const [pricing, setPricing] = useState(null);
+  const [buying, setBuying] = useState(false);
+  const [planId, setPlanId] = useState("week");
+  const [customDays, setCustomDays] = useState(7);
+  const [schedulingId, setSchedulingId] = useState(null);
+  const [startDate, setStartDate] = useState(todayIso());
+  const [movingId, setMovingId] = useState(null);
+
+  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
+
+  async function load() {
+    try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { load(); }, [service.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function buy() {
+    try {
+      await api.buyServiceLicense(service.id, { planId, customDays: planId === "custom" ? customDays : undefined });
+      setBuying(false);
+      await load();
+      onChanged?.();
+    } catch (err) { setError(err.message); }
+  }
+  async function schedule(lic) {
+    try { await api.scheduleServiceLicense(service.id, lic.id, startDate); setSchedulingId(null); await load(); onChanged?.(); } catch (err) { setError(err.message); }
+  }
+  async function unschedule(lic) {
+    if (!confirm("Unschedule this license? Its dates will be cleared and it goes back to Available.")) return;
+    try { await api.unscheduleServiceLicense(service.id, lic.id); await load(); onChanged?.(); } catch (err) { setError(err.message); }
+  }
+  async function move(lic, targetServiceId) {
+    try { await api.moveServiceLicense(service.id, lic.id, targetServiceId); await load(); onChanged?.(); } catch (err) { setError(err.message); } finally { setMovingId(null); }
+  }
+  async function refund(lic) {
+    if (!confirm("Refund this license? This can't be undone.")) return;
+    try { await api.refundServiceLicense(service.id, lic.id); await load(); onChanged?.(); } catch (err) { setError(err.message); }
+  }
+
+  const visible = licenses.filter((l) => l.status !== "refunded");
+  const otherServices = (allServices || []).filter((s) => s.id !== service.id && !s.archived);
+
+  return (
+    <div className="stack">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <strong style={{ fontSize: 13 }}>Licenses</strong>
+        {!buying && <button className="btn-outline" onClick={() => setBuying(true)}>Buy a license</button>}
+      </div>
+
+      {buying && pricing && (
+        <div className="card stack" style={{ background: "#FBEEDD" }}>
+          <div className="plan-grid">
+            {["day", "week", "month", "year", "custom"].map((id) => {
+              const onSale = id !== "custom" && pricing.sale?.active && pricing.sale[id] != null;
+              const price = id === "custom" ? null : (onSale ? pricing.sale[id] : pricing[id]);
+              return (
+                <div key={id} className={`plan-option${planId === id ? " active" : ""}`} onClick={() => setPlanId(id)}>
+                  <span className="plan-option-label">{id === "custom" ? "Custom" : id.charAt(0).toUpperCase() + id.slice(1)}</span>
+                  <span className="plan-option-price">{id === "custom" ? `from £${pricing.customDailyRate}/day` : `£${price}`}</span>
+                </div>
+              );
+            })}
+          </div>
+          {planId === "custom" && (
+            <div className="row">
+              <span className="muted">Days:</span>
+              <input className="input" type="number" min={1} style={{ width: 70 }} value={customDays} onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))} />
+            </div>
+          )}
+          <div className="row">
+            <button className="btn" onClick={buy}>Buy</button>
+            <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {visible.length === 0 && !buying && <div className="muted" style={{ fontSize: 13 }}>No licenses yet — buy one to make this service bookable.</div>}
+
+      {visible.map((lic) => {
+        const meta = LICENSE_STATUS_META[lic.status];
+        return (
+          <div key={lic.id} className="card stack">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <span className={`badge badge-${meta.color}`}>{meta.label}</span>
+                <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
+                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{lic.start_date} to {lic.end_date}</span>}
+              </div>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                {(lic.status === "available" || lic.status === "scheduled") && schedulingId !== lic.id && (
+                  <button className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
+                    {lic.status === "available" ? "Assign dates" : "Change dates"}
+                  </button>
+                )}
+                {lic.status === "scheduled" && <button className="btn-outline" onClick={() => unschedule(lic)}>Unschedule</button>}
+                {lic.status === "available" && otherServices.length > 0 && (
+                  movingId === lic.id ? (
+                    <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
+                      <option value="" disabled>Move to…</option>
+                      {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  ) : <button className="btn-outline" onClick={() => setMovingId(lic.id)}>Move to another service</button>
+                )}
+                {lic.status === "available" && <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => refund(lic)}>Refund</button>}
+              </div>
+            </div>
+            {schedulingId === lic.id && (
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <span className="muted" style={{ fontSize: 12 }}>Start date:</span>
+                <input className="input" type="date" style={{ maxWidth: 160 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                <span className="muted" style={{ fontSize: 12 }}>→ ends {addDaysIso(startDate, lic.plan_days - 1)}</span>
+                <button className="btn" onClick={() => schedule(lic)}>Confirm</button>
+                <button className="btn-outline" onClick={() => setSchedulingId(null)}>Cancel</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -705,7 +690,7 @@ function ServiceCalendar({ service, setError }) {
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(todayIso()));
   const [monthConfigs, setMonthConfigs] = useState({});
-  const [planWindow, setPlanWindow] = useState(null);
+  const [windows, setWindows] = useState([]); // this service's scheduled/active license windows — gaps allowed, never overlapping
   const [draftHours, setDraftHours] = useState([]);
   const [staffCount, setStaffCount] = useState(2);
   const [bookingStaffCount, setBookingStaffCount] = useState(1);
@@ -736,10 +721,16 @@ function ServiceCalendar({ service, setError }) {
       const map = {};
       r.dailyConfig.forEach((d) => { map[d.date] = d; });
       setMonthConfigs(map);
-      setPlanWindow(r.window);
+      setWindows(r.windows || []);
     } catch (err) { setError(err.message); }
   }
   useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function isWithinAnyWindow(d) {
+    return windows.some((w) => d >= w.start && d <= w.end);
+  }
+  const overallStart = windows.length ? windows.map((w) => w.start).sort()[0] : null;
+  const overallEnd = windows.length ? windows.map((w) => w.end).sort().slice(-1)[0] : null;
 
   useEffect(() => {
     const entry = monthConfigs[selectedDate];
@@ -843,8 +834,8 @@ function ServiceCalendar({ service, setError }) {
   }
 
   async function clearAllDays() {
-    if (!planWindow) return;
-    if (!confirm("Clear hours for every day in your paid period? Already-passed hours today are kept — everything else is wiped. This can't be undone.")) return;
+    if (!windows.length) return;
+    if (!confirm("Clear hours across every one of this service's licensed windows? Already-passed hours today are kept — everything else is wiped. This can't be undone.")) return;
     try {
       let todayHours = monthConfigs[todayIso()]?.hours;
       if (todayHours === undefined) {
@@ -870,11 +861,13 @@ function ServiceCalendar({ service, setError }) {
     try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); } catch (err) { setError(err.message); }
   }
   async function copyToWholePeriod() {
-    if (!planWindow) return;
+    if (!windows.length) return;
     const targets = [];
-    let d = planWindow.start;
-    let guard = 0;
-    while (d <= planWindow.end && guard < 400) { if (d !== selectedDate) targets.push(d); d = addDaysIso(d, 1); guard++; }
+    for (const w of windows) {
+      let d = w.start;
+      let guard = 0;
+      while (d <= w.end && guard < 400) { if (d !== selectedDate) targets.push(d); d = addDaysIso(d, 1); guard++; }
+    }
     try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); } catch (err) { setError(err.message); }
   }
 
@@ -885,9 +878,9 @@ function ServiceCalendar({ service, setError }) {
       <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
         <div className="card" style={{ minWidth: 220 }}>
           <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-            <button className="btn-outline" disabled={planWindow && calendarMonth <= firstOfMonth(planWindow.start)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
+            <button className="btn-outline" disabled={overallStart && calendarMonth <= firstOfMonth(overallStart)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
             <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
-            <button className="btn-outline" disabled={planWindow && calendarMonth >= firstOfMonth(planWindow.end)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
+            <button className="btn-outline" disabled={overallEnd && calendarMonth >= firstOfMonth(overallEnd)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
           </div>
           <table>
             <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
@@ -896,7 +889,7 @@ function ServiceCalendar({ service, setError }) {
                 <tr key={wi}>
                   {week.map((d, di) => {
                     if (!d) return <td key={di} />;
-                    const inWindow = !planWindow || (d >= planWindow.start && d <= planWindow.end);
+                    const inWindow = isWithinAnyWindow(d);
                     const past = isDatePastClient(d);
                     const count = monthConfigs[d]?.hours?.length || 0;
                     const isSelected = d === selectedDate;
@@ -906,7 +899,7 @@ function ServiceCalendar({ service, setError }) {
                         <button
                           onClick={() => inWindow && setSelectedDate(d)}
                           disabled={!inWindow}
-                          title={!inWindow ? "Outside your access window" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
+                          title={!inWindow ? "Not covered by a license for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
                           style={{
                             width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #1B1D1F" : "1px solid #DEDDD6",
                             background: isSelected ? "#1B1D1F" : count > 0 ? "#FBEEDD" : "#fff",
@@ -984,7 +977,7 @@ function ServiceCalendar({ service, setError }) {
               <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
               <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
               <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
-              <button className="btn-outline" onClick={copyToWholePeriod}>Whole paid period</button>
+              <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
             </div>
           )}
           <div className="wrap">
@@ -1003,7 +996,7 @@ const SERVICE_MODE_INFO = [
   { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
 ];
 
-function ServiceWizard({ locationId, onDone, onCancel, setError }) {
+function ServiceWizard({ locationId, allServices, onDone, onCancel, setError }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("hybrid");
@@ -1030,7 +1023,7 @@ function ServiceWizard({ locationId, onDone, onCancel, setError }) {
   if (step === 1) {
     return (
       <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 2</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 3</div>
         <input className="input" autoFocus placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="stack">
           {SERVICE_MODE_INFO.map((m) => (
@@ -1051,10 +1044,23 @@ function ServiceWizard({ locationId, onDone, onCancel, setError }) {
             </select>
           </div>
         )}
-        <div className="muted" style={{ fontSize: 11 }}>The name, type, and slot length can't be changed after this step — delete and recreate the service if you need to change them later.</div>
+        <div className="muted" style={{ fontSize: 11 }}>The name, type, slot length, and location can't be changed after this step — delete and recreate the service if you need to change them later.</div>
         <div className="row">
-          <button className="btn" disabled={!name.trim() || creating} onClick={next}>{creating ? "Creating…" : "Next: set hours →"}</button>
+          <button className="btn" disabled={!name.trim() || creating} onClick={next}>{creating ? "Creating…" : "Next: buy a license →"}</button>
           <button className="btn-outline" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 3: buy a license for "{createdService.name}"</div>
+        <div className="muted" style={{ fontSize: 12 }}>This license is bound to this service. Assign it to calendar dates now, or later from the service's own panel.</div>
+        <ServiceLicensesPanel service={createdService} allServices={allServices || []} setError={setError} onChanged={() => {}} />
+        <div className="row">
+          <button className="btn" onClick={() => setStep(3)}>Next: set hours →</button>
         </div>
       </div>
     );
@@ -1063,7 +1069,7 @@ function ServiceWizard({ locationId, onDone, onCancel, setError }) {
   return (
     <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: set hours for "{createdService.name}"</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 3 of 3: set hours for "{createdService.name}"</div>
       </div>
       <ServiceCalendar service={createdService} setError={setError} />
       <div className="row">
