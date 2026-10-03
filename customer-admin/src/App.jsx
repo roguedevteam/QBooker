@@ -577,7 +577,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const hasActiveLicense = licenses.some((l) => l.status === "active");
 
   return (
-    <div className="card stack" style={service.archived ? { opacity: 0.6 } : undefined}>
+    <div className="card stack" style={{ gap: 8, ...(service.archived ? { opacity: 0.6 } : null) }}>
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <div className="row" style={{ flexWrap: "wrap" }}>
           <strong>{service.name}</strong>
@@ -617,7 +617,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
         </div>
       )}
       {expanded && (
-        <div className="stack">
+        <div className="stack" style={{ gap: 10, paddingTop: 2, borderTop: "1px solid var(--line)" }}>
           <ServiceLicensesPanel
             service={service} allServices={allServices || []} setError={setError}
             onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
@@ -712,7 +712,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const otherServices = (allServices || []).filter((s) => s.id !== service.id && !s.archived);
 
   return (
-    <div className="stack">
+    <div className="stack" style={{ gap: 8 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <strong style={{ fontSize: 13 }}>Licenses</strong>
         {showBuyButton && !buying && <button className="btn-outline" onClick={() => setBuying(true)}>Buy a license</button>}
@@ -747,10 +747,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
       {visible.length === 0 && !buying && <div className="muted" style={{ fontSize: 13 }}>No licenses yet — buy one to make this service bookable.</div>}
 
-      {visible.map((lic) => {
+      {visible.map((lic, i) => {
         const meta = LICENSE_STATUS_META[lic.status];
         return (
-          <div key={lic.id} className="card stack">
+          <div key={lic.id} className="stack" style={{ gap: 6, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
             <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>

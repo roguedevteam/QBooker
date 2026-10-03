@@ -606,8 +606,10 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const [locationNames, setLocationNames] = useState([""]);
   const MAX_LOCATIONS = 20;
 
-  // Step 3 — services, each assigned to a location and bought with its own license
+  // Step 3 — services, each assigned to a location and bought with its own license.
+  // Shown one at a time (activeService) so a long list doesn't turn into one giant scroll.
   const [services, setServices] = useState([{ name: "", locationIndex: 0, mode: "queue", slotMinutes: 15, planId: "month", customDays: 14 }]);
+  const [activeService, setActiveService] = useState(0);
   const MAX_SERVICES = 30;
 
   // Step 4 — payment
@@ -633,10 +635,16 @@ function Signup({ onDone, setError, onBackToLanding }) {
   }
 
   function addService() {
-    setServices((prev) => (prev.length >= MAX_SERVICES ? prev : [...prev, { name: "", locationIndex: 0, mode: "queue", slotMinutes: 15, planId: "month", customDays: 14 }]));
+    if (services.length >= MAX_SERVICES) return;
+    const next = [...services, { name: "", locationIndex: 0, mode: "queue", slotMinutes: 15, planId: "month", customDays: 14 }];
+    setServices(next);
+    setActiveService(next.length - 1);
   }
   function removeService(i) {
-    setServices((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)));
+    if (services.length <= 1) return;
+    const next = services.filter((_, idx) => idx !== i);
+    setServices(next);
+    setActiveService((cur) => Math.min(cur, next.length - 1));
   }
   function updateService(i, next) {
     setServices((prev) => prev.map((s, idx) => (idx === i ? next : s)));
@@ -656,7 +664,8 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const normalizedNames = activeNames.map((n) => n.toLowerCase());
   const hasDuplicateNames = namesFilled && new Set(normalizedNames).size !== normalizedNames.length;
   const step2Valid = namesFilled && !hasDuplicateNames;
-  const step3Valid = services.every((s) => s.name.trim() && s.planId && (s.planId !== "custom" || Number(s.customDays) > 0));
+  const isServiceValid = (s) => s.name.trim() && s.planId && (s.planId !== "custom" || Number(s.customDays) > 0);
+  const step3Valid = services.every(isServiceValid);
   const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
 
   function next() { setStep((s) => Math.min(lastStep, s + 1)); }
@@ -801,18 +810,38 @@ function Signup({ onDone, setError, onBackToLanding }) {
               </div>
             </div>
             <div className="stack" style={{ gap: 12 }}>
-              {services.map((svc, i) => (
-                <ServiceRow
-                  key={i}
-                  svc={svc}
-                  index={i}
-                  locationNames={locationNames}
-                  pricing={pricing}
-                  onChange={(next) => updateService(i, next)}
-                  onRemove={() => removeService(i)}
-                  removable={services.length > 1}
-                />
-              ))}
+              {services.length > 1 && (
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <button type="button" className="btn-outline" disabled={activeService === 0} onClick={() => setActiveService((i) => Math.max(0, i - 1))}>← Previous</button>
+                  <div className="row" style={{ gap: 6 }}>
+                    {services.map((s, i) => (
+                      <button
+                        type="button"
+                        key={i}
+                        onClick={() => setActiveService(i)}
+                        title={`Service ${i + 1}${s.name.trim() ? `: ${s.name.trim()}` : ""}`}
+                        style={{
+                          width: 9, height: 9, padding: 0, borderRadius: "50%", cursor: "pointer",
+                          border: i === activeService ? "2px solid var(--accent)" : "none",
+                          background: isServiceValid(s) ? "var(--accent)" : "var(--line)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <button type="button" className="btn-outline" disabled={activeService === services.length - 1} onClick={() => setActiveService((i) => Math.min(services.length - 1, i + 1))}>Next →</button>
+                </div>
+              )}
+              <div className="muted" style={{ fontSize: 12, textAlign: "center" }}>Service {activeService + 1} of {services.length}</div>
+              <ServiceRow
+                key={activeService}
+                svc={services[activeService]}
+                index={activeService}
+                locationNames={locationNames}
+                pricing={pricing}
+                onChange={(next) => updateService(activeService, next)}
+                onRemove={() => removeService(activeService)}
+                removable={services.length > 1}
+              />
               <button type="button" className="loc-add" onClick={addService} disabled={services.length >= MAX_SERVICES}>+ Add another service</button>
             </div>
 
