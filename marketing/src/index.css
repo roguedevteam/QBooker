@@ -14,6 +14,8 @@
   --error:#B3261E;
   --error-weak:#FBE9E7;
   --brand:#0B4F4D;
+  --blue:#1D5C8A;
+  --navy:#122B40;
 }
 * { box-sizing: border-box; }
 body {
@@ -52,3 +54,30 @@ tbody tr { border-top: 1px solid var(--line); }
 .header { background: var(--brand); color: var(--surface-card); padding: 16px 24px; }
 .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .narrow { max-width: 460px; margin: 0 auto; padding: 20px; }
+
+/* Section rhythm — alternating full-bleed bands for the landing page */
+.band { padding: 48px 0; }
+.band-card { background: var(--surface-card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.band-navy { background: var(--navy); color: var(--surface-page); }
+.band-navy .muted { color: #9FB3C2; }
+
+/* Logo mark — shared between the header and anywhere else it appears */
+.logo { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.logo-word { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.logo-word-light { color: var(--surface-page); }
+
+/* Step progress — numbered circles joined by a connecting line */
+.stepper { display: flex; align-items: center; justify-content: center; gap: 0; margin-bottom: 4px; flex-wrap: wrap; }
+.stepper .dot { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.stepper .seg { width: 32px; height: 2px; flex-shrink: 0; }
+.stepper .step-label { font-size: 12px; white-space: nowrap; }
+
+/* Payment method radio cards */
+.pay-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); padding: 12px 14px; cursor: pointer; }
+.pay-option.active { border-color: var(--accent); background: var(--accent-weak); }
+.pay-option input { margin-top: 3px; }
+
+/* Field groups with real labels */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.field-hint { font-size: 11px; color: var(--muted); }
