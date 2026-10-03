@@ -1064,15 +1064,13 @@ function ServiceCalendar({ service, setError, refreshToken }) {
           )}
           {selectedDate && (
             <>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong style={{ fontSize: 13 }}>
-                  {selectedDate}
-                  {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
-                </strong>
-                {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
-                {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
-                {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
-              </div>
+              {(saveStatus === "saving" || saveStatus === "saved" || saveStatus === "error") && (
+                <div className="row" style={{ justifyContent: "flex-end" }}>
+                  {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
+                  {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
+                  {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
+                </div>
+              )}
               <div className="wrap" style={{ userSelect: "none" }}>
                 {GRID_HOURS.map((h) => {
                   const open = draftHours.includes(h);
