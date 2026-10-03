@@ -324,28 +324,29 @@ function AdminDashboard({ tenant, setError }) {
                     <code style={{ fontSize: 12, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
-                  <div className="row">
-                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setOpenLocationId(loc.id); }}>Add service</button>
-                    <select
-                      className="btn-outline"
-                      defaultValue=""
-                      onChange={async (e) => {
-                        const action = e.target.value;
-                        e.target.value = "";
-                        if (action === "website") {
-                          setOpenLocationId(loc.id);
-                          setEditingWebsiteFor(loc.id);
-                        } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
-                          await api.deleteLocation(loc.id);
-                          refreshCore();
-                        }
-                      }}
-                    >
-                      <option value="" disabled>⋯</option>
-                      <option value="website">Edit website</option>
-                      <option value="remove">Remove location</option>
-                    </select>
-                  </div>
+                  <select
+                    className="btn-outline"
+                    defaultValue=""
+                    onChange={async (e) => {
+                      const action = e.target.value;
+                      e.target.value = "";
+                      if (action === "addService") {
+                        setAddingServiceFor(loc.id);
+                        setOpenLocationId(loc.id);
+                      } else if (action === "website") {
+                        setOpenLocationId(loc.id);
+                        setEditingWebsiteFor(loc.id);
+                      } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
+                        await api.deleteLocation(loc.id);
+                        refreshCore();
+                      }
+                    }}
+                  >
+                    <option value="" disabled>⋯</option>
+                    <option value="addService">Add service</option>
+                    <option value="website">Edit website</option>
+                    <option value="remove">Remove location</option>
+                  </select>
                 </div>
 
                 {isOpen && (
@@ -587,18 +588,19 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
           <span className={`badge badge-${summary.color}`}>{summary.text}</span>
         </div>
         <div className="row">
-          <button className="btn-outline" onClick={() => { setExpanded(true); setBuyTrigger((t) => t + 1); }}>Buy a license</button>
           <select
             className="btn-outline"
             defaultValue=""
             onChange={async (e) => {
               const action = e.target.value;
               e.target.value = "";
-              if (action === "archive") { await api.updateService(service.id, { archived: !service.archived }); onChange(); }
+              if (action === "buy") { setExpanded(true); setBuyTrigger((t) => t + 1); }
+              else if (action === "archive") { await api.updateService(service.id, { archived: !service.archived }); onChange(); }
               else if (action === "delete" && confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); }
             }}
           >
             <option value="" disabled>⋯</option>
+            <option value="buy">Buy a license</option>
             <option value="archive">{service.archived ? "Unarchive" : "Archive"}</option>
             <option value="delete">Delete</option>
           </select>
@@ -864,14 +866,17 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
   // Whenever there's no valid day selected — opening the calendar fresh, or the
   // previously-selected day just fell outside a window that changed (e.g. it was
-  // unscheduled) — jump straight to the first day of the earliest scheduled/active
-  // window, switching the visible month to match, instead of leaving it on a blank
-  // "pick a day" state the admin has to act on first.
+  // unscheduled) — jump straight to a sensible default instead of leaving it on a
+  // blank "pick a day" state the admin has to act on first: today's date when this
+  // service is currently live (today falls inside one of its windows), otherwise the
+  // first day of the earliest scheduled/active window — switching the visible month
+  // to match either way.
   useEffect(() => {
     if (selectedDate && isWithinAnyWindow(selectedDate)) return;
-    if (overallStart) {
-      setSelectedDate(overallStart);
-      const m = firstOfMonth(overallStart);
+    const target = isWithinAnyWindow(todayIso()) ? todayIso() : overallStart;
+    if (target) {
+      setSelectedDate(target);
+      const m = firstOfMonth(target);
       if (m !== calendarMonth) setCalendarMonth(m);
     } else if (selectedDate) {
       setSelectedDate(null);
@@ -1020,6 +1025,11 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
   const calendarWeeks = buildCalendarWeeks(calendarMonth);
 
+  // Nothing to schedule hours against yet — don't show an empty calendar control.
+  if (!windows.length) {
+    return <div className="muted" style={{ fontSize: 13 }}>No scheduled dates yet — assign a license to the calendar above to set opening hours.</div>;
+  }
+
   return (
     <div className="stack">
       <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
@@ -1066,9 +1076,6 @@ function ServiceCalendar({ service, setError, refreshToken }) {
         </div>
 
         <div className="stack" style={{ flex: 1, minWidth: 260 }}>
-          {!selectedDate && (
-            <div className="muted" style={{ fontSize: 13 }}>Select an available day on the calendar to manage its hours.</div>
-          )}
           {selectedDate && (
             <>
               {(saveStatus === "saving" || saveStatus === "saved" || saveStatus === "error") && (
