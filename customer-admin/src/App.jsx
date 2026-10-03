@@ -757,6 +757,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>
                 <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
+                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{lic.start_date} to {lic.end_date}</span>}
               </div>
               <div className="row" style={{ flexWrap: "wrap" }}>
                 {lic.status === "available" && schedulingId !== lic.id && (
@@ -1047,7 +1048,6 @@ function ServiceCalendar({ service, setError }) {
             <strong style={{ fontSize: 13 }}>
               {selectedDate}
               {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
-              {selectedIsToday && <span className="muted" style={{ fontWeight: 400 }}> (today — already-passed hours are locked, the rest is editable)</span>}
             </strong>
             <div className="row">
               {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
