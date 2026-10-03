@@ -5,7 +5,7 @@ import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_APP_URL || "http://localhost:5173";
 
 const PLAN_META = [
-  { id: "day", label: "Day pass", days: 1, desc: "One day of access, until midnight." },
+  { id: "day", label: "Day", days: 1, desc: "One day of access, until midnight." },
   { id: "week", label: "Week", days: 7, desc: "Seven days of access." },
   { id: "month", label: "Month", days: 30, desc: "30 days of access." },
   { id: "year", label: "Year", days: 365, desc: "365 days of access — best value for ongoing use." },
@@ -243,7 +243,7 @@ function Landing({ onStart, simulatedBadge }) {
           )}
           <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
             {["day", "week", "month", "year"].map((k) => {
-              const label = { day: "Day pass", week: "Week", month: "Month", year: "Year" }[k];
+              const label = { day: "Day", week: "Week", month: "Month", year: "Year" }[k];
               const onSale = pricing.sale?.active && pricing.sale[k] != null;
               return (
                 <div key={k} className="card stack" style={{ minWidth: 160, textAlign: "center" }}>

@@ -95,8 +95,9 @@ tbody tr { border-top: 1px solid var(--line); }
 .wide { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
 
 /* Signup step 2 — plan grid and location rows */
-.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; }
-.plan-option { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--line); background: var(--surface-card); padding: 12px 8px; cursor: pointer; }
+.plan-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+@media (max-width: 480px) { .plan-grid { grid-template-columns: repeat(3, 1fr); } }
+.plan-option { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--line); background: var(--surface-card); padding: 10px 2px; cursor: pointer; }
 .plan-option-label { font-size: 13px; font-weight: 600; color: var(--ink); }
 .plan-option-price { font-size: 11px; color: var(--muted); }
 .plan-option.active { border-color: var(--accent); background: var(--accent-weak); }
