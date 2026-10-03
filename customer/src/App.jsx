@@ -176,7 +176,7 @@ function CustomerWhatsApp({ tenantId }) {
   }
 
   if (notFound) {
-    return <div className="narrow card" style={{ marginTop: 60, color: "#C22A1E" }}>We couldn't find that business. Check the link and try again.</div>;
+    return <div className="narrow card" style={{ marginTop: 60, color: "var(--error)" }}>We couldn't find that business. Check the link and try again.</div>;
   }
 
   return (
@@ -184,7 +184,7 @@ function CustomerWhatsApp({ tenantId }) {
       <div className="header row" style={{ justifyContent: "space-between" }}>
         <strong>{businessName || "QBooker"}</strong>
       </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+      {error && <div className="container"><div className="card" style={{ borderColor: "var(--error)", color: "var(--error)" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
       <div className="narrow stack">
         <div className="card stack" style={{ minHeight: 300 }}>
           {messages.map((m, i) => <div key={i} style={{ textAlign: m.from === "user" ? "right" : "left", whiteSpace: "pre-line" }}>{m.text}</div>)}
