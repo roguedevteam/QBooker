@@ -13,7 +13,9 @@
   --accent-weak:#FBEEDD;
   --error:#B3261E;
   --error-weak:#FBE9E7;
-  --brand:#0B4F4D;
+  --brand:#1D5C8A;
+  --blue:#1D5C8A;
+  --navy:#122B40;
 }
 * { box-sizing: border-box; }
 body {
