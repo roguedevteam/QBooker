@@ -648,63 +648,77 @@ function Signup({ onDone, setError, onBackToLanding }) {
         )}
 
         {step === 2 && (
-          <div className="stack">
-            <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Choose your access period</div>
-              <div className="muted" style={{ fontSize: 12 }}>
-                You're not choosing a start date — access begins automatically the moment you set opening hours for
-                your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
-              </div>
-            </div>
-            <div className="wrap">
-              {PLAN_META.map((p) => (
-                <button key={p.id} className={planId === p.id ? "btn" : "btn-outline"} onClick={() => setPlanId(p.id)}>{p.label}</button>
-              ))}
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>{selectedPlan?.desc}</div>
-            {planId === "custom" && (
-              <div className="row"><span className="muted">Days:</span><input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} /></div>
-            )}
-
-            <div style={{ borderTop: "1px solid var(--line)", margin: "12px 0" }} />
-
-            <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Add your locations</div>
-              <div className="muted" style={{ fontSize: 12 }}>
-                Name each location now — each name must be unique. Once you're in, you'll just need to add services,
-                set working hours, and pick the dates you're open.
-              </div>
-            </div>
-            <div className="stack">
-              {locationNames.map((name, i) => (
-                <div key={i} className="row" style={{ gap: 6 }}>
-                  <input
-                    className="input"
-                    aria-label={`Location ${i + 1} name`}
-                    placeholder={`Location ${i + 1} name`}
-                    value={name}
-                    onChange={(e) => updateLocationName(i, e.target.value)}
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    className="btn-outline"
-                    onClick={() => removeLocation(i)}
-                    disabled={locationNames.length <= 1}
-                    title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
-                  >
-                    Remove
-                  </button>
+          <div className="stack" style={{ gap: 20 }}>
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="stack" style={{ gap: 2 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Choose your access period</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  You're not choosing a start date — access begins automatically the moment you set opening hours for
+                  your first service, whenever you're actually ready. Nothing is wasted while you're still setting up.
                 </div>
-              ))}
-            </div>
-            <div>
-              <button className="btn-outline" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add location</button>
-            </div>
-            {hasDuplicateNames && (
-              <div style={{ fontSize: 12, color: "var(--error)", fontWeight: 500 }}>
-                Each location needs its own name — two locations currently share the same name.
               </div>
-            )}
+              <div className="plan-grid">
+                {PLAN_META.map((p) => {
+                  const onSale = p.id !== "custom" && pricing.sale?.active && pricing.sale[p.id] != null;
+                  const price = p.id === "custom" ? null : (onSale ? pricing.sale[p.id] : pricing[p.id]);
+                  return (
+                    <button key={p.id} type="button" className={planId === p.id ? "plan-option active" : "plan-option"} onClick={() => setPlanId(p.id)}>
+                      <span className="plan-option-label">{p.label}</span>
+                      {price != null && <span className="plan-option-price">£{price}</span>}
+                      {p.id === "custom" && <span className="plan-option-price">from £{pricing.customDailyRate}/day</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>{selectedPlan?.desc}</div>
+              {planId === "custom" && (
+                <Field label="Number of days">
+                  <input className="input" type="number" min={1} value={customDays} onChange={(e) => setCustomDays(Number(e.target.value))} style={{ maxWidth: 120 }} />
+                </Field>
+              )}
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--line)" }} />
+
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="stack" style={{ gap: 2 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Add your locations</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Name each location now — each name must be unique. Once you're in, you'll just need to add services,
+                  set working hours, and pick the dates you're open.
+                </div>
+              </div>
+              <div className="stack" style={{ gap: 8 }}>
+                {locationNames.map((name, i) => (
+                  <div key={i} className="loc-row">
+                    <span className="loc-index">{i + 1}</span>
+                    <input
+                      className="input"
+                      aria-label={`Location ${i + 1} name`}
+                      placeholder={`Location ${i + 1} name`}
+                      value={name}
+                      onChange={(e) => updateLocationName(i, e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="loc-remove"
+                      onClick={() => removeLocation(i)}
+                      disabled={locationNames.length <= 1}
+                      aria-label={`Remove location ${i + 1}`}
+                      title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="loc-add" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add another location</button>
+              </div>
+              {hasDuplicateNames && (
+                <div style={{ fontSize: 12, color: "var(--error)", fontWeight: 500 }}>
+                  Each location needs its own name — two locations currently share the same name.
+                </div>
+              )}
+            </div>
 
             <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
               <span className="muted" style={{ fontSize: 12 }}>£{perLocation} × {locationCount} location{locationCount === 1 ? "" : "s"}</span>

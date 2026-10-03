@@ -93,3 +93,22 @@ tbody tr { border-top: 1px solid var(--line); }
 .navbtn { background: transparent; border: none; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; padding: 10px 16px; border-bottom: 2px solid transparent; }
 .navbtn.active { color: var(--ink); border-bottom-color: var(--blue); }
 .wide { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
+
+/* Signup step 2 — plan grid and location rows */
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; }
+.plan-option { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--line); background: var(--surface-card); padding: 12px 8px; cursor: pointer; }
+.plan-option-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+.plan-option-price { font-size: 11px; color: var(--muted); }
+.plan-option.active { border-color: var(--accent); background: var(--accent-weak); }
+.plan-option.active .plan-option-label, .plan-option.active .plan-option-price { color: var(--accent); }
+
+.loc-row { display: flex; align-items: stretch; border: 1px solid var(--line); background: var(--surface-card); }
+.loc-index { flex-shrink: 0; width: 32px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-page); border-right: 1px solid var(--line); }
+.loc-row .input { flex: 1; border: none; }
+.loc-row .input:focus { outline: none; }
+.loc-remove { flex-shrink: 0; width: 38px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-left: 1px solid var(--line); color: var(--muted); font-size: 14px; cursor: pointer; }
+.loc-remove:hover:not(:disabled) { background: var(--error-weak); color: var(--error); }
+.loc-remove:disabled { opacity: 0.35; cursor: default; }
+.loc-add { border: 1px dashed var(--line); background: transparent; padding: 10px; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.loc-add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.loc-add:disabled { opacity: 0.5; cursor: default; }
