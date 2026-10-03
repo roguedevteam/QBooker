@@ -324,29 +324,31 @@ function AdminDashboard({ tenant, setError }) {
                     <code style={{ fontSize: 12, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
-                  <select
-                    className="btn-outline"
-                    defaultValue=""
-                    onChange={async (e) => {
-                      const action = e.target.value;
-                      e.target.value = "";
-                      if (action === "addService") {
-                        setAddingServiceFor(loc.id);
-                        setOpenLocationId(loc.id);
-                      } else if (action === "website") {
-                        setOpenLocationId(loc.id);
-                        setEditingWebsiteFor(loc.id);
-                      } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
-                        await api.deleteLocation(loc.id);
-                        refreshCore();
-                      }
-                    }}
-                  >
-                    <option value="" disabled>⋯</option>
-                    <option value="addService">Add service</option>
-                    <option value="website">Edit website</option>
-                    <option value="remove">Remove location</option>
-                  </select>
+                  {isOpen && (
+                    <select
+                      className="btn-outline"
+                      defaultValue=""
+                      onChange={async (e) => {
+                        const action = e.target.value;
+                        e.target.value = "";
+                        if (action === "addService") {
+                          setAddingServiceFor(loc.id);
+                          setOpenLocationId(loc.id);
+                        } else if (action === "website") {
+                          setOpenLocationId(loc.id);
+                          setEditingWebsiteFor(loc.id);
+                        } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
+                          await api.deleteLocation(loc.id);
+                          refreshCore();
+                        }
+                      }}
+                    >
+                      <option value="" disabled>⋯</option>
+                      <option value="addService">Add service</option>
+                      <option value="website">Edit website</option>
+                      <option value="remove">Remove location</option>
+                    </select>
+                  )}
                 </div>
 
                 {isOpen && (
