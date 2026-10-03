@@ -15,6 +15,19 @@ function formatTime(min) {
   return `${h}:${m.toString().padStart(2, "0")}${ampm}`;
 }
 
+// Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
+function Logo({ size = 24, dark = false }) {
+  return (
+    <span className="logo">
+      <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
+        <rect x="2" y="2" width="40" height="40" fill="var(--blue)" />
+        <circle cx="42" cy="22" r="7" fill="var(--accent)" />
+      </svg>
+      <span className={dark ? "logo-word logo-word-light" : "logo-word"}>QBooker</span>
+    </span>
+  );
+}
+
 export default function App() {
   const [tenant, setTenant] = useState(null);
   const [locationId, setLocationId] = useState(null);
@@ -43,7 +56,10 @@ export default function App() {
   return (
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
-        <strong>{tenant ? `${tenant.business_name} — Staff Kiosk` : "QBooker Staff Kiosk"}</strong>
+        <div className="row" style={{ gap: 10 }}>
+          <Logo dark />
+          {tenant && <span style={{ fontSize: 13, opacity: 0.85 }}>— {tenant.business_name} Staff Kiosk</span>}
+        </div>
         {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
       </div>
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}

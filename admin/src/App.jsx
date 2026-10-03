@@ -4,6 +4,19 @@ import { api, setToken, hasToken } from "./lib/api.js";
 
 const PLAN_LABELS = { day: "Day", week: "Week", month: "Month", year: "Year", custom: "Custom" };
 
+// Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
+function Logo({ size = 28, dark = false }) {
+  return (
+    <span className="logo">
+      <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
+        <rect x="2" y="2" width="40" height="40" fill="var(--blue)" />
+        <circle cx="42" cy="22" r="7" fill="var(--accent)" />
+      </svg>
+      <span className={dark ? "logo-word logo-word-light" : "logo-word"}>QBooker</span>
+    </span>
+  );
+}
+
 export default function App() {
   const [signedIn, setSignedIn] = useState(hasToken());
   const [error, setError] = useState("");
@@ -33,7 +46,8 @@ function Login({ onSignedIn, setError, error }) {
   return (
     <div className="narrow" style={{ paddingTop: 80 }}>
       <div className="card stack">
-        <h2>QBooker — System Admin</h2>
+        <div className="row" style={{ marginBottom: 4 }}><Logo /></div>
+        <h2 style={{ margin: 0 }}>System Admin</h2>
         <p className="muted" style={{ fontSize: 13 }}>Platform team only. Not linked from the customer-facing site.</p>
         <input
           className="input" type="password" placeholder="Password" value={password}
@@ -41,7 +55,7 @@ function Login({ onSignedIn, setError, error }) {
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
         <button className="btn" disabled={submitting} onClick={submit}>{submitting ? "Signing in…" : "Sign in"}</button>
-        {error && <div style={{ color: "#C22A1E", fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ color: "var(--error)", fontSize: 13 }}>{error}</div>}
       </div>
     </div>
   );
@@ -71,126 +85,131 @@ function Dashboard({ setError, error, onSignOut }) {
     : [];
 
   return (
-    <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <strong>QBooker System Admin</strong>
-        <button className="btn-outline" onClick={onSignOut}>Sign out</button>
-      </div>
-      {error && <div className="card" style={{ borderColor: "#C22A1E", color: "#C22A1E" }}>{error}</div>}
-      <div className="wrap">
-        {["dashboard", "customers", "pricing", "testing"].map((t) => (
-          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => setTab(t)}>{t}</button>
-        ))}
-      </div>
-
-      {tab === "dashboard" && overview && (
-        <div className="stack">
-          <div className="wrap">
-            <div className="card">£{overview.totalRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Revenue (active)</div></div>
-            <div className="card">£{overview.pendingRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Pending invoices</div></div>
-            <div className="card">{overview.customerCount}<div className="muted" style={{ fontSize: 11 }}>Customers</div></div>
-            <div className="card">{overview.totalLocations}<div className="muted" style={{ fontSize: 11 }}>Locations, all customers</div></div>
-          </div>
-          <div className="card">
-            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Revenue by plan type (active customers)</div>
-            <div className="chart-wrap">
-              <ResponsiveContainer>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#DCE4EA" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip />
-                  <Bar dataKey="Revenue" fill="#0F5FBF" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            {chartData.length === 0 && <div className="muted" style={{ textAlign: "center", padding: 20 }}>No active customers yet.</div>}
-          </div>
+    <div>
+      <div className="header row" style={{ justifyContent: "space-between" }}>
+        <Logo dark />
+        <div className="row">
+          <span style={{ fontSize: 13, opacity: 0.85 }}>System Admin</span>
+          <button className="btn-outline" style={{ background: "transparent", color: "#fff", borderColor: "rgba(255,255,255,0.4)" }} onClick={onSignOut}>Sign out</button>
         </div>
-      )}
-
-      {tab === "customers" && (
-        <div className="card">
-          <table>
-            <thead><tr><th>Business</th><th>Email</th><th>Plan</th><th>Locations</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody>
-              {tenants.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
-              {tenants.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <input className="input" style={{ width: 140 }} defaultValue={t.business_name}
-                      onBlur={async (e) => { if (e.target.value !== t.business_name) { await api.updateTenant(t.id, { businessName: e.target.value }); refresh(); } }} />
-                  </td>
-                  <td>
-                    <input className="input" style={{ width: 160 }} defaultValue={t.email}
-                      onBlur={async (e) => { if (e.target.value !== t.email) { await api.updateTenant(t.id, { email: e.target.value }); refresh(); } }} />
-                  </td>
-                  <td>{t.plan_label}</td>
-                  <td>
-                    <input className="input" type="number" style={{ width: 60 }} defaultValue={t.location_count}
-                      onBlur={async (e) => { if (Number(e.target.value) !== t.location_count) { await api.updateTenant(t.id, { locationCount: Number(e.target.value) }); refresh(); } }} />
-                  </td>
-                  <td>£{t.price}</td>
-                  <td><span className={`badge badge-${t.status === "active" ? "green" : "amber"}`}>{t.status}</span></td>
-                  <td className="row">
-                    {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
-                    <button className="btn-outline" onClick={async () => { if (confirm(`Delete ${t.business_name}? This can't be undone.`)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      </div>
+      <div className="container stack">
+        {error && <div className="card" style={{ borderColor: "var(--error)", color: "var(--error)" }}>{error}</div>}
+        <div className="wrap">
+          {["dashboard", "customers", "pricing", "testing"].map((t) => (
+            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => setTab(t)}>{t}</button>
+          ))}
         </div>
-      )}
 
-      {tab === "pricing" && (
-        <div className="stack">
-          <div className="card wrap">
-            {["day", "week", "month", "year"].map((k) => (
-              <label key={k} className="stack" style={{ gap: 4 }}>
-                <span className="muted">{PLAN_LABELS[k]} (per location)</span>
-                <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
-                  onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
-              </label>
-            ))}
-            <label className="stack" style={{ gap: 4 }}>
-              <span className="muted">Custom (per location/day)</span>
-              <input className="input" style={{ width: 100 }} type="number" value={pricing.customDailyRate}
-                onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
-            </label>
-            <button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button>
-            <div className="muted" style={{ fontSize: 11, width: "100%" }}>Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
-          </div>
-
-          <div className="card stack">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Sale</div>
-              <label className="row" style={{ gap: 6 }}>
-                <input type="checkbox" checked={pricing.sale?.active || false}
-                  onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, active: e.target.checked } }))} />
-                <span className="muted" style={{ fontSize: 12 }}>Sale active</span>
-              </label>
-            </div>
-            <div className="muted" style={{ fontSize: 11 }}>
-              Manual only — no scheduling or automatic expiry. Leave a plan's discount price blank to leave it at full price.
-              Shown on the marketing page (and charged) whenever "Sale active" is on.
-            </div>
+        {tab === "dashboard" && overview && (
+          <div className="stack">
             <div className="wrap">
+              <div className="card">£{overview.totalRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Revenue (active)</div></div>
+              <div className="card">£{overview.pendingRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Pending invoices</div></div>
+              <div className="card">{overview.customerCount}<div className="muted" style={{ fontSize: 11 }}>Customers</div></div>
+              <div className="card">{overview.totalLocations}<div className="muted" style={{ fontSize: 11 }}>Locations, all customers</div></div>
+            </div>
+            <div className="card">
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Revenue by plan type (active customers)</div>
+              <div className="chart-wrap">
+                <ResponsiveContainer>
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#DEDDD6" />
+                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="Revenue" fill="#1D5C8A" radius={[0, 0, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              {chartData.length === 0 && <div className="muted" style={{ textAlign: "center", padding: 20 }}>No active customers yet.</div>}
+            </div>
+          </div>
+        )}
+
+        {tab === "customers" && (
+          <div className="card">
+            <table>
+              <thead><tr><th>Business</th><th>Email</th><th>Plan</th><th>Locations</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                {tenants.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
+                {tenants.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <input className="input" style={{ width: 140 }} defaultValue={t.business_name}
+                        onBlur={async (e) => { if (e.target.value !== t.business_name) { await api.updateTenant(t.id, { businessName: e.target.value }); refresh(); } }} />
+                    </td>
+                    <td>
+                      <input className="input" style={{ width: 160 }} defaultValue={t.email}
+                        onBlur={async (e) => { if (e.target.value !== t.email) { await api.updateTenant(t.id, { email: e.target.value }); refresh(); } }} />
+                    </td>
+                    <td>{t.plan_label}</td>
+                    <td>
+                      <input className="input" type="number" style={{ width: 60 }} defaultValue={t.location_count}
+                        onBlur={async (e) => { if (Number(e.target.value) !== t.location_count) { await api.updateTenant(t.id, { locationCount: Number(e.target.value) }); refresh(); } }} />
+                    </td>
+                    <td>£{t.price}</td>
+                    <td><span className={`badge badge-${t.status === "active" ? "green" : "amber"}`}>{t.status}</span></td>
+                    <td className="row">
+                      {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
+                      <button className="btn-outline" onClick={async () => { if (confirm(`Delete ${t.business_name}? This can't be undone.`)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "pricing" && (
+          <div className="stack">
+            <div className="card wrap">
               {["day", "week", "month", "year"].map((k) => (
                 <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="muted">{PLAN_LABELS[k]} sale price</span>
-                  <input className="input" style={{ width: 100 }} type="number" placeholder="—"
-                    value={pricing.sale?.[k] ?? ""}
-                    onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, [k]: e.target.value === "" ? null : Number(e.target.value) } }))} />
+                  <span className="muted">{PLAN_LABELS[k]} (per location)</span>
+                  <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
+                    onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
                 </label>
               ))}
+              <label className="stack" style={{ gap: 4 }}>
+                <span className="muted">Custom (per location/day)</span>
+                <input className="input" style={{ width: 100 }} type="number" value={pricing.customDailyRate}
+                  onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
+              </label>
+              <button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button>
+              <div className="muted" style={{ fontSize: 11, width: "100%" }}>Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
             </div>
-            <div><button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save sale</button></div>
-          </div>
-        </div>
-      )}
 
-      {tab === "testing" && <ClockPanel setError={setError} />}
+            <div className="card stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>Sale</div>
+                <label className="row" style={{ gap: 6 }}>
+                  <input type="checkbox" checked={pricing.sale?.active || false}
+                    onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, active: e.target.checked } }))} />
+                  <span className="muted" style={{ fontSize: 12 }}>Sale active</span>
+                </label>
+              </div>
+              <div className="muted" style={{ fontSize: 11 }}>
+                Manual only — no scheduling or automatic expiry. Leave a plan's discount price blank to leave it at full price.
+                Shown on the marketing page (and charged) whenever "Sale active" is on.
+              </div>
+              <div className="wrap">
+                {["day", "week", "month", "year"].map((k) => (
+                  <label key={k} className="stack" style={{ gap: 4 }}>
+                    <span className="muted">{PLAN_LABELS[k]} sale price</span>
+                    <input className="input" style={{ width: 100 }} type="number" placeholder="—"
+                      value={pricing.sale?.[k] ?? ""}
+                      onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, [k]: e.target.value === "" ? null : Number(e.target.value) } }))} />
+                  </label>
+                ))}
+              </div>
+              <div><button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save sale</button></div>
+            </div>
+          </div>
+        )}
+
+        {tab === "testing" && <ClockPanel setError={setError} />}
+      </div>
     </div>
   );
 }

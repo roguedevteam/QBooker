@@ -54,3 +54,8 @@ tbody tr { border-top: 1px solid var(--line); }
 .header { background: var(--brand); color: var(--surface-card); padding: 16px 24px; }
 .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .narrow { max-width: 460px; margin: 0 auto; padding: 20px; }
+
+/* Logo mark — shared with the other QBooker apps */
+.logo { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.logo-word { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.logo-word-light { color: var(--surface-page); }

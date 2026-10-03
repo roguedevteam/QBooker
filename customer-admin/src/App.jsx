@@ -64,6 +64,19 @@ const GRID_HOURS = [];
 for (let h = 7 * 60; h < 20 * 60; h += 30) GRID_HOURS.push(h);
 const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 
+// Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
+function Logo({ size = 24, dark = false }) {
+  return (
+    <span className="logo">
+      <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
+        <rect x="2" y="2" width="40" height="40" fill="var(--blue)" />
+        <circle cx="42" cy="22" r="7" fill="var(--accent)" />
+      </svg>
+      <span className={dark ? "logo-word logo-word-light" : "logo-word"}>QBooker</span>
+    </span>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState("admin-login");
   const [tenant, setTenant] = useState(null);
@@ -92,7 +105,10 @@ export default function App() {
   return (
     <div>
       <div className="header row" style={{ justifyContent: "space-between" }}>
-        <strong>{tenant ? tenant.business_name : "QBooker Admin"}</strong>
+        <div className="row" style={{ gap: 10 }}>
+          <Logo dark />
+          {tenant && <span style={{ fontSize: 13, opacity: 0.85 }}>— {tenant.business_name}</span>}
+        </div>
         <div className="row">
           {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
           {tenant && <span style={{ fontSize: 12, opacity: 0.85 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
