@@ -176,7 +176,10 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-function LocationWebsiteField({ loc, setError, onChanged }) {
+// Staff sign-in code + website, collapsed to one line with an "Edit" toggle —
+// only rendered while the location is expanded, so a closed location shows nothing extra.
+function LocationDetailsLine({ loc, setError, onChanged }) {
+  const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState(loc.website_url || "");
   const [saved, setSaved] = useState(false);
 
@@ -185,16 +188,30 @@ function LocationWebsiteField({ loc, setError, onChanged }) {
       await api.updateLocation(loc.id, { websiteUrl: url.trim() || null });
       setSaved(true);
       onChanged();
+      setEditing(false);
       setTimeout(() => setSaved(false), 1500);
     } catch (err) { setError(err.message); }
   }
 
+  if (editing) {
+    return (
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
+        <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <button className="btn-outline" onClick={save}>Save</button>
+        <button className="btn-outline" onClick={() => { setUrl(loc.website_url || ""); setEditing(false); }}>Cancel</button>
+        {saved && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
+      </div>
+    );
+  }
+
   return (
     <div className="row" style={{ flexWrap: "wrap" }}>
-      <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
-      <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
-      <button className="btn-outline" onClick={save}>Save</button>
-      {saved && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
+      <span className="muted" style={{ fontSize: 12 }}>
+        Code {loc.staff_access_code || "—"}
+        {loc.website_url ? ` · ${loc.website_url}` : ""}
+      </span>
+      <button className="btn-outline" onClick={() => setEditing(true)}>Edit</button>
     </div>
   );
 }
@@ -203,11 +220,11 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
-  const [expandedLocations, setExpandedLocations] = useState({});
+  const [openLocationId, setOpenLocationId] = useState(null); // accordion — only one location open at a time
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
-  const [serviceFilter, setServiceFilter] = useState("active"); // active | archived | all
+  const [showArchived, setShowArchived] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
@@ -222,7 +239,8 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       setLocations(locRes.locations); setServices(svcRes.services);
     } catch (err) { setError(err.message); }
   }
-  const visibleServices = services.filter((s) => serviceFilter === "all" ? true : serviceFilter === "archived" ? s.archived : !s.archived);
+  const visibleServices = services.filter((s) => showArchived ? true : !s.archived);
+  const archivedCount = services.filter((s) => s.archived).length;
   async function refreshQueue() {
     try {
       const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
@@ -245,7 +263,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
     <div className="container stack">
       <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="wrap">
-        {["dashboard", "locations", "audit"].map((t) => (
+        {["dashboard", "locations", "setup", "audit"].map((t) => (
           <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
         ))}
       </div>
@@ -253,30 +271,19 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
       {tab === "locations" && (
         <div className="stack">
           <PendingPaymentBanner tenant={tenant} />
-          <div className="card stack" style={{ background: "#FBEEDD" }}>
-            <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Each location below has its own sign-in code — share that location's code with the staff working there.
-            </div>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13 }}>Customer link:</span>
-              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
-              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
-          </div>
 
           <div className="card stack">
             <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
-              <div className="row">
-                <span className="muted" style={{ fontSize: 12 }}>Services:</span>
-                <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)}>
-                  <option value="active">Active</option>
-                  <option value="archived">Archived</option>
-                  <option value="all">All</option>
-                </select>
-              </div>
+              {archivedCount > 0 && (
+                <button
+                  className="btn-outline"
+                  style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
+                  onClick={() => setShowArchived((v) => !v)}
+                >
+                  {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+                </button>
+              )}
             </div>
             <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
             {!addingLocation && <div><button className="btn-outline" onClick={() => setAddingLocation(true)}>+ Add location</button></div>}
@@ -291,13 +298,13 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
           {locations.map((loc) => {
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
-            const isOpen = !!expandedLocations[loc.id];
+            const isOpen = openLocationId === loc.id;
             const addingHere = addingServiceFor === loc.id;
             return (
               <div key={loc.id} className="card stack">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div className="row">
-                    <button className="btn-outline" onClick={() => setExpandedLocations((prev) => ({ ...prev, [loc.id]: !prev[loc.id] }))}>
+                    <button className="btn-outline" onClick={() => setOpenLocationId((prev) => (prev === loc.id ? null : loc.id))}>
                       {isOpen ? "▾" : "▸"}
                     </button>
                     <input
@@ -308,26 +315,26 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="row">
-                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setExpandedLocations((prev) => ({ ...prev, [loc.id]: true })); }}>Add service</button>
-                    <button
+                    <button className="btn" onClick={() => { setAddingServiceFor(loc.id); setOpenLocationId(loc.id); }}>Add service</button>
+                    <select
                       className="btn-outline"
-                      onClick={async () => {
-                        if (confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
+                      defaultValue=""
+                      onChange={async (e) => {
+                        const action = e.target.value;
+                        e.target.value = "";
+                        if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
                           await api.deleteLocation(loc.id);
                           refreshCore();
                         }
                       }}
                     >
-                      Remove location
-                    </button>
+                      <option value="" disabled>⋯</option>
+                      <option value="remove">Remove location</option>
+                    </select>
                   </div>
                 </div>
 
-                <div className="row">
-                  <span className="muted" style={{ fontSize: 12 }}>Staff sign-in code:</span>
-                  <code style={{ fontSize: 13, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
-                </div>
-                <LocationWebsiteField loc={loc} setError={setError} onChanged={refreshCore} />
+                {isOpen && <LocationDetailsLine loc={loc} setError={setError} onChanged={refreshCore} />}
 
                 {addingHere && (
                   <ServiceWizard
@@ -342,13 +349,30 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
                 {isOpen && (
                   <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
-                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No {serviceFilter === "active" ? "" : serviceFilter + " "}services here{serviceFilter === "active" ? " yet — click \"Add service\" above" : ""}.</div>}
+                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
                     {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} tenant={tenant} />)}
                   </div>
                 )}
               </div>
             );
           })}
+        </div>
+      )}
+
+      {tab === "setup" && (
+        <div className="stack">
+          <div className="card stack" style={{ background: "#FBEEDD" }}>
+            <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Each location has its own sign-in code (open it in the Locations tab) — share that location's code with the staff working there.
+            </div>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>Customer link:</span>
+              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
+              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
+          </div>
         </div>
       )}
 
@@ -500,10 +524,20 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
           {service.archived && <span className="badge badge-amber">Archived</span>}
         </div>
         <div className="row">
-          <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { archived: !service.archived }); onChange(); }}>
-            {service.archived ? "Unarchive" : "Archive"}
-          </button>
-          <button className="btn-outline" onClick={async () => { if (confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); } }}>Delete</button>
+          <select
+            className="btn-outline"
+            defaultValue=""
+            onChange={async (e) => {
+              const action = e.target.value;
+              e.target.value = "";
+              if (action === "archive") { await api.updateService(service.id, { archived: !service.archived }); onChange(); }
+              else if (action === "delete" && confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); }
+            }}
+          >
+            <option value="" disabled>⋯</option>
+            <option value="archive">{service.archived ? "Unarchive" : "Archive"}</option>
+            <option value="delete">Delete</option>
+          </select>
           <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
             {expanded ? "▾" : "▸"}
           </button>
