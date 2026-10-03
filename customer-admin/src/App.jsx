@@ -565,6 +565,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const [expanded, setExpanded] = useState(false);
   const [buyTrigger, setBuyTrigger] = useState(0);
   const [licenses, setLicenses] = useState([]);
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
 
   async function loadLicenses() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
@@ -622,10 +623,10 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
         <div className="stack">
           <ServiceLicensesPanel
             service={service} allServices={allServices || []} setError={setError}
-            onChanged={() => { loadLicenses(); onChange(); }}
+            onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
             tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false}
           />
-          <ServiceCalendar service={service} setError={setError} />
+          <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} />
         </div>
       )}
     </div>
@@ -811,7 +812,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 }
 
 // Shared by ServiceEditor (post-setup editing) and ServiceWizard (step 2, right after creation).
-function ServiceCalendar({ service, setError }) {
+function ServiceCalendar({ service, setError, refreshToken }) {
   // No day is selected until the admin picks one on the calendar — picking is only
   // possible for a day actually covered by a license (see the calendar button's
   // `inWindow` guard below), so the hours panel never opens onto an uncovered day.
@@ -853,12 +854,22 @@ function ServiceCalendar({ service, setError }) {
     } catch (err) { setError(err.message); }
   }
   useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A license action elsewhere (unschedule, move, refund, buy, change dates) can change
+  // which days this service is actually licensed for — re-fetch this month's windows so
+  // the calendar doesn't keep showing a day as selected/editable that's no longer covered.
+  useEffect(() => { if (refreshToken) loadMonth(calendarMonth); }, [refreshToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function isWithinAnyWindow(d) {
     return windows.some((w) => d >= w.start && d <= w.end);
   }
   const overallStart = windows.length ? windows.map((w) => w.start).sort()[0] : null;
   const overallEnd = windows.length ? windows.map((w) => w.end).sort().slice(-1)[0] : null;
+
+  // If the selected day fell outside a window that just changed (e.g. it was
+  // unscheduled), drop the selection rather than leave a now-invalid day "active".
+  useEffect(() => {
+    if (selectedDate && !isWithinAnyWindow(selectedDate)) setSelectedDate(null);
+  }, [windows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedDate) return;
