@@ -264,13 +264,10 @@ function AdminDashboard({ tenant, setError }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="wrap">
-          {["dashboard", "locations", "setup", "audit"].map((t) => (
-            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
-          ))}
-        </div>
-        {tab === "locations" && !addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
+      <div className="wrap">
+        {["dashboard", "locations", "setup", "audit"].map((t) => (
+          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+        ))}
       </div>
 
       {tab === "locations" && (
@@ -280,15 +277,18 @@ function AdminDashboard({ tenant, setError }) {
           <div className="card stack">
             <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
-              {archivedCount > 0 && (
-                <button
-                  className="btn-outline"
-                  style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
-                  onClick={() => setShowArchived((v) => !v)}
-                >
-                  {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
-                </button>
-              )}
+              <div className="row">
+                {archivedCount > 0 && (
+                  <button
+                    className="btn-outline"
+                    style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
+                    onClick={() => setShowArchived((v) => !v)}
+                  >
+                    {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+                  </button>
+                )}
+                {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
+              </div>
             </div>
             <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
             {addingLocation && (
@@ -364,6 +364,7 @@ function AdminDashboard({ tenant, setError }) {
                     allServices={services}
                     setError={setError}
                     onCancel={() => setAddingServiceFor(null)}
+                    onAdded={refreshCore}
                     onDone={() => { setAddingServiceFor(null); refreshCore(); }}
                     tenant={tenant}
                   />
@@ -615,10 +616,6 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
           <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
         </div>
       )}
-      {service.mode === "queue" && !hasActiveLicense && (
-        <div className="muted" style={{ fontSize: 12 }}>Pause/resume will be available once this service has an active license.</div>
-      )}
-
       {expanded && (
         <div className="stack">
           <ServiceLicensesPanel
@@ -1153,7 +1150,7 @@ const SERVICE_MODE_INFO = [
   { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
 ];
 
-function ServiceWizard({ locationId, allServices, onDone, onCancel, setError, tenant }) {
+function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, setError, tenant }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("hybrid");
@@ -1162,6 +1159,15 @@ function ServiceWizard({ locationId, allServices, onDone, onCancel, setError, te
   const [createdService, setCreatedService] = useState(null);
 
   const needsSlotLength = mode === "appointment" || mode === "hybrid";
+
+  function addAnother() {
+    onAdded?.();
+    setStep(1);
+    setName("");
+    setMode("hybrid");
+    setSlotMinutes(15);
+    setCreatedService(null);
+  }
 
   async function next() {
     setCreating(true);
@@ -1230,6 +1236,7 @@ function ServiceWizard({ locationId, allServices, onDone, onCancel, setError, te
       </div>
       <ServiceCalendar service={createdService} setError={setError} />
       <div className="row">
+        <button className="btn-outline" onClick={addAnother}>+ Add another service</button>
         <button className="btn" onClick={() => onDone(createdService)}>Done</button>
       </div>
     </div>
