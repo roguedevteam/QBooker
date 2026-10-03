@@ -176,10 +176,9 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-// Staff sign-in code + website, collapsed to one line with an "Edit" toggle —
-// only rendered while the location is expanded, so a closed location shows nothing extra.
-function LocationDetailsLine({ loc, setError, onChanged }) {
-  const [editing, setEditing] = useState(false);
+// The website (opening hours) field — editing is triggered from the location's "⋯" Actions
+// menu, not a button here. While not editing, shows the current value (if any) as plain text.
+function LocationWebsiteLine({ loc, setError, onChanged, editing, onDoneEditing }) {
   const [url, setUrl] = useState(loc.website_url || "");
   const [saved, setSaved] = useState(false);
 
@@ -188,7 +187,7 @@ function LocationDetailsLine({ loc, setError, onChanged }) {
       await api.updateLocation(loc.id, { websiteUrl: url.trim() || null });
       setSaved(true);
       onChanged();
-      setEditing(false);
+      onDoneEditing();
       setTimeout(() => setSaved(false), 1500);
     } catch (err) { setError(err.message); }
   }
@@ -197,23 +196,16 @@ function LocationDetailsLine({ loc, setError, onChanged }) {
     return (
       <div className="row" style={{ flexWrap: "wrap" }}>
         <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
-        <input className="input" style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input className="input" autoFocus style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
         <button className="btn-outline" onClick={save}>Save</button>
-        <button className="btn-outline" onClick={() => { setUrl(loc.website_url || ""); setEditing(false); }}>Cancel</button>
+        <button className="btn-outline" onClick={() => { setUrl(loc.website_url || ""); onDoneEditing(); }}>Cancel</button>
         {saved && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
       </div>
     );
   }
 
-  return (
-    <div className="row" style={{ flexWrap: "wrap" }}>
-      <span className="muted" style={{ fontSize: 12 }}>
-        Code {loc.staff_access_code || "—"}
-        {loc.website_url ? ` · ${loc.website_url}` : ""}
-      </span>
-      <button className="btn-outline" onClick={() => setEditing(true)}>Edit</button>
-    </div>
-  );
+  if (!loc.website_url) return null;
+  return <div className="muted" style={{ fontSize: 12 }}>Website: {loc.website_url}</div>;
 }
 
 function AdminDashboard({ tenant, setError, onSignOut }) {
@@ -221,6 +213,7 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [openLocationId, setOpenLocationId] = useState(null); // accordion — only one location open at a time
+  const [editingWebsiteFor, setEditingWebsiteFor] = useState(null);
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -298,20 +291,26 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
 
           {locations.map((loc) => {
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
-            const isOpen = openLocationId === loc.id;
+            const soleLocation = locations.length === 1;
+            const isOpen = soleLocation || openLocationId === loc.id;
             const addingHere = addingServiceFor === loc.id;
             return (
               <div key={loc.id} className="card stack">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div className="row">
-                    <button className="btn-outline" onClick={() => setOpenLocationId((prev) => (prev === loc.id ? null : loc.id))}>
-                      {isOpen ? "▾" : "▸"}
-                    </button>
+                    {soleLocation ? (
+                      <span className="muted" style={{ fontSize: 14, width: 20, textAlign: "center" }}>▾</span>
+                    ) : (
+                      <button className="btn-outline" onClick={() => setOpenLocationId((prev) => (prev === loc.id ? null : loc.id))}>
+                        {isOpen ? "▾" : "▸"}
+                      </button>
+                    )}
                     <input
                       className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
                       onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
                       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
                     />
+                    <code style={{ fontSize: 12, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="row">
@@ -322,19 +321,31 @@ function AdminDashboard({ tenant, setError, onSignOut }) {
                       onChange={async (e) => {
                         const action = e.target.value;
                         e.target.value = "";
-                        if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
+                        if (action === "website") {
+                          setOpenLocationId(loc.id);
+                          setEditingWebsiteFor(loc.id);
+                        } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
                           await api.deleteLocation(loc.id);
                           refreshCore();
                         }
                       }}
                     >
                       <option value="" disabled>⋯</option>
+                      <option value="website">Edit website</option>
                       <option value="remove">Remove location</option>
                     </select>
                   </div>
                 </div>
 
-                {isOpen && <LocationDetailsLine loc={loc} setError={setError} onChanged={refreshCore} />}
+                {isOpen && (
+                  <LocationWebsiteLine
+                    loc={loc}
+                    setError={setError}
+                    onChanged={refreshCore}
+                    editing={editingWebsiteFor === loc.id}
+                    onDoneEditing={() => setEditingWebsiteFor(null)}
+                  />
+                )}
 
                 {addingHere && (
                   <ServiceWizard
