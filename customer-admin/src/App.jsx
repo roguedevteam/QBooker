@@ -757,15 +757,13 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>
                 <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
-                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{lic.start_date} to {lic.end_date}</span>}
               </div>
               <div className="row" style={{ flexWrap: "wrap" }}>
-                {(lic.status === "available" || lic.status === "scheduled") && schedulingId !== lic.id && (
+                {lic.status === "available" && schedulingId !== lic.id && (
                   <button className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
-                    {lic.status === "available" ? "Assign dates" : "Change dates"}
+                    Assign dates
                   </button>
                 )}
-                {lic.status === "scheduled" && <button className="btn-outline" onClick={() => unschedule(lic)}>Unschedule</button>}
                 {movingId === lic.id ? (
                   <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
                     <option value="" disabled>Move to…</option>
@@ -781,10 +779,14 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                       if (action === "refund") refund(lic);
                       else if (action === "print") printReceipt(lic);
                       else if (action === "move") setMovingId(lic.id);
+                      else if (action === "changeDates") { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }
+                      else if (action === "unschedule") unschedule(lic);
                     }}
                   >
                     <option value="" disabled>Actions</option>
                     {lic.status === "available" && <option value="refund">Refund</option>}
+                    {lic.status === "scheduled" && <option value="changeDates">Change dates</option>}
+                    {lic.status === "scheduled" && <option value="unschedule">Unschedule</option>}
                     <option value="print">Print Receipt</option>
                     {lic.status === "available" && otherServices.length > 0 && <option value="move">Move License</option>}
                   </select>
