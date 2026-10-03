@@ -12,6 +12,12 @@ const PLAN_META = [
   { id: "custom", label: "Custom", days: null, desc: "Choose exactly how many days you need." },
 ];
 
+const SERVICE_MODE_META = [
+  { id: "queue", label: "Queue — walk-ins only" },
+  { id: "appointment", label: "Appointments — booked slots only" },
+  { id: "hybrid", label: "Hybrid — walk-ins and bookings" },
+];
+
 function servicePlanPrice(svc, pricing) {
   if (svc.planId === "custom") return (Number(svc.customDays) || 1) * pricing.customDailyRate;
   const onSale = pricing.sale?.active && pricing.sale[svc.planId] != null;
@@ -540,7 +546,21 @@ function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, re
           </select>
         </Field>
       </div>
-      <div className="muted" style={{ fontSize: 11 }}>Set up as a hybrid service (walk-ins and bookings) with 15-minute slots by default.</div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Field label="How does this work?">
+          <select className="input" value={svc.mode} onChange={(e) => onChange({ ...svc, mode: e.target.value })}>
+            {SERVICE_MODE_META.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </Field>
+        {svc.mode !== "queue" && (
+          <Field label="Slot length">
+            <select className="input" value={svc.slotMinutes} onChange={(e) => onChange({ ...svc, slotMinutes: Number(e.target.value) })}>
+              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </Field>
+        )}
+      </div>
+      <div className="muted" style={{ fontSize: 11 }}>Can't be changed after signup — delete and recreate the service in your admin dashboard if you need to change it later.</div>
 
       <div style={{ borderTop: "1px solid var(--line)" }} />
 

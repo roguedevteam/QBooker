@@ -533,9 +533,45 @@ function ShopTab({ tenant, locations }) {
   );
 }
 
+const LICENSE_STATUS_META = {
+  available: { label: "Available", color: "amber" },
+  scheduled: { label: "Scheduled", color: "blue" },
+  active: { label: "Active", color: "green" },
+  expired: { label: "Expired", color: "red" },
+  refunded: { label: "Refunded", color: "red" },
+};
+
+// A compact, always-visible summary of a service's license health — shown in the
+// collapsed header row so you don't have to expand every service to check coverage.
+function licenseSummary(licenses) {
+  const visible = (licenses || []).filter((l) => l.status !== "refunded" && l.status !== "expired");
+  const active = visible.find((l) => l.status === "active");
+  const scheduledCount = visible.filter((l) => l.status === "scheduled").length;
+  const availableCount = visible.filter((l) => l.status === "available").length;
+  if (active) {
+    const daysLeft = Math.ceil((new Date(active.end_date) - new Date(todayIso())) / 86400000);
+    let text = `Active · ${daysLeft}d left`;
+    if (scheduledCount === 0 && availableCount === 0 && daysLeft <= 7) return { text, color: "amber" };
+    if (scheduledCount > 0) text += ` · ${scheduledCount} queued`;
+    else if (availableCount > 0) text += ` · ${availableCount} spare`;
+    return { text, color: "green" };
+  }
+  if (scheduledCount > 0) return { text: `${scheduledCount} scheduled`, color: "blue" };
+  if (availableCount > 0) return { text: `${availableCount} available`, color: "amber" };
+  return { text: "No license", color: "red" };
+}
+
 function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const [expanded, setExpanded] = useState(false);
   const [buyTrigger, setBuyTrigger] = useState(0);
+  const [licenses, setLicenses] = useState([]);
+
+  async function loadLicenses() {
+    try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { loadLicenses(); }, [service.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const summary = licenseSummary(licenses);
 
   return (
     <div className="card stack" style={service.archived ? { opacity: 0.6 } : undefined}>
@@ -545,6 +581,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
           <span className="badge badge-blue" style={{ textTransform: "capitalize" }}>{service.mode}</span>
           {service.mode !== "queue" && <span className="muted" style={{ fontSize: 12 }}>{service.slot_minutes} min slots</span>}
           {service.archived && <span className="badge badge-amber">Archived</span>}
+          <span className={`badge badge-${summary.color}`}>{summary.text}</span>
         </div>
         <div className="row">
           <button className="btn-outline" onClick={() => { setExpanded(true); setBuyTrigger((t) => t + 1); }}>Buy a license</button>
@@ -579,21 +616,17 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
 
       {expanded && (
         <div className="stack">
-          <ServiceLicensesPanel service={service} allServices={allServices || []} setError={setError} onChanged={onChange} tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false} />
+          <ServiceLicensesPanel
+            service={service} allServices={allServices || []} setError={setError}
+            onChanged={() => { loadLicenses(); onChange(); }}
+            tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false}
+          />
           <ServiceCalendar service={service} setError={setError} />
         </div>
       )}
     </div>
   );
 }
-
-const LICENSE_STATUS_META = {
-  available: { label: "Available", color: "amber" },
-  scheduled: { label: "Scheduled", color: "blue" },
-  active: { label: "Active", color: "green" },
-  expired: { label: "Expired", color: "red" },
-  refunded: { label: "Refunded", color: "red" },
-};
 
 // A license is bought for, and permanently bound to, this specific service. Available
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
