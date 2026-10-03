@@ -1069,17 +1069,9 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                   {selectedDate}
                   {selectedIsPast && <span className="muted" style={{ fontWeight: 400 }}> (in the past)</span>}
                 </strong>
-                <div className="row">
-                  {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
-                  {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
-                  {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
-                  {!selectedIsPast && (
-                    <>
-                      <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                      <button className="btn-outline" onClick={clearDay}>Clear day</button>
-                    </>
-                  )}
-                </div>
+                {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
+                {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
+                {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
               </div>
               <div className="wrap" style={{ userSelect: "none" }}>
                 {GRID_HOURS.map((h) => {
@@ -1099,12 +1091,21 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                   );
                 })}
               </div>
-              <div className="row">
-                <span className="muted">Staff:</span>
+
+              {!selectedIsPast && (
+                <div className="row" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>This day:</span>
+                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
+                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
+                </div>
+              )}
+
+              <div className="row" style={{ gap: 6 }}>
+                <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Staff:</span>
                 <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
                 {service.mode === "hybrid" && (
                   <>
-                    <span className="muted">On bookings:</span>
+                    <span className="muted" style={{ fontSize: 12 }}>On bookings:</span>
                     <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
                   </>
                 )}
@@ -1116,16 +1117,18 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                   <div style={{ fontSize: 12, color: "#B3261E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
                 )
               )}
+
               {!selectedIsPast && (
-                <div className="wrap">
-                  <span className="muted" style={{ fontSize: 12 }}>Copy to:</span>
+                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Copy to:</span>
                   <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
                   <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
                   <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
                 </div>
               )}
-              <div className="wrap">
-                <span className="muted" style={{ fontSize: 12 }}>Danger zone:</span>
+
+              <div className="row" style={{ gap: 6, marginTop: 4, paddingTop: 10, borderTop: "1px solid #DEDDD6" }}>
+                <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Danger zone:</span>
                 <button className="btn-outline" style={{ color: "#B3261E" }} onClick={clearAllDays}>Clear all days</button>
               </div>
             </>
