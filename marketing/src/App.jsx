@@ -607,7 +607,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const MAX_LOCATIONS = 20;
 
   // Step 3 — services, each assigned to a location and bought with its own license
-  const [services, setServices] = useState([{ name: "", locationIndex: 0, mode: "hybrid", slotMinutes: 15, planId: "month", customDays: 14 }]);
+  const [services, setServices] = useState([{ name: "", locationIndex: 0, mode: "queue", slotMinutes: 15, planId: "month", customDays: 14 }]);
   const MAX_SERVICES = 30;
 
   // Step 4 — payment
@@ -633,7 +633,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
   }
 
   function addService() {
-    setServices((prev) => (prev.length >= MAX_SERVICES ? prev : [...prev, { name: "", locationIndex: 0, mode: "hybrid", slotMinutes: 15, planId: "month", customDays: 14 }]));
+    setServices((prev) => (prev.length >= MAX_SERVICES ? prev : [...prev, { name: "", locationIndex: 0, mode: "queue", slotMinutes: 15, planId: "month", customDays: 14 }]));
   }
   function removeService(i) {
     setServices((prev) => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)));

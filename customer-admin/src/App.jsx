@@ -572,6 +572,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   useEffect(() => { loadLicenses(); }, [service.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const summary = licenseSummary(licenses);
+  const hasActiveLicense = licenses.some((l) => l.status === "active");
 
   return (
     <div className="card stack" style={service.archived ? { opacity: 0.6 } : undefined}>
@@ -605,13 +606,16 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
         </div>
       </div>
 
-      {service.mode === "queue" && (
+      {service.mode === "queue" && hasActiveLicense && (
         <div className="row">
           <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
             {service.queue_paused ? "Resume" : "Pause (busy)"}
           </button>
           <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
         </div>
+      )}
+      {service.mode === "queue" && !hasActiveLicense && (
+        <div className="muted" style={{ fontSize: 12 }}>Pause/resume will be available once this service has an active license.</div>
       )}
 
       {expanded && (
