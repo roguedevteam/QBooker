@@ -708,7 +708,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
               </div>
               <div className="row">
                 {(lic.status === "available" || lic.status === "scheduled") && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
-                <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name)}>Print receipt</button>
+                <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
               </div>
             </div>
           );
@@ -816,7 +816,7 @@ const LICENSE_STATUS_META = {
 };
 
 // Shared by the Profile tab's licenses list and each service's own licenses panel.
-function printLicenseReceipt(lic, serviceName, businessName) {
+function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
   const rows = [
     ["Service", serviceName],
     ["Plan", lic.plan_label],
@@ -830,6 +830,7 @@ function printLicenseReceipt(lic, serviceName, businessName) {
     <style>
       body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:40px auto;color:#1B1D1F;}
       h1{font-size:20px;margin-bottom:2px;}
+      .addr{color:#5F615B;font-size:12px;margin-bottom:4px;}
       .sub{color:#5F615B;font-size:13px;margin-bottom:24px;}
       table{width:100%;border-collapse:collapse;}
       td{padding:8px 0;border-bottom:1px solid #E6E6E1;font-size:14px;}
@@ -838,6 +839,7 @@ function printLicenseReceipt(lic, serviceName, businessName) {
     </style>
     </head><body>
       <h1>${businessName}</h1>
+      ${businessAddress ? `<div class="addr">${businessAddress}</div>` : ""}
       <div class="sub">License receipt</div>
       <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
     </body></html>`;
