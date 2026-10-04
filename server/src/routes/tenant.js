@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { query } from "../db/pool.js";
+import { query, pool } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -202,25 +202,56 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
 
   const wasScheduled = license.status === "scheduled";
   const status = startDate <= getToday() ? "active" : "scheduled";
-  const result = await query(
-    `update service_licenses set start_date=$1, end_date=$2, status=$3 where id=$4 returning *`,
-    [startDate, endDate, status, license.id]
-  );
+
   // "Change dates" on an already-scheduled license moves it, it doesn't start fresh —
-  // any hours configured across the OLD window (minus whatever overlaps the new one)
-  // are now for dates this license no longer covers, so clear them the same way
-  // unscheduling does. Otherwise they sit there invisibly and can resurface if the
-  // service is ever rescheduled back over those old dates.
-  let hoursCleared = false;
-  if (wasScheduled && license.start_date && license.end_date) {
-    const cleared = await query(
-      `delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3 and not (date >= $4 and date <= $5)`,
-      [req.service.id, license.start_date, license.end_date, startDate, endDate]
+  // whatever hours/staffing were set on day N of the old window should land on day N
+  // of the new window, same as the license itself just slid along the calendar. Do
+  // the license update and the hours shift together so a failure partway through
+  // can't leave the license pointing at dates whose hours didn't move with it.
+  const client = await pool.connect();
+  let result, hoursMoved = false;
+  try {
+    await client.query("BEGIN");
+    result = await client.query(
+      `update service_licenses set start_date=$1, end_date=$2, status=$3 where id=$4 returning *`,
+      [startDate, endDate, status, license.id]
     );
-    hoursCleared = cleared.rowCount > 0;
+    if (wasScheduled && license.start_date && license.end_date) {
+      const oldRows = (await client.query(
+        `select date, hours, staff_count, booking_staff_count from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
+        [req.service.id, license.start_date, license.end_date]
+      )).rows;
+      if (oldRows.length) {
+        const offsetDays = Math.round((new Date(startDate) - new Date(license.start_date)) / 86400000);
+        // Clear whatever's left of the old window once its rows are moved off it (an
+        // upsert below overwrites anything the new window overlapped, so this only
+        // ever removes dates that are genuinely no longer covered by this license).
+        await client.query(
+          `delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3 and not (date >= $4 and date <= $5)`,
+          [req.service.id, license.start_date, license.end_date, startDate, endDate]
+        );
+        for (const row of oldRows) {
+          const newDate = addDays(row.date, offsetDays);
+          await client.query(
+            `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count) values ($1,$2,$3,$4,$5)
+             on conflict (service_id, date) do update set
+               hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count`,
+            [req.service.id, newDate, row.hours, row.staff_count, row.booking_staff_count]
+          );
+        }
+        hoursMoved = true;
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
+
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `License ${wasScheduled ? "moved" : "scheduled"} for "${req.service.name}" — ${license.plan_label}, ${startDate} to ${endDate}${hoursCleared ? " (hours cleared on old dates no longer covered)" : ""}`]);
+    [req.tenant.id, `License ${wasScheduled ? "moved" : "scheduled"} for "${req.service.name}" — ${license.plan_label}, ${startDate} to ${endDate}${hoursMoved ? " (hours moved with it)" : ""}`]);
   res.json({ license: result.rows[0] });
 }));
 
