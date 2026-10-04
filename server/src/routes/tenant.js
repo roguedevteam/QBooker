@@ -189,10 +189,9 @@ router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
   res.json({ service: result.rows[0] });
 }));
 
-router.delete("/services/:id", adminOnly, asyncHandler(async (req, res) => {
-  await query(`delete from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  res.json({ ok: true });
-}));
+// Services can no longer be permanently deleted from customer-admin — archive instead
+// (PATCH above with { archived: true }), same reasoning as locations: a mistaken delete
+// would wipe out its license/revenue history for good.
 
 // --- Service licenses --------------------------------------------------------------
 // Lifecycle: Available (bought, bound to this service, no dates — movable to another

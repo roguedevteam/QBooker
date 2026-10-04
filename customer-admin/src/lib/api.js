@@ -50,7 +50,6 @@ export const api = {
   getServices: (includeArchived) => request(`/api/tenant/services${includeArchived ? "?includeArchived=true" : ""}`),
   addService: (name, locationId) => request("/api/tenant/services", { method: "POST", body: { name, locationId } }),
   updateService: (id, patch) => request(`/api/tenant/services/${id}`, { method: "PATCH", body: patch }),
-  deleteService: (id) => request(`/api/tenant/services/${id}`, { method: "DELETE" }),
 
   getServiceLicenses: (serviceId) => request(`/api/tenant/services/${serviceId}/licenses`),
   buyServiceLicense: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/licenses`, { method: "POST", body: payload }),

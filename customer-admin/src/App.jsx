@@ -231,7 +231,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
@@ -247,8 +246,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
       setLocations(locRes.locations); setServices(svcRes.services);
     } catch (err) { setError(err.message); }
   }
-  const visibleServices = services.filter((s) => showArchived ? true : !s.archived);
-  const archivedCount = services.filter((s) => s.archived).length;
+  const visibleServices = services.filter((s) => !s.archived);
+  const archivedServices = services.filter((s) => s.archived);
   const visibleLocations = locations.filter((l) => !l.archived);
   const archivedLocations = locations.filter((l) => l.archived);
   async function refreshQueue() {
@@ -308,15 +307,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
         </div>
         {tab === "locations" && (
           <div className="row">
-            {archivedCount > 0 && (
-              <button
-                className="btn-outline"
-                style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
-                onClick={() => setShowArchived((v) => !v)}
-              >
-                {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
-              </button>
-            )}
             {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
           </div>
         )}
@@ -507,6 +497,17 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                 <div key={loc.id} className="row" style={{ justifyContent: "space-between" }}>
                   <span style={{ fontSize: 13 }}>{loc.name}</span>
                   <button className="btn-outline" onClick={async () => { try { await api.unarchiveLocation(loc.id); refreshCore(); } catch (err) { setError(err.message); } }}>Unarchive</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {archivedServices.length > 0 && (
+            <div className="card stack">
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Archived services ({archivedServices.length})</div>
+              {archivedServices.map((s) => (
+                <div key={s.id} className="row" style={{ justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13 }}>{s.name} <span className="muted">— {locations.find((l) => l.id === s.location_id)?.name || "—"}</span></span>
+                  <button className="btn-outline" onClick={async () => { try { await api.updateService(s.id, { archived: false }); refreshCore(); } catch (err) { setError(err.message); } }}>Unarchive</button>
                 </div>
               ))}
             </div>
@@ -905,15 +906,16 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
               e.target.value = "";
               if (action === "buy") { setExpanded(true); setBuyTrigger((t) => t + 1); }
               else if (action === "qr") printServiceQR();
-              else if (action === "archive") { await api.updateService(service.id, { archived: !service.archived }); onChange(); }
-              else if (action === "delete" && confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); }
+              else if (action === "archive" && confirm(`Archive "${service.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its license history is kept.`)) {
+                await api.updateService(service.id, { archived: true });
+                onChange();
+              }
             }}
           >
             <option value="" disabled>⋯</option>
             <option value="buy">Buy a license</option>
             <option value="qr">Print QR customer display</option>
-            <option value="archive">{service.archived ? "Unarchive" : "Archive"}</option>
-            <option value="delete">Delete</option>
+            <option value="archive">Archive</option>
           </select>
           <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
             {expanded ? "▾" : "▸"}
