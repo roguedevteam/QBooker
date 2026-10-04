@@ -283,9 +283,12 @@ function AdminDashboard({ tenant, setError }) {
         <div className="stack">
           <PendingPaymentBanner tenant={tenant} />
 
-          <div className="card stack">
-            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
+          <div className="card stack" style={{ gap: 8, padding: "12px 16px" }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+              <div className="stack" style={{ gap: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
+                <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
+              </div>
               <div className="row">
                 {archivedCount > 0 && (
                   <button
@@ -299,7 +302,6 @@ function AdminDashboard({ tenant, setError }) {
                 {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
               </div>
             </div>
-            <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
             {addingLocation && (
               <div className="row">
                 <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
