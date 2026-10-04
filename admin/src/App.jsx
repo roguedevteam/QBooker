@@ -170,6 +170,11 @@ function Dashboard({ setError, error, onSignOut }) {
               <div className="card">{overview.customerCount}<div className="muted" style={{ fontSize: 11 }}>Customers</div></div>
               <div className="card">{overview.totalLocations}<div className="muted" style={{ fontSize: 11 }}>Locations, all customers</div></div>
             </div>
+            {overview.deletedCustomerCount > 0 && (
+              <div className="muted" style={{ fontSize: 12 }}>
+                Includes £{overview.deletedRevenue.toFixed(2)} from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
+              </div>
+            )}
             <div className="card">
               <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Revenue by plan type (active customers)</div>
               <div className="chart-wrap">

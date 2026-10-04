@@ -4,6 +4,7 @@ import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
 import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing } from "../lib/serviceLicense.js";
+import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 
 const router = Router();
 router.use(requireAuth("system_admin"));
@@ -185,8 +186,11 @@ router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHand
   res.json({ license: { ...result.rows[0], service_name: service.name } });
 }));
 
+// Reports Overview below folds deleted_tenant_revenue snapshots back in, so totals don't
+// drop just because a customer's account was deleted — see lib/tenantDeletion.js.
 router.delete("/tenants/:id", asyncHandler(async (req, res) => {
-  await query(`delete from tenants where id=$1`, [req.params.id]);
+  const ok = await snapshotAndDeleteTenant(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Customer not found." });
   res.json({ ok: true });
 }));
 
@@ -226,6 +230,20 @@ router.get("/reports/overview", asyncHandler(async (req, res) => {
       revenueByPlan[lic.plan_id] = (revenueByPlan[lic.plan_id] || 0) + price;
     }
   }
+
+  // Fold in anonymised revenue snapshots from deleted customers so totals don't drop
+  // just because an account was removed.
+  const deletedRows = (await query(`select total_revenue, pending_revenue, revenue_by_plan from deleted_tenant_revenue`)).rows;
+  let deletedRevenue = 0;
+  for (const row of deletedRows) {
+    totalRevenue += Number(row.total_revenue || 0);
+    pendingRevenue += Number(row.pending_revenue || 0);
+    deletedRevenue += Number(row.total_revenue || 0);
+    for (const [planId, amount] of Object.entries(row.revenue_by_plan || {})) {
+      revenueByPlan[planId] = (revenueByPlan[planId] || 0) + Number(amount || 0);
+    }
+  }
+
   const totalLocations = tenants.reduce((sum, t) => sum + (t.location_count || 0), 0);
   res.json({
     customerCount: tenants.length,
@@ -233,6 +251,8 @@ router.get("/reports/overview", asyncHandler(async (req, res) => {
     pendingRevenue,
     totalLocations,
     revenueByPlan,
+    deletedCustomerCount: deletedRows.length,
+    deletedRevenue,
   });
 }));
 

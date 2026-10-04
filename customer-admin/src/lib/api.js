@@ -39,6 +39,7 @@ export const api = {
   updateMe: (patch) => request("/api/tenant/me", { method: "PATCH", body: patch }),
   getAllLicenses: () => request("/api/tenant/licenses"),
   dismissSetupTask: (task) => request("/api/tenant/setup/dismiss", { method: "POST", body: { task } }),
+  deleteMyAccount: () => request("/api/tenant/me", { method: "DELETE" }),
 
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),

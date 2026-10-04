@@ -154,7 +154,7 @@ export default function App() {
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
-      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} onTenantChange={setTenant} setError={setError} />}
+      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} onTenantChange={setTenant} onAccountDeleted={doSignOut} setError={setError} />}
     </div>
   );
 }
@@ -212,7 +212,7 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-function AdminDashboard({ tenant, onTenantChange, setError }) {
+function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
@@ -396,7 +396,7 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
       )}
 
       {tab === "profile" && (
-        <ProfileTab tenant={tenant} onTenantChange={onTenantChange} licenses={allLicenses} onLicensesChanged={refreshLicenses} setError={setError} />
+        <ProfileTab tenant={tenant} onTenantChange={onTenantChange} onAccountDeleted={onAccountDeleted} licenses={allLicenses} onLicensesChanged={refreshLicenses} setError={setError} />
       )}
 
       {tab === "setup" && (
@@ -528,7 +528,7 @@ function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
 }
 
-function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setError }) {
+function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLicensesChanged, setError }) {
   const [businessName, setBusinessName] = useState(tenant.business_name || "");
   const [firstName, setFirstName] = useState(tenant.first_name || "");
   const [lastName, setLastName] = useState(tenant.last_name || "");
@@ -572,6 +572,19 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
   }
 
   const visibleLicenses = licenses.filter((l) => l.status !== "refunded");
+
+  async function deleteAccount() {
+    const typed = prompt(
+      `This permanently deletes your account "${tenant.business_name}" — every location, service, license and booking history goes with it, and this can't be undone.\n\nType DELETE to confirm.`
+    );
+    if (typed !== "DELETE") return;
+    try {
+      await api.deleteMyAccount();
+      onAccountDeleted?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   return (
     <div className="stack">
@@ -655,6 +668,16 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
             </div>
           );
         })}
+      </div>
+
+      <div className="card stack" style={{ borderColor: "var(--error, #B3261E)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--error, #B3261E)" }}>Delete account</div>
+        <div className="muted" style={{ fontSize: 12 }}>
+          This will permanently delete all of your data — every location, service, license and booking history. This can't be undone.
+        </div>
+        <div className="row">
+          <button className="btn-outline" style={{ color: "var(--error, #B3261E)", borderColor: "var(--error, #B3261E)" }} onClick={deleteAccount}>Delete account</button>
+        </div>
       </div>
     </div>
   );

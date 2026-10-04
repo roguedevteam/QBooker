@@ -14,6 +14,7 @@ import {
   isServiceLicensedOn, checkSchedulable, computeEndDate, isWithinRefundWindow,
   planPricing, resolvePlan,
 } from "../lib/serviceLicense.js";
+import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 
 const router = Router();
 
@@ -50,6 +51,14 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
     [businessName, firstName, lastName, email, companyAddress, websiteUrl, req.tenant.id]
   );
   res.json({ tenant: result.rows[0] });
+}));
+
+// Self-service account deletion — permanent, same as the system-admin "Delete customer"
+// action: locations/services/licenses/audit log are all cascaded away, with an anonymised
+// revenue snapshot kept (see lib/tenantDeletion.js). Admin-only — staff can't delete the account.
+router.delete("/me", adminOnly, asyncHandler(async (req, res) => {
+  await snapshotAndDeleteTenant(req.tenant.id);
+  res.json({ ok: true });
 }));
 
 // Dashboard setup-progress checklist — lets a tenant permanently dismiss a nag they don't
