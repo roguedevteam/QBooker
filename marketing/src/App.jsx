@@ -77,329 +77,388 @@ export default function App() {
   );
 }
 
-const TABS = [
-  {
-    id: 1,
-    label: "Booking",
-    items: [
-      { title: "Book by message", text: "Customers pick a time without leaving the chat they already have open." },
-      { title: "Reminders that send themselves", text: "Automatic confirmation and a reminder before the slot." },
-      { title: "Reschedule in one line", text: "No phone tag — they just reply to move it." },
-    ],
-  },
-  {
-    id: 2,
-    label: "Queue management",
-    items: [
-      { title: "Live queue, no hardware", text: "Walk-ins join by message; the counter screen updates itself." },
-      { title: "Wait time, told straight", text: "Customers get a real estimate, not a guess at the door." },
-      { title: "Multiple locations, one view", text: "Every location gets its own code and queue, all visible from one place." },
-    ],
-  },
-  {
-    id: 3,
-    label: "Client experience",
-    items: [
-      { title: "No app to download", text: "Everything happens in the chat app already on their phone." },
-      { title: "Answers, any time", text: "Opening hours and availability, answered automatically out of hours." },
-      { title: "Feels personal", text: "A real conversation, not a form — because it is one." },
-    ],
-  },
+const SCENARIOS = [
+  { name: "Blood clinics", text: "A morning of walk-in blood tests without a waiting room full of paper tickets." },
+  { name: "Diagnostic days", text: "Scans and tests that run on set days, with patients arriving throughout the day." },
+  { name: "Vaccination pop-ups", text: "A flu or travel clinic in a community hall for a week, then gone again." },
+  { name: "Outpatient clinics", text: "Specialist sessions that only open on certain days of the month." },
 ];
 
-const INDUSTRIES = [
-  { icon: "✂", name: "Barbers & salons" },
-  { icon: "✚", name: "Clinics & practices" },
-  { icon: "🧖", name: "Spas & studios" },
-  { icon: "🔧", name: "Repair shops" },
-  { icon: "🛍", name: "Independent shops" },
-  { icon: "🐾", name: "Groomers & vets" },
+const PATIENT_ACTIONS = [
+  { name: "Join the queue", text: "Patients message your WhatsApp number and get a ticket, their place in line and an estimated wait." },
+  { name: "Book a slot", text: "Pick a time later in the day and get a reminder shortly beforehand." },
+  { name: "Check in", text: "Let your team know they've arrived, without queuing at a desk." },
+  { name: "Cancel or reschedule", text: "One reply, no phone call. Easy enough that people actually do it." },
 ];
 
-const TESTIMONIALS = [
-  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
-  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
-  { quote: "[QUOTE]", name: "[Name]", role: "[Business, location]" },
+const MODES = [
+  { name: "Queue management", text: "The core of QBooker. Patients join the live queue from WhatsApp and your team calls the next ticket from any browser." },
+  { name: "Appointment scheduling", text: "Add timed slots when you need them. Patients book, get a reminder, and can cancel with a reply." },
+  { name: "Hybrid queue", text: "Both in one service. Walk-ins join now while others reserve a place later in the day.", highlight: true },
 ];
+
+const SETUP_STEPS = [
+  { name: "Create your account", text: "Your name, your business name and your email address." },
+  { name: "Add a service and choose a licence", text: "Pick a day, week, month, year or custom period for each service." },
+  { name: "Share your WhatsApp link", text: "Patients can start queuing straight away." },
+];
+
+const TRUST_POINTS = [
+  { name: "No patient data", text: "Patient data and clinical records are never captured or stored." },
+  { name: "GDPR", text: "Fully compliant with GDPR." },
+  { name: "Cyber Essentials", text: "Compliant with the Cyber Essentials standard." },
+  { name: "UK servers and support", text: "Your data stays in the UK, and when you need help you talk to someone in the same time zone." },
+];
+
+const FAQS = [
+  { q: "Do patients need to install anything?", a: "No. Everything happens inside WhatsApp, which almost everyone already has." },
+  { q: "Is it safe to use in an NHS setting?", a: "QBooker doesn't capture or store patient data or clinical records. It's GDPR and Cyber Essentials compliant, with UK-based servers and a UK-based support team." },
+  { q: "Can I use it for just one day?", a: "Yes. Licences are bought per service and can run for a day, a week, a month, a year or any custom period, so a one-off clinic day costs a one-day licence." },
+  { q: "What's the difference between queue, appointments and hybrid?", a: "A queue is walk-ins only, first come first served. Appointments are booked slots only. Hybrid runs both together in one service, so people on site can join the queue now while others reserve a slot for later." },
+  { q: "What if a patient doesn't use WhatsApp?", a: "They can still turn up as normal and your team adds them to the same queue by hand." },
+  { q: "Can I run more than one location?", a: "Yes. Each location gets its own sign-in code and queue, and staff only see their own." },
+  { q: "How long does setup take?", a: "Under 60 seconds to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 + VAT." },
+  { q: "Is there a contract?", a: "No long-term contract. Buy a licence for a day, week, month or year at a time." },
+];
+
+// Hybrid timeline — a one-day clinic from 9am to 5pm. Positions are percentages of that span.
+const TL_TICKS = [
+  { t: 0, label: "9am" },
+  { t: 37.5, label: "12pm" },
+  { t: 75, label: "3pm" },
+  { t: 100, label: "5pm" },
+];
+const TL_NOW = 20.8; // 10:40am
+const TL_WALKINS = [
+  { at: 27, label: "#14" },
+  { at: 40, label: "#15" },
+  { at: 53, label: "#16" },
+];
+const TL_BOOKED = [
+  { at: 62.5, label: "2pm" },
+  { at: 75, label: "3pm" },
+  { at: 87.5, label: "4pm", mine: true },
+];
+
+function HybridTimeline() {
+  return (
+    <div className="lp-timeline-card" role="img" aria-label="A one-day clinic from 9am to 5pm. At 10:40am, patients on site join the queue as tickets 14, 15 and 16. Patients at work have reserved slots at 2pm, 3pm and 4pm. Both appear in the same queue.">
+      <div className="lp-tl" aria-hidden="true">
+        <div />
+        <div className="lp-tl-axis">
+          {TL_TICKS.map((k) => (
+            <span key={k.label} className="lp-tl-tick" style={{ left: `${k.t}%`, transform: k.t === 0 ? "none" : k.t === 100 ? "translateX(-100%)" : "translateX(-50%)" }}>{k.label}</span>
+          ))}
+          <span className="lp-tl-nowlabel" style={{ left: `${TL_NOW}%` }}>Now 10:40</span>
+        </div>
+
+        <div className="lp-tl-lane"><strong>On site</strong><span>Joins the queue now</span></div>
+        <div className="lp-track">
+          <span className="lp-now" style={{ left: `${TL_NOW}%` }} />
+          {TL_WALKINS.map((c) => <span key={c.label} className="lp-chip walk" style={{ left: `${c.at}%` }}>{c.label}</span>)}
+        </div>
+
+        <div className="lp-tl-lane"><strong>At work</strong><span>Reserves a slot for later</span></div>
+        <div className="lp-track">
+          <span className="lp-now" style={{ left: `${TL_NOW}%` }} />
+          {TL_BOOKED.map((c) => <span key={c.label} className={c.mine ? "lp-chip book mine" : "lp-chip book"} style={{ left: `${c.at}%` }}>{c.label}</span>)}
+        </div>
+      </div>
+      <div className="lp-tl-caption">
+        <span><i className="lp-key walk" /> Walk-in, served in order</span>
+        <span><i className="lp-key book" /> Reserved slot</span>
+      </div>
+    </div>
+  );
+}
 
 function Landing({ onStart, simulatedBadge }) {
   const [pricing, setPricing] = useState(null);
-  const [activeTab, setActiveTab] = useState(1);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
 
-  const currentTab = TABS.find((t) => t.id === activeTab);
-
   return (
-    <div id="top">
+    <div id="top" className="lp">
       {/* NAV */}
-      <div style={{ background: "var(--surface-card)", borderBottom: "1px solid var(--line)" }}>
-        <div className="container row" style={{ justifyContent: "space-between", paddingTop: 18, paddingBottom: 18, flexWrap: "wrap", gap: 12 }}>
-          <Logo />
-          <nav className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Product</span>
-            <a href="#industries" style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Industries</a>
-            <a href="#pricing" style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Pricing</a>
-            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--muted)", padding: "10px 14px" }}>Resources</span>
+      <header className="lp-nav">
+        <div className="wide lp-nav-inner">
+          <a href="#top" aria-label="QBooker home"><Logo /></a>
+          <nav className="lp-nav-links" aria-label="Page sections">
+            <a href="#who">Use cases</a>
+            <a href="#hybrid">Hybrid queue</a>
+            <a href="#trust">Compliance</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#faq">FAQ</a>
           </nav>
-          <div className="row" style={{ gap: 14 }}>
+          <div className="row" style={{ gap: 18 }}>
             {simulatedBadge && <span className="badge badge-amber">Simulated date: {simulatedBadge}</span>}
-            <a href={ADMIN_APP_URL} style={{ fontSize: 14, fontWeight: 600, color: "var(--muted)" }}>Log in</a>
-            <button className="btn-ink" onClick={onStart}>Start free</button>
+            <a href={ADMIN_APP_URL} className="lp-login">Log in</a>
+            <button className="btn-ink" style={{ padding: "10px 18px", fontSize: 14 }} onClick={onStart}>Start free</button>
           </div>
         </div>
-      </div>
+      </header>
 
       {/* HERO */}
-      <div className="container" style={{ paddingTop: 72, paddingBottom: 72 }}>
-        <div style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 440px", minWidth: 0 }}>
-            <span className="tag">For clinics, salons and shops</span>
-            <h1 style={{ fontSize: 52, lineHeight: 1.08, fontWeight: 700, letterSpacing: "-0.03em", margin: "18px 0 20px" }}>
-              Booking, where your customers already message you
-            </h1>
-            <p className="lead">QBooker turns WhatsApp into your front desk — customers join the queue or book a slot by chatting, staff see it update live. No app for them to download.</p>
-            <div className="row" style={{ gap: 12, marginTop: 30, flexWrap: "wrap" }}>
-              <button className="btn-accent" onClick={onStart}>Start free</button>
-              <a href="#features"><button className="btn-outline">See how it works</button></a>
-            </div>
-            <div className="muted" style={{ marginTop: 16, fontSize: 13 }}>No card required · set up in an afternoon</div>
+      <section className="wide lp-hero">
+        <div>
+          <h1 className="lp-h1">A WhatsApp queue for your clinic, live in under 60 seconds</h1>
+          <p className="lp-lead">QBooker is queue management for NHS and healthcare services that don't run every day. Patients join from WhatsApp, your team calls them forward, and there's no hardware to buy or install.</p>
+          <div className="lp-actions">
+            <button className="btn-accent" onClick={onStart}>Start free</button>
+            <a href="#hybrid" className="lp-link">See how the hybrid queue works</a>
           </div>
-          <div style={{ flex: "1 1 420px", minWidth: 0, display: "flex", gap: 16 }}>
-            <div className="card" style={{ flex: 1, padding: 18 }}>
-              <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 12 }}>The conversation</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--surface-page)", borderRadius: "10px 10px 10px 2px", padding: "9px 12px", fontSize: 13 }}>Hi — can I get a slot today?</div>
-                <div style={{ alignSelf: "flex-end", maxWidth: "85%", background: "var(--navy)", color: "#fff", borderRadius: "10px 10px 2px 10px", padding: "9px 12px", fontSize: 13 }}>You're #3 in the queue — about 20 min</div>
-                <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--surface-page)", borderRadius: "10px 10px 10px 2px", padding: "9px 12px", fontSize: 13 }}>Perfect, see you soon</div>
-              </div>
+          <ul className="lp-checks">
+            <li>Free for your first location and service, with no obligation</li>
+            <li>No patient data or clinical records stored</li>
+            <li>UK-based servers and support</li>
+          </ul>
+        </div>
+
+        <div className="lp-hero-visual">
+          <div className="lp-chat" role="img" aria-label="Example WhatsApp conversation: a patient joins the blood tests queue and is told they are third in line, about 15 minutes.">
+            <div className="lp-chat-head" aria-hidden="true">
+              <span className="lp-avatar">R</span>
+              <div><strong>Riverside Blood Clinic</strong><span>Business account</span></div>
             </div>
-            <div className="card" style={{ flex: 1, padding: 18 }}>
-              <div className="muted" style={{ fontSize: 11, fontWeight: 600, marginBottom: 12 }}>The dashboard</div>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <span style={{ fontSize: 14, fontWeight: 700 }}>Riverside Clinic</span>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)", display: "inline-block" }} />
-              </div>
-              <div className="mono muted" style={{ fontSize: 11, margin: "6px 0 14px" }}>QB-7F3K2A</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#3 J. Patel</span><span className="mono muted">waiting</span></div>
-                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#2 S. Ahmed</span><span className="mono muted">waiting</span></div>
-                <div className="row" style={{ justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>#1 R. Okafor</span><span className="mono" style={{ color: "var(--accent)" }}>now serving</span></div>
-              </div>
+            <div className="lp-chat-body" aria-hidden="true">
+              <div className="msg in">Welcome to Riverside Blood Clinic. Reply Hi to get a ticket or book a slot.</div>
+              <div className="msg out">Hi</div>
+              <div className="msg in">Which service would you like today?</div>
+              <div className="msg out">Blood tests</div>
+              <div className="msg in">You're checked in. Your ticket is BT-014. You're #3 in line, about 15 min.</div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* SOCIAL PROOF */}
-      <div style={{ background: "var(--navy)", padding: "28px 0" }}>
-        <div className="container row" style={{ justifyContent: "center", gap: 48, flexWrap: "wrap", color: "#fff" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, opacity: 0.85 }}>Built for independent clinics, salons and shops across the UK</span>
-          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[locations live]</span>
-          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[bookings this month]</span>
-          <span className="mono" style={{ fontSize: 13, opacity: 0.7 }}>[avg. setup time: an afternoon]</span>
-        </div>
-      </div>
-
-      {/* FEATURE TABS */}
-      <div id="features" className="container" style={{ padding: "88px 0" }}>
-        <h2 className="h2">Everything the front desk used to do</h2>
-        <p className="lead" style={{ marginBottom: 34 }}>Three jobs, one chat thread.</p>
-        <div className="row" style={{ gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 32 }}>
-          {TABS.map((t) => (
-            <button key={t.id} className={activeTab === t.id ? "navbtn active" : "navbtn"} onClick={() => setActiveTab(t.id)}>{t.label}</button>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20 }}>
-          {currentTab.items.map((item) => (
-            <div key={item.title} className="card">
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{item.title}</div>
-              <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>{item.text}</div>
+          <div className="lp-ticket" aria-hidden="true">
+            <div className="lp-ticket-top">
+              <span>Blood tests, Room 2</span>
+              <span className="lp-live">Live</span>
             </div>
-          ))}
+            <div className="lp-ticket-main">
+              <span className="muted">Now serving</span>
+              <span className="mono lp-ticket-no">BT-011</span>
+            </div>
+            <div className="lp-ticket-divider" />
+            <div className="lp-ticket-next">
+              <span className="mono">BT-012</span><span className="mono">BT-013</span><span className="mono">BT-014</span>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* INDUSTRIES */}
-      <div id="industries" style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)", padding: "88px 0" }}>
-        <div className="container">
-          <h2 className="h2">Built around how you already work</h2>
-          <p className="lead" style={{ marginBottom: 34 }}>Pick your trade — the setup is the same conversation either way.</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
-            {INDUSTRIES.map((ind) => (
-              <div key={ind.name} className="card row" style={{ gap: 12 }}>
-                <div style={{ width: 40, height: 40, background: "var(--surface-page)", border: "1px solid var(--line)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>{ind.icon}</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{ind.name}</span>
+      {/* FACTS */}
+      <section className="lp-band-navy lp-facts-band">
+        <div className="wide lp-facts">
+          <div><strong>Live in under 60 seconds</strong><p>Create an account, add a service and your queue is ready.</p></div>
+          <div><strong>No hardware</strong><p>No kiosks, ticket printers or installation. Your team uses a web page.</p></div>
+          <div><strong>No patient data stored</strong><p>QBooker doesn't capture patient records of any kind.</p></div>
+          <div><strong>UK-based support</strong><p>UK servers and a UK support team.</p></div>
+        </div>
+      </section>
+
+      {/* WHO IT'S FOR */}
+      <section id="who" className="lp-section">
+        <div className="wide lp-split">
+          <div>
+            <h2 className="lp-h2">Built for clinics that don't open every day</h2>
+            <p className="lp-lead">Most queue systems assume a permanent front desk and equipment to match. QBooker is set up per service, for exactly as long as you need it. Running a clinic for one day? Set it up for that one day and that one service, then let it lapse.</p>
+          </div>
+          <div className="lp-rows">
+            {SCENARIOS.map((s) => (
+              <div key={s.name} className="lp-row">
+                <h3>{s.name}</h3>
+                <p>{s.text}</p>
               </div>
             ))}
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* TRUST STRIP */}
-      <div className="container row" style={{ justifyContent: "center", gap: 40, flexWrap: "wrap", padding: "36px 0" }}>
-        <span className="mono muted" style={{ fontSize: 12 }}>WhatsApp Business API</span>
-        <span className="mono muted" style={{ fontSize: 12 }}>GDPR-ready</span>
-        <span className="mono muted" style={{ fontSize: 12 }}>UK-hosted data</span>
-        <span className="mono muted" style={{ fontSize: 12 }}>No long-term contract</span>
-      </div>
-
-      {/* PRICING — real data from the API */}
-      {pricing && (
-        <div id="pricing" className="container" style={{ padding: "88px 0" }}>
-          <span className="tag">Pricing</span>
-          <h2 className="h2" style={{ marginTop: 14 }}>Try it before you commit</h2>
-          <p className="lead" style={{ marginBottom: 34 }}>Buy exactly as much time as you need to test it properly — per service.</p>
-          {pricing.sale?.active && (
-            <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, marginTop: -20, marginBottom: 20 }}>Sale on selected plans — see below</p>
-          )}
-          <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
-            {["day", "week", "month", "year"].map((k) => {
-              const label = { day: "Day", week: "Week", month: "Month", year: "Year" }[k];
-              const onSale = pricing.sale?.active && pricing.sale[k] != null;
-              return (
-                <div key={k} className="card stack" style={{ minWidth: 160, textAlign: "center" }}>
-                  {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>£{pricing[k]}</span>}
-                  <strong style={{ fontSize: 22, color: onSale ? "var(--accent)" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
-                  <span className="muted" style={{ fontSize: 12 }}>{label}</span>
-                </div>
-              );
-            })}
+      {/* PATIENTS */}
+      <section id="patients" className="lp-section lp-band-card">
+        <div className="wide lp-split">
+          <div>
+            <h2 className="lp-h2">If cancelling is hard, patients just don't turn up</h2>
+            <p className="lp-lead">QBooker keeps patients in touch over WhatsApp, so changing their mind takes one reply. You hear about it before the slot goes empty, and the slot can go to someone else.</p>
           </div>
-          <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>All prices per service. Need something in between? Choose a custom period at signup.</p>
-          <div className="row" style={{ gap: 16, marginTop: 28, flexWrap: "wrap", alignItems: "stretch" }}>
-            <div className="card row" style={{ justifyContent: "space-between", flex: "1 1 320px", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Want a hand getting set up?</div>
-                <p className="muted" style={{ fontSize: 13, margin: "4px 0 0" }}>Our team will configure your services, hours, and staff for you — done in one session.</p>
+          <div className="lp-rows">
+            {PATIENT_ACTIONS.map((s) => (
+              <div key={s.name} className="lp-row">
+                <h3>{s.name}</h3>
+                <p>{s.text}</p>
               </div>
-              <div className="row" style={{ gap: 10 }}>
-                <strong>£125</strong>
-                <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Get in touch</button></a>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* MODES */}
+      <section id="modes" className="lp-section">
+        <div className="wide">
+          <h2 className="lp-h2">Queue management first, appointments when you need them</h2>
+          <p className="lp-lead" style={{ marginBottom: 40 }}>Each service runs in one of three modes. You choose per service, and it can differ from one clinic day to the next.</p>
+          <div className="lp-modes">
+            {MODES.map((m) => (
+              <div key={m.name} className={m.highlight ? "lp-mode hl" : "lp-mode"}>
+                <h3>{m.name}</h3>
+                <p>{m.text}</p>
+                {m.highlight && <a href="#hybrid" className="lp-link">See how it works</a>}
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* HYBRID */}
+      <section id="hybrid" className="lp-section lp-band-navy">
+        <div className="wide lp-split lp-split-even">
+          <div>
+            <h2 className="lp-h2">One queue for people on site and people at work</h2>
+            <p className="lp-lead">Set up a one-day clinic as a hybrid service and patients can join in two ways. Someone already on site joins the queue right now. Someone at work books a 4pm slot from their desk, which holds their place for later in the day.</p>
+            <p className="lp-lead" style={{ marginTop: 18 }}>Your team sees one queue with one WhatsApp number. You decide how many staff serve walk-ins and how many serve bookings, so neither side crowds out the other.</p>
+          </div>
+          <HybridTimeline />
+        </div>
+      </section>
+
+      {/* SETUP */}
+      <section id="setup" className="lp-section">
+        <div className="wide">
+          <h2 className="lp-h2">Live in under 60 seconds, with nothing to learn</h2>
+          <p className="lp-lead" style={{ marginBottom: 40 }}>QBooker is built so nobody needs training. Create an account, choose your licence and you're ready to go.</p>
+          <div className="lp-steps">
+            {SETUP_STEPS.map((s, i) => (
+              <div key={s.name} className="lp-step">
+                <span className="lp-step-no">{i + 1}</span>
+                <h3>{s.name}</h3>
+                <p>{s.text}</p>
+              </div>
+            ))}
+          </div>
+          <div className="lp-support">
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Want someone to walk you through it?</div>
+              <p className="muted" style={{ fontSize: 14.5, margin: "4px 0 0", maxWidth: 520 }}>An engineer can join a one-hour call to set up your system and train your team.</p>
             </div>
-            <div className="card stack" style={{ flex: "1 1 320px" }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Just need a simple queue?</div>
-              <p className="muted" style={{ fontSize: 13 }}>
-                If you already use Microsoft Bookings for appointments and only need queue management,
-                we offer integration on request — <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration" style={{ textDecoration: "underline" }}>get in touch</a> to discuss your setup.
+            <div className="row" style={{ gap: 16 }}>
+              <strong style={{ fontSize: 18 }}>£125 + VAT</strong>
+              <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Book a call</button></a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* COMPLIANCE */}
+      <section id="trust" className="lp-section lp-band-card">
+        <div className="wide lp-split">
+          <div>
+            <h2 className="lp-h2">No patient data, and UK-based</h2>
+            <p className="lp-lead">QBooker doesn't capture or store patient data or clinical records, which keeps information governance straightforward.</p>
+          </div>
+          <div className="lp-rows">
+            {TRUST_POINTS.map((s) => (
+              <div key={s.name} className="lp-row">
+                <h3>{s.name}</h3>
+                <p>{s.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* PRICING */}
+      <section id="pricing" className="lp-section">
+        <div className="wide">
+          <h2 className="lp-h2">Free to try, then pay per service</h2>
+          <p className="lp-lead" style={{ marginBottom: 40 }}>Test it on a real clinic day before you spend anything.</p>
+          <div className="lp-pricing">
+            <div className="lp-offer">
+              <h3>Free while we launch</h3>
+              <p>Your first location with one service is free to use. No obligation, so you can try it on a real clinic day and see how patients get on.</p>
+              <button className="btn-accent" onClick={onStart}>Start free</button>
+            </div>
+            <div>
+              <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month, a year or a custom period.</p>
+              {pricing && (
+                <>
+                  {pricing.sale?.active && <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, margin: "0 0 10px" }}>Sale on selected plans</p>}
+                  <div className="lp-prices">
+                    {["day", "week", "month", "year"].map((k) => {
+                      const label = { day: "Day", week: "Week", month: "Month", year: "Year" }[k];
+                      const onSale = pricing.sale?.active && pricing.sale[k] != null;
+                      return (
+                        <div key={k} className="lp-price">
+                          {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>£{pricing[k]}</span>}
+                          <strong style={{ color: onSale ? "var(--accent)" : undefined }}>£{onSale ? pricing.sale[k] : pricing[k]}</strong>
+                          <span className="muted">{label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>All prices are per service. Need something in between? Choose a custom period when you sign up.</p>
+                </>
+              )}
+              <p className="muted" style={{ fontSize: 14, lineHeight: 1.6, marginTop: 28, maxWidth: 520 }}>
+                Already use Microsoft Bookings for appointments and only need queue management? We offer integration on request.{" "}
+                <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>Get in touch</a> to discuss your setup.
               </p>
             </div>
           </div>
         </div>
-      )}
-
-      {/* FEATURE DEEP-DIVE 1 */}
-      <div style={{ padding: "88px 0" }}>
-        <div className="container" style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
-            <div className="card" style={{ padding: 22 }}>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>Central Clinic</div>
-                  <div className="mono muted" style={{ fontSize: 11, marginTop: 3 }}>QB-7F3K2A</div>
-                </div>
-                <span style={{ padding: "4px 10px", background: "var(--accent-weak)", color: "var(--accent)", fontSize: 11, fontWeight: 700 }}>Live</span>
-              </div>
-              <div style={{ height: 1, background: "var(--line)", margin: "16px 0" }} />
-              <div className="muted" style={{ fontSize: 13 }}>Now serving</div>
-              <div className="mono" style={{ fontSize: 40, fontWeight: 600, marginTop: 4 }}>#12</div>
-            </div>
-          </div>
-          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
-            <span className="tag">Queue status</span>
-            <h2 className="h2" style={{ marginTop: 14 }}>Always live, never a guess</h2>
-            <p className="lead">Every location gets its own queue number and status, updated the moment someone's served — on the counter screen and in the chat, at the same time.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* FEATURE DEEP-DIVE 2 */}
-      <div style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)", padding: "88px 0" }}>
-        <div className="container" style={{ display: "flex", gap: 56, alignItems: "center", flexWrap: "wrap", flexDirection: "row-reverse" }}>
-          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
-            <div className="stack" style={{ gap: 10 }}>
-              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Central Clinic</span><span className="mono muted" style={{ fontSize: 11 }}>QB-7F3K2A</span></div>
-              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Riverside Clinic</span><span className="mono muted" style={{ fontSize: 11 }}>QB-91MZQ</span></div>
-              <div className="card row" style={{ justifyContent: "space-between", padding: "14px 18px" }}><span style={{ fontSize: 13, fontWeight: 600 }}>Old High Street</span><span className="mono muted" style={{ fontSize: 11 }}>QB-3DT0P</span></div>
-            </div>
-          </div>
-          <div style={{ flex: "1 1 420px", minWidth: 0 }}>
-            <span className="tag">Multi-location</span>
-            <h2 className="h2" style={{ marginTop: 14 }}>One number, every location</h2>
-            <p className="lead">Add a second site in minutes — its own queue, its own code, no second setup to learn. Staff only ever see their own location's line.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* TESTIMONIALS */}
-      <div className="container" style={{ padding: "88px 0" }}>
-        <h2 className="h2" style={{ textAlign: "center" }}>What's working, from people using it</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 20, marginTop: 34 }}>
-          {TESTIMONIALS.map((t, i) => (
-            <div key={i} className="card">
-              <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 16px" }}>"{t.quote}"</p>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</div>
-              <div className="muted" style={{ fontSize: 12 }}>{t.role}</div>
-            </div>
-          ))}
-        </div>
-        <div className="muted" style={{ textAlign: "center", marginTop: 18, fontSize: 12 }}>[real customer quotes go here]</div>
-      </div>
+      </section>
 
       {/* FAQ */}
-      <div id="faq" style={{ background: "var(--surface-card)", borderTop: "1px solid var(--line)", padding: "88px 0" }}>
-        <div className="container" style={{ maxWidth: 760 }}>
-          <h2 className="h2">Questions people ask before switching</h2>
-          <div style={{ marginTop: 24 }}>
-            <FaqItem q="Do my customers need to install anything?" a="No — booking and queueing happen inside WhatsApp, which almost everyone already has." />
-            <FaqItem q="What if a customer doesn't use WhatsApp?" a="They can still call or walk in as normal; staff add them to the same queue by hand." />
-            <FaqItem q="Can I run more than one location?" a="Yes — each location gets its own code and queue, and staff only see their own." />
-            <FaqItem q="How long does setup take?" a="Most businesses are taking their first booking the same afternoon. If you'd rather have it done for you, we offer paid setup assistance for £125." />
-            <FaqItem q="Is there a contract?" a="No long-term contract — buy a day, week, month or year at a time, cancel any time." />
+      <section id="faq" className="lp-section lp-band-card">
+        <div className="wide lp-faq-split">
+          <div>
+            <h2 className="lp-h2">Questions people ask before switching</h2>
+            <p className="lp-lead">Something else? <a href="mailto:hello@qbooker.example" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>Email our UK support team</a>.</p>
+          </div>
+          <div>
+            {FAQS.map((f) => <FaqItem key={f.q} q={f.q} a={f.a} />)}
           </div>
         </div>
-      </div>
+      </section>
 
       {/* FINAL CTA */}
-      <div style={{ background: "var(--navy)", padding: "76px 0", textAlign: "center" }}>
-        <div className="container">
-          <h2 style={{ fontSize: 34, fontWeight: 700, letterSpacing: "-0.02em", color: "#fff", margin: "0 0 16px" }}>Ready to let the chat do the booking?</h2>
-          <p style={{ fontSize: 16, color: "rgba(255,255,255,0.7)", maxWidth: 480, margin: "0 auto 28px" }}>No card required. Set up your first location this afternoon.</p>
+      <section className="lp-band-navy lp-cta-band">
+        <div className="wide lp-cta">
+          <div>
+            <h2 className="lp-h2" style={{ marginBottom: 10 }}>Ready to run your next clinic day without the paperwork?</h2>
+            <p className="lp-lead">Free for your first location and service.</p>
+          </div>
           <button className="btn-accent" onClick={onStart}>Start free</button>
         </div>
-      </div>
+      </section>
 
       {/* FOOTER */}
-      <div style={{ padding: "56px 0 32px" }}>
-        <div className="container" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 32 }}>
+      <footer className="lp-footer">
+        <div className="wide lp-footer-grid">
           <div>
-            <div className="row" style={{ gap: 8, marginBottom: 10 }}>
-              <Logo size={22} />
-            </div>
-            <p className="muted" style={{ fontSize: 13, maxWidth: 260, lineHeight: 1.6 }}>Booking and queue management over WhatsApp, for clinics, salons and shops.</p>
+            <Logo size={22} />
+            <p className="muted" style={{ fontSize: 14, maxWidth: 280, lineHeight: 1.6, marginTop: 12 }}>Queue management over WhatsApp for NHS and healthcare services.</p>
           </div>
           <div className="stack" style={{ gap: 10 }}>
-            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Product</span>
-            <span className="muted" style={{ fontSize: 13 }}>Booking</span>
-            <span className="muted" style={{ fontSize: 13 }}>Queue management</span>
-            <a href="#pricing" className="muted" style={{ fontSize: 13 }}>Pricing</a>
+            <strong style={{ fontSize: 13 }}>Product</strong>
+            <a href="#patients" className="muted">For patients</a>
+            <a href="#hybrid" className="muted">Hybrid queue</a>
+            <a href="#pricing" className="muted">Pricing</a>
           </div>
           <div className="stack" style={{ gap: 10 }}>
-            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Industries</span>
-            <span className="muted" style={{ fontSize: 13 }}>Clinics</span>
-            <span className="muted" style={{ fontSize: 13 }}>Salons &amp; spas</span>
-            <span className="muted" style={{ fontSize: 13 }}>Shops</span>
+            <strong style={{ fontSize: 13 }}>Use cases</strong>
+            <a href="#who" className="muted">Blood clinics</a>
+            <a href="#who" className="muted">Diagnostic days</a>
+            <a href="#who" className="muted">Vaccination pop-ups</a>
+            <a href="#who" className="muted">Outpatient clinics</a>
           </div>
           <div className="stack" style={{ gap: 10 }}>
-            <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>Company</span>
-            <a href="mailto:hello@qbooker.example" className="muted" style={{ fontSize: 13 }}>Support</a>
-            <span className="muted" style={{ fontSize: 13 }}>About</span>
-            <span className="muted" style={{ fontSize: 13 }}>Privacy</span>
+            <strong style={{ fontSize: 13 }}>Company</strong>
+            <a href="#trust" className="muted">Compliance</a>
+            <a href="mailto:hello@qbooker.example" className="muted">Support</a>
+            <a href={ADMIN_APP_URL} className="muted">Log in</a>
           </div>
         </div>
-        <div className="container" style={{ borderTop: "1px solid var(--line)", marginTop: 40, paddingTop: 20, fontSize: 12, color: "var(--muted)" }}>© QBooker</div>
-      </div>
+        <div className="wide lp-footer-base">© QBooker</div>
+      </footer>
     </div>
   );
 }
