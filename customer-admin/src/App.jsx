@@ -349,25 +349,22 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   {isOpen && (
-                    <select
-                      className="btn-outline"
-                      defaultValue=""
-                      onChange={async (e) => {
-                        const action = e.target.value;
-                        e.target.value = "";
-                        if (action === "addService") {
-                          setAddingServiceFor(loc.id);
-                          setOpenLocationId(loc.id);
-                        } else if (action === "archive" && confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
-                          await api.archiveLocation(loc.id);
-                          refreshCore();
-                        }
-                      }}
-                    >
-                      <option value="" disabled>⋯</option>
-                      <option value="addService">Add service</option>
-                      <option value="archive">Archive location</option>
-                    </select>
+                    <div className="row">
+                      <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setOpenLocationId(loc.id); }}>+ Add service</button>
+                      <button
+                        className="btn-outline"
+                        title="Archive location"
+                        aria-label="Archive location"
+                        onClick={async () => {
+                          if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
+                            await api.archiveLocation(loc.id);
+                            refreshCore();
+                          }
+                        }}
+                      >
+                        🗄️
+                      </button>
+                    </div>
                   )}
                 </div>
 

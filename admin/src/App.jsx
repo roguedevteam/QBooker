@@ -15,6 +15,16 @@ const LICENSE_STATUS_META = {
 // Address is stored as one "line1, line2, city, postcode" string on tenants.company_address
 // (same column customer-admin's own Profile tab edits) — these mirror customer-admin's
 // split/combine helpers so support sees and edits the same four fields.
+// Deleting a customer is permanent and wipes their locations/services/licenses/history (a
+// revenue summary is kept, but everything else is gone) — require typing DELETE rather than
+// a single confirm(), matching the same safeguard on the tenant's own self-service deletion.
+function confirmDeleteCustomer(businessName) {
+  const typed = prompt(
+    `This permanently deletes "${businessName}" — every location, service, license and booking history goes with it. This can't be undone.\n\nType DELETE to confirm.`
+  );
+  return typed === "DELETE";
+}
+
 function splitAddress(combined) {
   const parts = (combined || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (parts.length >= 4) return { line1: parts[0], line2: parts[1], city: parts[2], postcode: parts[3] };
@@ -226,7 +236,7 @@ function Dashboard({ setError, error, onSignOut }) {
                     <td className="row">
                       <button className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
                       {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
-                      <button className="btn-outline" onClick={async () => { if (confirm(`Delete ${t.business_name}? This can't be undone.`)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
+                      <button className="btn-outline" onClick={async () => { if (confirmDeleteCustomer(t.business_name)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -421,7 +431,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
           {tenant.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Mark paid</button>}
           <button
             className="btn-outline"
-            onClick={async () => { if (confirm(`Delete ${tenant.business_name}? This can't be undone.`)) { await api.deleteTenant(tenant.id); onBack(); } }}
+            onClick={async () => { if (confirmDeleteCustomer(tenant.business_name)) { await api.deleteTenant(tenant.id); onBack(); } }}
           >
             Delete customer
           </button>
