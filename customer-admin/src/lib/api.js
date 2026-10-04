@@ -57,6 +57,7 @@ export const api = {
   scheduleServiceLicense: (serviceId, licenseId, startDate) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}`, { method: "PATCH", body: { startDate } }),
   unscheduleServiceLicense: (serviceId, licenseId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}`, { method: "PATCH", body: { unschedule: true } }),
   moveServiceLicense: (serviceId, licenseId, targetServiceId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}/move`, { method: "POST", body: { targetServiceId } }),
+  payServiceLicense: (serviceId, licenseId, payload) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}/pay`, { method: "POST", body: payload }),
   refundServiceLicense: (serviceId, licenseId) => request(`/api/tenant/services/${serviceId}/licenses/${licenseId}/refund`, { method: "POST" }),
 
   getDailyConfig: (serviceId, from, to) => request(`/api/tenant/services/${serviceId}/daily-config?from=${from}&to=${to}`),

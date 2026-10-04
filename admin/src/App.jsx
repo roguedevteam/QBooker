@@ -383,7 +383,7 @@ function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
 }
 
 function RefundLicenseButton({ tenantId, service, license, onRefunded, setError }) {
-  const refundable = license.status === "available" || license.status === "scheduled";
+  const refundable = (license.status === "available" || license.status === "scheduled") && !(license.payment_method === "later" && license.paid === false);
   if (!refundable) return null;
   return (
     <button
@@ -586,7 +586,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                             <span className="muted">Purchased {new Date(lic.purchased_at).toLocaleDateString()}</span>
                           </div>
                           <div className="row" style={{ gap: 8 }}>
-                            {lic.paid === false && lic.status !== "refunded" && (
+                            {lic.paid === false && lic.payment_method !== "later" && lic.status !== "refunded" && (
                               <button className="btn" onClick={async () => { try { await api.markLicensePaid(tenant.id, lic.id); load(); } catch (err) { setError(err.message); } }}>Mark paid</button>
                             )}
                             <RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} />

@@ -610,6 +610,20 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
     }
   }
 
+  async function payLater(lic, method) {
+    let po;
+    if (method === "invoice") {
+      po = prompt("PO / reference number for the invoice:", tenant.invoice_po || "");
+      if (!po || !po.trim()) return;
+    } else if (!confirm("Card payments via Stripe are coming soon — for now this marks the license as paid without a real charge. Continue?")) return;
+    try {
+      await api.payServiceLicense(lic.service_id, lic.id, { paymentMethod: method, invoiceEmail: method === "invoice" ? tenant.invoice_email || undefined : undefined, invoicePO: po });
+      onLicensesChanged?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function refund(lic) {
     if (!confirm(`Refund this ${lic.plan_label} license on "${lic.service_name}"? This can't be undone.`)) return;
     try {
@@ -788,9 +802,16 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
                 <span style={{ fontSize: 13 }}>{lic.plan_label}</span>
                 {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
                 <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+                {lic.paid === false && lic.payment_method === "later" && <span className="badge badge-red">Unpaid — pay later</span>}
               </div>
               <div className="row">
-                {(lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
+                {lic.paid === false && lic.payment_method === "later" && (
+                  <>
+                    <button className="btn" onClick={() => payLater(lic, "card")}>Pay by card</button>
+                    <button className="btn-outline" onClick={() => payLater(lic, "invoice")}>Pay by invoice</button>
+                  </>
+                )}
+                {(lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && !(lic.paid === false && lic.payment_method === "later") && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
                 <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
               </div>
             </div>
@@ -1187,6 +1208,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
             <div className={`payment-option${buyPay === "invoice" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("invoice")}>
               <span className="payment-option-title">Invoice</span>
               <span className="payment-option-desc">Added to your next invoice — access is immediate, billed per your invoice terms.</span>
+            </div>
+            <div className={`payment-option${buyPay === "later" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("later")}>
+              <span className="payment-option-title">Pay later</span>
+              <span className="payment-option-desc">Get the license now and pay afterwards. It stays marked unpaid until you pay by card or choose invoice from your Account tab.</span>
             </div>
             {buyPay === "invoice" && (
               <div className="wrap">

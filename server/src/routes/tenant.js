@@ -257,13 +257,13 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
 
   // Card or invoice is chosen at the point of buying. Card is still the Stripe stand-in (no
   // card details are collected or stored here); invoice records the billing details.
-  const method = paymentMethod === "invoice" || paymentMethod === "card" ? paymentMethod : req.tenant.payment_method;
+  const method = ["invoice", "card", "later"].includes(paymentMethod) ? paymentMethod : (req.tenant.payment_method === "later" ? "card" : req.tenant.payment_method);
   if (method === "invoice" && Number(plan.price) > 0 && !invoicePO?.trim() && !req.tenant.invoice_po) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
   const isFree = !(Number(plan.price) > 0);
   const licMethod = isFree ? null : method;
-  const licPaid = isFree || method !== "invoice";
+  const licPaid = isFree || method === "card";
   const result = await query(
     `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid, paid_at, invoice_po)
      values ($1,$2,$3,$4,$5,$6,'available',$7,$8,$9,$10) returning *`,
@@ -280,7 +280,7 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
   }
   const chargeNote = method === "invoice"
     ? `£${plan.price} added to next invoice`
-    : `£${plan.price} paid by card`;
+    : method === "later" ? `£${plan.price} to pay later` : `£${plan.price} paid by card`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License bought for "${req.service.name}" — ${plan.planLabel}, ${chargeNote} (not yet scheduled)`]);
   res.json({ license: result.rows[0], charge: { amount: plan.price, note: chargeNote } });
@@ -394,7 +394,32 @@ router.post("/services/:id/licenses/:licenseId/move", adminOnly, asyncHandler(lo
 // Refund stub — records the cancellation now; real money moves once Stripe is wired up.
 // Available or Scheduled can both be refunded — neither has actually started yet. Once
 // Active (today's inside its window) it's been live and can't be refunded from here.
+// Settle a "pay later" license: by card (Stripe stand-in, nothing stored) or by invoice.
+router.post("/services/:id/licenses/:licenseId/pay", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const { paymentMethod, invoiceEmail, invoicePO } = req.body;
+  const lic = (await query(`select * from service_licenses where id=$1 and service_id=$2 and tenant_id=$3`, [req.params.licenseId, req.service.id, req.tenant.id])).rows[0];
+  if (!lic) return res.status(404).json({ error: "License not found." });
+  if (lic.paid) return res.status(409).json({ error: "This license is already paid." });
+  if (paymentMethod === "card") {
+    const r = await query(`update service_licenses set payment_method='card', paid=true, paid_at=now() where id=$1 returning *`, [lic.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `${lic.plan_label} license for "${req.service.name}" paid by card`]);
+    return res.json({ license: r.rows[0] });
+  }
+  if (paymentMethod === "invoice") {
+    if (!invoicePO?.trim()) return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
+    const r = await query(`update service_licenses set payment_method='invoice', invoice_po=$1 where id=$2 returning *`, [invoicePO.trim(), lic.id]);
+    await query(`update tenants set invoice_email=coalesce($1, invoice_email), invoice_po=$2 where id=$3`, [invoiceEmail || null, invoicePO.trim(), req.tenant.id]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `${lic.plan_label} license for "${req.service.name}" moved to invoice`]);
+    return res.json({ license: r.rows[0] });
+  }
+  res.status(400).json({ error: "Unknown payment method." });
+}));
+
 router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const lateCheck = (await query(`select payment_method, paid from service_licenses where id=$1`, [req.params.licenseId])).rows[0];
+  if (lateCheck && lateCheck.payment_method === "later" && lateCheck.paid === false) {
+    return res.status(409).json({ error: "This license hasn't been paid for yet, so there's nothing to refund. Pay for it or choose invoice first." });
+  }
   const license = await resolveServiceLicense(req.params.licenseId);
   if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
   if (license.status !== "available" && license.status !== "scheduled") {

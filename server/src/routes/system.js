@@ -173,6 +173,10 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
 // held as "pending" has nothing left unpaid, it goes active — same effect the old account-level
 // "Mark paid" had.
 router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (req, res) => {
+  const cur = (await query(`select payment_method from service_licenses where id=$1 and tenant_id=$2`, [req.params.licenseId, req.params.id])).rows[0];
+  if (cur?.payment_method === "later") {
+    return res.status(409).json({ error: "This is a pay-later license — it stays unpaid until the customer pays by card or chooses invoice." });
+  }
   const result = await query(
     `update service_licenses set paid=true, paid_at=now() where id=$1 and tenant_id=$2 returning *`,
     [req.params.licenseId, req.params.id]
@@ -195,6 +199,9 @@ router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHand
   if (!service) return res.status(404).json({ error: "Service not found." });
   const license = await resolveServiceLicense(req.params.licenseId);
   if (!license || license.service_id !== service.id) return res.status(404).json({ error: "License not found." });
+  if (license.payment_method === "later" && license.paid === false) {
+    return res.status(409).json({ error: "Pay-later license that hasn't been paid — nothing to refund." });
+  }
   if (license.status !== "available" && license.status !== "scheduled") {
     return res.status(409).json({ error: "Only a license that's never gone live (Available or Scheduled) can be refunded — this one is Active, Expired or already Refunded." });
   }
