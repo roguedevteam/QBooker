@@ -321,6 +321,9 @@ function CustomerDetail({ tenantId, onBack, setError }) {
 
       <div className="card stack">
         <div style={{ fontWeight: 600, fontSize: 14 }}>Account</div>
+        {tenant.company_address && (
+          <div className="muted" style={{ fontSize: 12 }}>{tenant.company_address}</div>
+        )}
         <div className="wrap">
           <label className="stack" style={{ gap: 2 }}>
             <span className="muted" style={{ fontSize: 11 }}>First name</span>
@@ -384,7 +387,6 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                 className="input" style={{ width: 160, fontWeight: 600 }} defaultValue={loc.name}
                 onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
               />
-              {loc.address && <span className="muted" style={{ fontSize: 12 }}>{loc.address}</span>}
               {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px", borderRadius: 4 }}>{loc.code}</code>}
             </div>
             <button
