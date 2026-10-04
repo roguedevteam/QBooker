@@ -1166,7 +1166,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
             <strong style={{ fontSize: 13 }}>Select license type</strong>
           </div>
           <div className="plan-grid">
-            {["day", "week", "month", "year", "custom"].map((id) => {
+            {["day", "week", "month", "custom"].map((id) => {
               const onSale = id !== "custom" && pricing.sale?.active && pricing.sale[id] != null;
               const price = id === "custom" ? null : (onSale ? pricing.sale[id] : pricing[id]);
               return (

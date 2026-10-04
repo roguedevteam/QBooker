@@ -382,6 +382,27 @@ function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
   );
 }
 
+function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState("");
+  async function add() {
+    try {
+      await api.addAnnualLicense(tenantId, service.id, { price: Number(price) });
+      setOpen(false); setPrice("");
+      onAdded();
+    } catch (err) { setError(err.message); }
+  }
+  if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Annual license</button>;
+  return (
+    <span className="row" style={{ gap: 4 }}>
+      <span className="muted" style={{ fontSize: 12 }}>Agreed price £</span>
+      <input className="input" type="number" min={1} style={{ width: 90 }} value={price} onChange={(e) => setPrice(e.target.value)} />
+      <button className="btn" disabled={!(Number(price) > 0)} onClick={add}>Add</button>
+      <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
+    </span>
+  );
+}
+
 function RefundLicenseButton({ tenantId, service, license, onRefunded, setError }) {
   const refundable = (license.status === "available" || license.status === "scheduled") && !(license.payment_method === "later" && license.paid === false);
   if (!refundable) return null;
@@ -556,6 +577,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                     </div>
                     <div className="row">
                       <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
+                      <AddAnnualLicense tenantId={tenant.id} service={svc} onAdded={load} setError={setError} />
                       <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
                         {svc.archived ? "Unarchive" : "Archive"}
                       </button>

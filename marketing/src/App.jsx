@@ -113,12 +113,12 @@ const TRUST_POINTS = [
 const FAQS = [
   { q: "Do patients need to install anything?", a: "No. Everything happens inside WhatsApp, which almost everyone already has." },
   { q: "Is it safe to use in an NHS setting?", a: "QBooker doesn't capture or store patient data or clinical records. It's GDPR and Cyber Essentials compliant, with UK-based servers and a UK-based support team." },
-  { q: "Can I use it for just one day?", a: "Yes. Licences are bought per service and can run for a day, a week, a month, a year or any custom period, so a one-off clinic day costs a one-day licence." },
+  { q: "Can I use it for just one day?", a: "Yes. Licences are bought per service and can run for a day, a week, a month or any custom number of days, so a one-off clinic day costs a one-day licence." },
   { q: "What's the difference between queue, appointments and hybrid?", a: "A queue is walk-ins only, first come first served. Appointments are booked slots only. Hybrid runs both together in one service, so people on site can join the queue now while others reserve a slot for later." },
   { q: "What if a patient doesn't use WhatsApp?", a: "They can still turn up as normal and your team adds them to the same queue by hand." },
   { q: "Can I run more than one location?", a: "Yes. Each location gets its own sign-in code and queue, and staff only see their own." },
   { q: "How long does setup take?", a: "Under 60 seconds to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 + VAT." },
-  { q: "Is there a contract?", a: "No long-term contract. Buy a licence for a day, week, month or year at a time." },
+  { q: "Is there a contract?", a: "No long-term contract. Buy a licence for a day, week, month or custom period at a time. Annual licences are available on request." },
 ];
 
 // Hybrid timeline — a one-day clinic from 9am to 5pm. Positions are percentages of that span.
@@ -380,13 +380,13 @@ function Landing({ onStart, simulatedBadge }) {
               <button className="btn-accent" onClick={onStart}>Start free trial</button>
             </div>
             <div>
-              <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month, a year or a custom period.</p>
+              <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month or a custom number of days.</p>
               {pricing && (
                 <>
                   {pricing.sale?.active && <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, margin: "0 0 10px" }}>Sale on selected plans</p>}
                   <div className="lp-prices">
-                    {["day", "week", "month", "year"].map((k) => {
-                      const label = { day: "Day", week: "Week", month: "Month", year: "Year" }[k];
+                    {["day", "week", "month"].map((k) => {
+                      const label = { day: "Day", week: "Week", month: "Month" }[k];
                       const onSale = pricing.sale?.active && pricing.sale[k] != null;
                       return (
                         <div key={k} className="lp-price">
@@ -397,7 +397,7 @@ function Landing({ onStart, simulatedBadge }) {
                       );
                     })}
                   </div>
-                  <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>All prices are per service. Need something in between? Choose a custom period when you sign up.</p>
+                  <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>All prices are per service. Need something in between? Choose a custom number of days. Want a full year? Annual licences are priced on application, so <a href="mailto:hello@qbooker.example?subject=Annual%20licence" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>contact us</a>.</p>
                 </>
               )}
               <p className="muted" style={{ fontSize: 14, lineHeight: 1.6, marginTop: 28, maxWidth: 520 }}>

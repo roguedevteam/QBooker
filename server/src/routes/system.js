@@ -145,6 +145,23 @@ router.delete("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
 // Platform-granted comp license — price 0, otherwise behaves exactly like a bought one
 // (available -> can be scheduled from the customer's own service panel). Label is tagged
 // so it's obviously a grant, not a real purchase, wherever licenses are listed.
+// Annual licenses are price-on-application: platform admin sets the agreed price. Added as an
+// invoice license (unpaid until marked paid), otherwise identical to any other license.
+router.post("/tenants/:id/services/:svcId/licenses/annual", asyncHandler(async (req, res) => {
+  const price = Number(req.body.price);
+  if (!(price > 0)) return res.status(400).json({ error: "Enter the agreed annual price." });
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
+  if (!service) return res.status(404).json({ error: "Service not found." });
+  const result = await query(
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid)
+     values ($1,$2,'year','Year (agreed price)',365,$3,'available','invoice',false) returning *`,
+    [req.params.id, service.id, price.toFixed(2)]
+  );
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.params.id, `Annual license added by platform admin for "${service.name}" at agreed price £${price.toFixed(2)}`]);
+  res.json({ license: { ...result.rows[0], service_name: service.name } });
+}));
+
 router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (req, res) => {
   const { planId, customDays } = req.body;
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];

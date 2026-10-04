@@ -35,6 +35,7 @@ export const api = {
   updateTenantService: (id, svcId, patch) => request(`/api/system/tenants/${id}/services/${svcId}`, { method: "PATCH", body: patch }),
   deleteTenantService: (id, svcId) => request(`/api/system/tenants/${id}/services/${svcId}`, { method: "DELETE" }),
   grantFreeLicense: (id, svcId, body) => request(`/api/system/tenants/${id}/services/${svcId}/licenses/free`, { method: "POST", body }),
+  addAnnualLicense: (id, svcId, body) => request(`/api/system/tenants/${id}/services/${svcId}/licenses/annual`, { method: "POST", body }),
   markLicensePaid: (id, licenseId) => request(`/api/system/tenants/${id}/licenses/${licenseId}/mark-paid`, { method: "POST" }),
   refundTenantLicense: (id, svcId, licenseId) => request(`/api/system/tenants/${id}/services/${svcId}/licenses/${licenseId}/refund`, { method: "POST" }),
   getPricing: () => request("/api/system/pricing"),
