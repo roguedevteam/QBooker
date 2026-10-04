@@ -42,7 +42,8 @@ export const api = {
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),
-  deleteLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "DELETE" }),
+  archiveLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: { archived: true } }),
+  unarchiveLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: { archived: false } }),
 
   getServices: (includeArchived) => request(`/api/tenant/services${includeArchived ? "?includeArchived=true" : ""}`),
   addService: (name, locationId) => request("/api/tenant/services", { method: "POST", body: { name, locationId } }),

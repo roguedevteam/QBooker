@@ -254,6 +254,8 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
   }
   const visibleServices = services.filter((s) => showArchived ? true : !s.archived);
   const archivedCount = services.filter((s) => s.archived).length;
+  const visibleLocations = locations.filter((l) => !l.archived);
+  const archivedLocations = locations.filter((l) => l.archived);
   async function refreshQueue() {
     try {
       const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
@@ -311,9 +313,9 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
             </div>
           )}
 
-          {locations.map((loc) => {
+          {visibleLocations.map((loc) => {
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
-            const soleLocation = locations.length === 1;
+            const soleLocation = visibleLocations.length === 1;
             const isOpen = soleLocation || openLocationId === loc.id;
             const addingHere = addingServiceFor === loc.id;
             return (
@@ -348,8 +350,8 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                         } else if (action === "website") {
                           setOpenLocationId(loc.id);
                           setEditingWebsiteFor(loc.id);
-                        } else if (action === "remove" && confirm(`Remove "${loc.name}"? This also removes its services and can't be undone.`)) {
-                          await api.deleteLocation(loc.id);
+                        } else if (action === "archive" && confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
+                          await api.archiveLocation(loc.id);
                           refreshCore();
                         }
                       }}
@@ -357,7 +359,7 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                       <option value="" disabled>⋯</option>
                       <option value="addService">Add service</option>
                       <option value="website">Edit website</option>
-                      <option value="remove">Remove location</option>
+                      <option value="archive">Archive location</option>
                     </select>
                   )}
                 </div>
@@ -425,7 +427,7 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
         <div className="stack">
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
           <div className="wrap">
-            <div className="card">{locations.length}<div className="muted" style={{ fontSize: 11 }}>Location{locations.length === 1 ? "" : "s"}</div></div>
+            <div className="card">{visibleLocations.length}<div className="muted" style={{ fontSize: 11 }}>Location{visibleLocations.length === 1 ? "" : "s"}</div></div>
             <div className="card">{services.filter((s) => !s.archived).length}<div className="muted" style={{ fontSize: 11 }}>Active service{services.length === 1 ? "" : "s"}</div></div>
           </div>
           {stats && (
@@ -464,9 +466,22 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
       )}
 
       {tab === "audit" && (
-        <div className="card stack">
-          {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
-          {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
+        <div className="stack">
+          {archivedLocations.length > 0 && (
+            <div className="card stack">
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Archived locations ({archivedLocations.length})</div>
+              {archivedLocations.map((loc) => (
+                <div key={loc.id} className="row" style={{ justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13 }}>{loc.name}</span>
+                  <button className="btn-outline" onClick={async () => { try { await api.unarchiveLocation(loc.id); refreshCore(); } catch (err) { setError(err.message); } }}>Unarchive</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="card stack">
+            {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
+            {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
+          </div>
         </div>
       )}
     </div>

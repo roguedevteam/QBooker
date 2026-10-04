@@ -55,7 +55,7 @@ router.get("/locations", asyncHandler(async (req, res) => {
   const result = await query(
     `select l.*, lc.code from locations l
      left join location_codes lc on lc.location_id = l.id
-     where l.tenant_id=$1 order by l.created_at`,
+     where l.tenant_id=$1 order by l.archived asc, l.created_at`,
     [req.tenant.id]
   );
   res.json({ locations: result.rows });
@@ -78,18 +78,24 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, address, websiteUrl } = req.body;
+  const { name, address, websiteUrl, archived } = req.body;
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address), website_url=coalesce($3,website_url) where id=$4 and tenant_id=$5 returning *`,
-    [name, address, websiteUrl, req.params.id, req.tenant.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), website_url=coalesce($3,website_url), archived=coalesce($4,archived) where id=$5 and tenant_id=$6 returning *`,
+    [name, address, websiteUrl, archived, req.params.id, req.tenant.id]
   );
+  if (result.rows.length === 0) return res.status(404).json({ error: "Location not found." });
+  if (archived === true) {
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `Location "${result.rows[0].name}" archived`]);
+  } else if (archived === false) {
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `Location "${result.rows[0].name}" unarchived`]);
+  }
   res.json({ location: result.rows[0] });
 }));
 
-router.delete("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
-  await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  res.json({ ok: true });
-}));
+// Locations can no longer be permanently deleted from the customer-admin app — archive instead
+// (see PATCH above) so a mistaken removal can't wipe out a location's services and license history.
 
 // Every license this tenant has ever bought, across every service, with status freshly
 // resolved — backs the Profile tab's licenses list (refund/print live there now instead of
