@@ -12,6 +12,59 @@ const LICENSE_STATUS_META = {
 };
 
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
+// Address is stored as one "line1, line2, city, postcode" string on tenants.company_address
+// (same column customer-admin's own Profile tab edits) — these mirror customer-admin's
+// split/combine helpers so support sees and edits the same four fields.
+function splitAddress(combined) {
+  const parts = (combined || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 4) return { line1: parts[0], line2: parts[1], city: parts[2], postcode: parts[3] };
+  if (parts.length === 3) return { line1: parts[0], line2: "", city: parts[1], postcode: parts[2] };
+  if (parts.length === 2) return { line1: parts[0], line2: "", city: "", postcode: parts[1] };
+  if (parts.length === 1) return { line1: parts[0], line2: "", city: "", postcode: "" };
+  return { line1: "", line2: "", city: "", postcode: "" };
+}
+function combineAddress(line1, line2, city, postcode) {
+  return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+function AddressFields({ tenantId, companyAddress, onSaved, setError }) {
+  const initial = splitAddress(companyAddress);
+  const [line1, setLine1] = useState(initial.line1);
+  const [line2, setLine2] = useState(initial.line2);
+  const [city, setCity] = useState(initial.city);
+  const [postcode, setPostcode] = useState(initial.postcode);
+
+  async function save() {
+    const combined = combineAddress(line1, line2, city, postcode);
+    if (combined === (companyAddress || "")) return;
+    try {
+      await api.updateTenant(tenantId, { companyAddress: combined });
+      onSaved();
+    } catch (err) { setError(err.message); }
+  }
+
+  return (
+    <>
+      <label className="stack" style={{ gap: 2 }}>
+        <span className="muted" style={{ fontSize: 11 }}>Address line 1</span>
+        <input className="input" style={{ width: 180 }} value={line1} onChange={(e) => setLine1(e.target.value)} onBlur={save} />
+      </label>
+      <label className="stack" style={{ gap: 2 }}>
+        <span className="muted" style={{ fontSize: 11 }}>Address line 2</span>
+        <input className="input" style={{ width: 180 }} value={line2} onChange={(e) => setLine2(e.target.value)} onBlur={save} />
+      </label>
+      <label className="stack" style={{ gap: 2 }}>
+        <span className="muted" style={{ fontSize: 11 }}>City</span>
+        <input className="input" style={{ width: 140 }} value={city} onChange={(e) => setCity(e.target.value)} onBlur={save} />
+      </label>
+      <label className="stack" style={{ gap: 2 }}>
+        <span className="muted" style={{ fontSize: 11 }}>Post / zip code</span>
+        <input className="input" style={{ width: 110 }} value={postcode} onChange={(e) => setPostcode(e.target.value)} onBlur={save} />
+      </label>
+    </>
+  );
+}
+
 function Logo({ size = 28, dark = false }) {
   return (
     <span className="logo">
@@ -357,13 +410,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
               onBlur={async (e) => { if (Number(e.target.value) !== tenant.location_count) { await api.updateTenant(tenant.id, { locationCount: Number(e.target.value) }); load(); } }}
             />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Business address</span>
-            <input
-              className="input" style={{ width: 320 }} defaultValue={tenant.company_address || ""}
-              onBlur={async (e) => { if (e.target.value !== (tenant.company_address || "")) { await api.updateTenant(tenant.id, { companyAddress: e.target.value }); load(); } }}
-            />
-          </label>
+          <AddressFields key={tenant.id} tenantId={tenant.id} companyAddress={tenant.company_address} onSaved={load} setError={setError} />
         </div>
         <div className="row">
           {tenant.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Mark paid</button>}
