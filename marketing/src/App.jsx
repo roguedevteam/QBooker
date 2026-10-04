@@ -482,34 +482,12 @@ function StepHeader({ step, labels }) {
   );
 }
 
-// Joins the 4 address parts into the single string the server stores, dropping any that are blank.
-function combineAddress(line1, line2, city, postcode) {
-  return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
-}
-
 function Field({ label, hint, children }) {
   return (
     <div className="field">
       <label>{label}</label>
       {children}
       {hint && <div className="field-hint">{hint}</div>}
-    </div>
-  );
-}
-
-function AddressFields({ line1, line2, city, postcode, onChange }) {
-  return (
-    <div className="stack" style={{ gap: 8 }}>
-      <Field label="Address line 1">
-        <input className="input" aria-label="Address line 1" value={line1} onChange={(e) => onChange("line1", e.target.value)} />
-      </Field>
-      <Field label="Address line 2">
-        <input className="input" aria-label="Address line 2" value={line2} onChange={(e) => onChange("line2", e.target.value)} />
-      </Field>
-      <div className="row" style={{ gap: 8 }}>
-        <Field label="City"><input className="input" aria-label="City" value={city} onChange={(e) => onChange("city", e.target.value)} /></Field>
-        <Field label="Post / zip code"><input className="input" aria-label="Post / zip code" value={postcode} onChange={(e) => onChange("postcode", e.target.value)} /></Field>
-      </div>
     </div>
   );
 }
@@ -597,10 +575,6 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [companyLine1, setCompanyLine1] = useState("");
-  const [companyLine2, setCompanyLine2] = useState("");
-  const [companyCity, setCompanyCity] = useState("");
-  const [companyPostcode, setCompanyPostcode] = useState("");
 
   // Step 2 — locations (free, unlimited — just a routing/staff-access concept)
   const [locationNames, setLocationNames] = useState([""]);
@@ -681,7 +655,6 @@ function Signup({ onDone, setError, onBackToLanding }) {
       const effectivePaymentMethod = needsPayment ? paymentMethod : "card";
       const payload = {
         businessName, firstName, lastName, email,
-        companyAddress: combineAddress(companyLine1, companyLine2, companyCity, companyPostcode),
         paymentMethod: effectivePaymentMethod,
         invoiceEmail: needsPayment ? invoiceEmail : "",
         invoicePO: needsPayment ? poNumber : "",
@@ -732,21 +705,9 @@ function Signup({ onDone, setError, onBackToLanding }) {
             <Field label="Email address" hint="This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.">
               <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
-
-            <div style={{ borderTop: "1px solid var(--line)", margin: "12px 0" }} />
-
-            <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Company address <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              You can add your business address later from the Profile tab once you're set up.
             </div>
-            <AddressFields
-              line1={companyLine1} line2={companyLine2} city={companyCity} postcode={companyPostcode}
-              onChange={(field, value) => {
-                if (field === "line1") setCompanyLine1(value);
-                if (field === "line2") setCompanyLine2(value);
-                if (field === "city") setCompanyCity(value);
-                if (field === "postcode") setCompanyPostcode(value);
-              }}
-            />
             <div className="row" style={{ justifyContent: "flex-end" }}>
               <button className="btn" disabled={!step1Valid} onClick={next}>Continue</button>
             </div>

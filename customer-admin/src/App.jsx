@@ -269,7 +269,16 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
   async function refreshLicenses() {
     try { const r = await api.getAllLicenses(); setAllLicenses(r.licenses); } catch (err) { setError(err.message); }
   }
-  useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); }, []);
+  useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); refreshLicenses(); }, []);
+
+  const hasLicense = allLicenses.some((l) => l.status !== "refunded");
+  const hasAddress = !!(tenant.company_address && tenant.company_address.trim());
+  const setupTasks = [
+    { key: "license", label: "Buy a license for a service", done: hasLicense, cta: "Go to Locations", go: () => setTab("locations") },
+    { key: "address", label: "Enter your business address", done: hasAddress, cta: "Go to Profile", go: () => setTab("profile") },
+  ];
+  const setupDone = setupTasks.filter((t) => t.done).length;
+  const setupPercent = Math.round((setupDone / setupTasks.length) * 100);
 
   // Light polling for near-real-time (not a WebSocket/Supabase-realtime subscription — just periodic refetch).
   useEffect(() => {
@@ -425,6 +434,25 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
 
       {tab === "dashboard" && (
         <div className="stack">
+          {setupPercent < 100 && (
+            <div className="card stack" style={{ gap: 10 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Finish setting up your account</div>
+                <span className="muted" style={{ fontSize: 12 }}>{setupPercent}% complete</span>
+              </div>
+              <div style={{ height: 6, borderRadius: 3, background: "#EAE9E3", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${setupPercent}%`, background: "var(--brand)", borderRadius: 3 }} />
+              </div>
+              <div className="stack" style={{ gap: 6 }}>
+                {setupTasks.filter((t) => !t.done).map((t) => (
+                  <div key={t.key} className="row" style={{ justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13 }}>{t.label}</span>
+                    <button className="btn-outline" onClick={t.go}>{t.cta}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
           <div className="wrap">
             <div className="card">{visibleLocations.length}<div className="muted" style={{ fontSize: 11 }}>Location{visibleLocations.length === 1 ? "" : "s"}</div></div>
