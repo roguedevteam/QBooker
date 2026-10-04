@@ -369,96 +369,105 @@ function CustomerDetail({ tenantId, onBack, setError }) {
         </div>
       </div>
 
-      <div className="card stack">
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations, services &amp; licenses ({locations.length} location{locations.length === 1 ? "" : "s"})</div>
-        {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
-        {locations.map((loc, li) => (
-          <div key={loc.id} className="stack" style={{ gap: 8, paddingTop: li === 0 ? 0 : 12, borderTop: li === 0 ? "none" : "1px solid var(--line)" }}>
-            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                <input
-                  className="input" style={{ width: 160 }} defaultValue={loc.name}
-                  onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
-                />
-                <input
-                  className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
-                  onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
-                />
-                {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px" }}>{loc.code}</code>}
-              </div>
-              <button
-                className="btn-outline"
-                onClick={async () => { if (confirm(`Delete location "${loc.name}"? This deletes its services and licenses too — can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
-              >
-                Delete location
-              </button>
-            </div>
+      <div className="stack" style={{ gap: 2 }}>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations, services &amp; licenses</div>
+        <div className="muted" style={{ fontSize: 12 }}>{locations.length} location{locations.length === 1 ? "" : "s"}</div>
+      </div>
+      {locations.length === 0 && <div className="card muted" style={{ fontSize: 13 }}>No locations yet.</div>}
 
-            <div className="stack" style={{ gap: 8, paddingLeft: 16, borderLeft: "2px solid var(--line)" }}>
-              {servicesByLocation(loc.id).length === 0 && <div className="muted" style={{ fontSize: 12 }}>No services at this location.</div>}
-              {servicesByLocation(loc.id).map((svc) => {
-                const svcLicenses = licensesByService(svc.id);
-                return (
-                  <div key={svc.id} className="stack" style={{ gap: 6 }}>
-                    <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                      <div className="row" style={{ flexWrap: "wrap" }}>
-                        <strong style={{ fontSize: 13 }}>{svc.name}</strong>
+      {locations.map((loc) => (
+        <div key={loc.id} className="card stack" style={{ gap: 10 }}>
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>📍</span>
+              <input
+                className="input" style={{ width: 160, fontWeight: 600 }} defaultValue={loc.name}
+                onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
+              />
+              <input
+                className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
+                onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
+              />
+              {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px", borderRadius: 4 }}>{loc.code}</code>}
+            </div>
+            <button
+              className="btn-outline"
+              onClick={async () => { if (confirm(`Delete location "${loc.name}"? This deletes its services and licenses too — can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
+            >
+              Delete location
+            </button>
+          </div>
+
+          <div className="stack" style={{ gap: 8 }}>
+            {servicesByLocation(loc.id).length === 0 && <div className="muted" style={{ fontSize: 12, padding: "0 4px" }}>No services at this location.</div>}
+            {servicesByLocation(loc.id).map((svc) => {
+              const svcLicenses = licensesByService(svc.id);
+              const lockTitle = "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set.";
+              return (
+                <div key={svc.id} className="stack" style={{ gap: 8, background: "#fff", border: "1px solid var(--line)", borderRadius: 6, padding: 12 }}>
+                  <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                    <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
+                      <strong style={{ fontSize: 13 }}>{svc.name}</strong>
+                      {svc.archived && <span className="badge badge-amber">Archived</span>}
+                      <label className="row" style={{ gap: 4 }}>
+                        <span className="muted" style={{ fontSize: 11 }}>Type:</span>
                         <select
-                          value={svc.mode} disabled={svc.modeLocked}
-                          title={svc.modeLocked ? "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set." : undefined}
+                          value={svc.mode} disabled={svc.modeLocked} title={svc.modeLocked ? lockTitle : undefined}
                           onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}
                         >
                           {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
                         </select>
-                        {svc.mode !== "queue" && (
+                      </label>
+                      {svc.mode !== "queue" && (
+                        <label className="row" style={{ gap: 4 }}>
+                          <span className="muted" style={{ fontSize: 11 }}>Slot length:</span>
                           <input
-                            className="input" type="number" style={{ width: 60 }} defaultValue={svc.slot_minutes} disabled={svc.modeLocked}
-                            title={svc.modeLocked ? "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set." : undefined}
+                            className="input" type="number" style={{ width: 56 }} defaultValue={svc.slot_minutes} disabled={svc.modeLocked}
+                            title={svc.modeLocked ? lockTitle : undefined}
                             onBlur={async (e) => { if (Number(e.target.value) !== svc.slot_minutes) { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); } }}
                           />
-                        )}
-                        {svc.archived && <span className="badge badge-amber">Archived</span>}
-                      </div>
-                      <div className="row">
-                        <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
-                        <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
-                          {svc.archived ? "Unarchive" : "Archive"}
-                        </button>
-                        <button
-                          className="btn-outline"
-                          onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                          <span className="muted" style={{ fontSize: 11 }}>min</span>
+                        </label>
+                      )}
                     </div>
-
-                    <table style={{ marginLeft: 16, width: "calc(100% - 16px)" }}>
-                      <thead><tr><th>Plan</th><th>Status</th><th>Dates</th><th>Price</th><th>Purchased</th><th>Actions</th></tr></thead>
-                      <tbody>
-                        {svcLicenses.length === 0 && <tr><td colSpan={6} className="muted" style={{ fontSize: 12, padding: 8 }}>No licenses on this service.</td></tr>}
-                        {svcLicenses.map((lic) => {
-                          const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
-                          return (
-                            <tr key={lic.id}>
-                              <td>{lic.plan_label}</td>
-                              <td><span className={`badge badge-${meta.color}`}>{meta.label}</span></td>
-                              <td>{lic.start_date ? `${lic.start_date} to ${lic.end_date}` : "—"}</td>
-                              <td>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</td>
-                              <td>{new Date(lic.purchased_at).toLocaleDateString()}</td>
-                              <td><RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} /></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    <div className="row">
+                      <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
+                      <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
+                        {svc.archived ? "Unarchive" : "Archive"}
+                      </button>
+                      <button
+                        className="btn-outline"
+                        onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  <div className="stack" style={{ gap: 4, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
+                    {svcLicenses.length === 0 && <div className="muted" style={{ fontSize: 12 }}>No licenses on this service.</div>}
+                    {svcLicenses.map((lic) => {
+                      const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+                      return (
+                        <div key={lic.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+                          <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+                            <span className={`badge badge-${meta.color}`}>{meta.label}</span>
+                            <span style={{ fontWeight: 600 }}>{lic.plan_label}</span>
+                            {lic.start_date && <span className="muted">{lic.start_date} to {lic.end_date}</span>}
+                            <span className="muted">{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+                            <span className="muted">Purchased {new Date(lic.purchased_at).toLocaleDateString()}</span>
+                          </div>
+                          <RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }
