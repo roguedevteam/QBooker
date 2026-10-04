@@ -35,6 +35,17 @@ function CopyButton({ value, label = "Copy" }) {
     </button>
   );
 }
+// A plain archive-box icon (lid + box) — clearer at a glance than a generic emoji, and
+// renders consistently across platforms since it's drawn, not a font glyph.
+function ArchiveIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="2" y="3" width="16" height="4" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3.5 7.5V15a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V7.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 10.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 function isDatePastClient(dateStr) {
   return dateStr < todayIso();
 }
@@ -352,7 +363,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     <div className="row">
                       <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setOpenLocationId(loc.id); }}>+ Add service</button>
                       <button
-                        className="btn-outline"
+                        className="btn-outline row"
+                        style={{ gap: 4 }}
                         title="Archive location"
                         aria-label="Archive location"
                         onClick={async () => {
@@ -362,7 +374,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                           }
                         }}
                       >
-                        🗄️
+                        <ArchiveIcon /> Archive
                       </button>
                     </div>
                   )}
