@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { query } from "../db/pool.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock } from "../lib/scheduling.js";
+import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, estimateWalkInWaitMinutes } from "../lib/scheduling.js";
 import { isServiceLicensedOn } from "../lib/serviceLicense.js";
 
 const router = Router();
@@ -13,6 +13,26 @@ async function loadTenant(req, res, next) {
   next();
 }
 router.use("/:tenantId", asyncHandler(loadTenant));
+
+// Only meaningful for a waiting walk-in — a booked ticket already has its slot time, and a
+// called/cancelled ticket has nothing left to wait for. Mirrors call-next's own queue
+// ordering (FIFO by created_at, no hour-block split) so the position shown actually matches
+// who gets called next.
+async function getQueueInfo(ticket) {
+  if (ticket.type !== "walk_in" || ticket.status !== "waiting") return null;
+  const service = (await query(`select * from services where id=$1`, [ticket.service_id])).rows[0];
+  if (!service) return null;
+  const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [ticket.service_id, ticket.visit_date])).rows[0];
+  if (!day) return null;
+  const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
+  const cfg = { slotMinutes: service.slot_minutes, walkInStaffCount };
+  const aheadResult = await query(
+    `select count(*) from tickets where service_id=$1 and visit_date=$2 and type='walk_in' and status='waiting' and created_at < $3`,
+    [ticket.service_id, ticket.visit_date, ticket.created_at]
+  );
+  const aheadCount = Number(aheadResult.rows[0]?.count || 0);
+  return { position: aheadCount + 1, estimatedMinutes: estimateWalkInWaitMinutes(cfg, aheadCount) };
+}
 
 // Only what a customer needs to see — never exposes email, access code, pricing, etc.
 router.get("/:tenantId/info", (req, res) => {
@@ -97,7 +117,24 @@ router.get("/:tenantId/tickets/:ticketId/status", asyncHandler(async (req, res) 
     )).rows[0];
     message = m?.body || null;
   }
-  res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message });
+  const queue = await getQueueInfo(ticket);
+  res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message, queue });
+}));
+
+// Self-service cancel — lets a customer back out of a queue or booking themselves instead of
+// having to contact the business. Only touches their own ticket, and only while it's still
+// pending (no undoing a cancel on something already seen/cancelled/no-show).
+router.post("/:tenantId/tickets/:ticketId/cancel", asyncHandler(async (req, res) => {
+  const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  if (!["waiting", "booked"].includes(ticket.status)) {
+    return res.status(409).json({ error: "This ticket can no longer be cancelled." });
+  }
+  const result = await query(`update tickets set status='cancelled' where id=$1 returning *`, [ticket.id]);
+  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `Ticket ${ticket.ticket_number} cancelled by customer for ${service?.name || "service"}`]);
+  res.json({ ticket: result.rows[0] });
 }));
 
 router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, res) => {
@@ -120,7 +157,8 @@ router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, r
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticketNumber} ${type === "booked" ? `booked ${service.name}` : `joined the ${service.name} queue (walk-in)`}`]);
-  res.json({ ticket: result.rows[0] });
+  const queue = await getQueueInfo(result.rows[0]);
+  res.json({ ticket: result.rows[0], queue });
 }));
 
 export default router;

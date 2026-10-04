@@ -492,17 +492,24 @@ router.delete("/tickets/:id", asyncHandler(async (req, res) => {
 
 router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   const { date, clockMinutes, roomLabel } = req.body;
-  const callable = await query(
-    `select * from tickets
-     where service_id=$1 and tenant_id=$2 and visit_date=$3
-       and ((type='walk_in' and status='waiting') or (type='booked' and status='booked' and slot_time <= $4))
-     order by (case when type='booked' then slot_time else extract(epoch from created_at)::int end) asc
-     limit 1`,
+  // One atomic statement (row locked with FOR UPDATE SKIP LOCKED inside the subquery) so two
+  // staff covering the same service calling "next" at the same moment can't both land on the
+  // same ticket — the loser just sees the next one in line instead.
+  const result = await query(
+    `update tickets set status='seen'
+     where id = (
+       select id from tickets
+       where service_id=$1 and tenant_id=$2 and visit_date=$3
+         and ((type='walk_in' and status='waiting') or (type='booked' and status='booked' and slot_time <= $4))
+       order by (case when type='booked' then slot_time else extract(epoch from created_at)::int end) asc
+       limit 1
+       for update skip locked
+     )
+     returning *`,
     [req.params.id, req.tenant.id, date, clockMinutes]
   );
-  if (callable.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
-  const ticket = callable.rows[0];
-  await query(`update tickets set status='seen' where id=$1`, [ticket.id]);
+  if (result.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
+  const ticket = result.rows[0];
   const roomText = roomLabel?.trim() ? `Please come to ${roomLabel.trim()}.` : "No location has been given yet — please check with a member of staff.";
   const body = `It's your turn! ${roomText}`;
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
@@ -552,6 +559,18 @@ router.post("/tickets/:id/cancel", asyncHandler(async (req, res) => {
   const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} cancelled — didn't come forward for ${service?.name || "service"}`]);
+  res.json({ ticket });
+}));
+
+// Distinct from "cancel" — this is for when staff called the customer forward and they never
+// showed, which matters separately in reporting (dashboard/stats already tracks no_show).
+router.post("/tickets/:id/no-show", asyncHandler(async (req, res) => {
+  const ticketResult = await query(`update tickets set status='no_show' where id=$1 and tenant_id=$2 returning *`, [req.params.id, req.tenant.id]);
+  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
+  const ticket = ticketResult.rows[0];
+  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `Ticket ${ticket.ticket_number} marked as no-show for ${service?.name || "service"}`]);
   res.json({ ticket });
 }));
 

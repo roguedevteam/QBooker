@@ -181,6 +181,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
                 <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
                 <div className="row">
                   <button className="btn-outline" style={{ flex: 1 }} onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }), s.id)}>Return to queue</button>
+                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.noShowTicket(serving.id), s.id)}>No-show</button>
                   <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id), s.id)}>Cancel ticket</button>
                 </div>
                 <div className="row">

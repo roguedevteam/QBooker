@@ -25,6 +25,15 @@ export function bookableBudget(cfg) {
   return Math.max(0, Math.min(cfg.bookingStaffCount, cfg.staffCount)) * perStaffCapacity(cfg.slotMinutes);
 }
 
+// Rough wait estimate for a customer with `aheadCount` walk-ins in front of them — spreads
+// them evenly over the walk-in capacity per 30-minute block. Returns null when there's no
+// walk-in capacity at all (nothing meaningful to estimate).
+export function estimateWalkInWaitMinutes(cfg, aheadCount) {
+  const budget = walkInBudget(cfg);
+  if (budget <= 0) return null;
+  return Math.max(0, Math.round((aheadCount / budget) * BLOCK_MINUTES));
+}
+
 // cfg: { hours: number[], slotMinutes, staffCount, bookingStaffCount }  (hours = open block starts)
 export function getHourBlocks(cfg) {
   return [...(cfg.hours || [])].sort((a, b) => a - b);

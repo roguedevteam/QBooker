@@ -49,8 +49,12 @@ function CustomerWhatsApp({ tenantId }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [options, setOptions] = useState([]);
-  const [watchedTicket, setWatchedTicket] = useState(null); // { id, ticketNumber }
+  const [watchedTicket, setWatchedTicket] = useState(null); // { id, ticketNumber, type, slotTime }
+  const [ticketStatus, setTicketStatus] = useState(null);
+  const [queueInfo, setQueueInfo] = useState(null); // { position, estimatedMinutes } — walk-ins only
+  const [cancelling, setCancelling] = useState(false);
   const lastStatusRef = useRef(null);
+  const reminderSentRef = useRef(false);
 
   useEffect(() => {
     Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)])
@@ -66,22 +70,52 @@ function CustomerWhatsApp({ tenantId }) {
 
   // Polls for "it's your turn" — the staff kiosk and this app are fully separate apps with
   // no other shared channel, so this is how a customer actually finds out they've been called.
+  // Also keeps the live queue position (walk-ins) fresh and fires a one-off reminder as a
+  // booked slot approaches — again, there's no other channel to push either of those through.
   useEffect(() => {
     if (!watchedTicket) return;
+    reminderSentRef.current = false;
     const id = setInterval(async () => {
       try {
         const r = await api.getTicketStatus(tenantId, watchedTicket.id);
+        setTicketStatus(r.status);
+        setQueueInfo(r.queue || null);
         if (r.status === "seen" && lastStatusRef.current !== "seen") {
-          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`);
+          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`, [{ label: "Simulate a new customer", action: "restart" }]);
         }
         lastStatusRef.current = r.status;
       } catch {
         // ignore transient errors, try again next tick
       }
+      if (watchedTicket.type === "booked" && typeof watchedTicket.slotTime === "number" && !reminderSentRef.current) {
+        const mins = nowMinutes();
+        const minsToGo = watchedTicket.slotTime - mins;
+        if (minsToGo > 0 && minsToGo <= 15) {
+          reminderSentRef.current = true;
+          bot(`⏰ Reminder: your appointment is in ${minsToGo} minute${minsToGo === 1 ? "" : "s"}.`, [{ label: "Simulate a new customer", action: "restart" }]);
+        }
+      }
     }, 6000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedTicket, tenantId]);
+
+  async function cancelMyTicket() {
+    if (!watchedTicket) return;
+    setCancelling(true);
+    try {
+      await api.cancelTicket(tenantId, watchedTicket.id);
+      bot(`Your ${watchedTicket.type === "booked" ? "booking" : "spot in the queue"} has been cancelled — come back any time.`, [{ label: "Simulate a new customer", action: "restart" }]);
+      lastStatusRef.current = "cancelled";
+      setWatchedTicket(null);
+      setTicketStatus(null);
+      setQueueInfo(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text }]); setOptions(opts || []); }
   function user(text) { setMessages((m) => [...m, { from: "user", text }]); }
@@ -131,9 +165,18 @@ function CustomerWhatsApp({ tenantId }) {
       const svc = services.find((s) => s.id === payload);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null });
-        bot(`You're checked in ✅ Your ticket number: ${r.ticket.ticket_number}\nWe'll message you here when it's your turn.`, [{ label: "Simulate a new customer", action: "restart" }]);
+        let text = `You're checked in ✅ Your ticket number: ${r.ticket.ticket_number}\n`;
+        if (r.queue) {
+          text += `You're #${r.queue.position} in line`;
+          if (r.queue.estimatedMinutes != null) text += ` — about ${r.queue.estimatedMinutes} min`;
+          text += `.\n`;
+        }
+        text += `We'll message you here when it's your turn.`;
+        bot(text, [{ label: "Simulate a new customer", action: "restart" }]);
         lastStatusRef.current = "waiting";
-        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number });
+        setTicketStatus("waiting");
+        setQueueInfo(r.queue || null);
+        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "walk_in" });
       } catch (err) { bot(`Sorry — ${err.message}`); }
     } else if (action === "book") {
       const svc = services.find((s) => s.id === payload.serviceId);
@@ -141,12 +184,16 @@ function CustomerWhatsApp({ tenantId }) {
         const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime });
         bot(`You're booked ✅ ${formatTime(payload.slotTime)} today. Ticket: ${r.ticket.ticket_number}\nWe'll message you here when it's your turn.`, [{ label: "Simulate a new customer", action: "restart" }]);
         lastStatusRef.current = "booked";
-        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number });
+        setTicketStatus("booked");
+        setQueueInfo(null);
+        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "booked", slotTime: payload.slotTime });
       } catch (err) { bot(`Sorry — ${err.message}`); }
     } else if (action === "website") {
       window.open(payload, "_blank", "noopener");
     } else if (action === "restart") {
       setWatchedTicket(null);
+      setTicketStatus(null);
+      setQueueInfo(null);
       lastStatusRef.current = null;
       setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
       setOptions([{ label: "Hi", action: "greet" }]);
@@ -220,6 +267,20 @@ function CustomerWhatsApp({ tenantId }) {
             ))}
           </div>
         </div>
+
+        {watchedTicket && (ticketStatus === "waiting" || ticketStatus === "booked") && (
+          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13 }}>
+              {watchedTicket.type === "walk_in" && queueInfo && (
+                <>You're <strong>#{queueInfo.position}</strong> in line{queueInfo.estimatedMinutes != null && ` — about ${queueInfo.estimatedMinutes} min`}</>
+              )}
+              {watchedTicket.type === "booked" && <>Booked for {formatTime(watchedTicket.slotTime)} today</>}
+            </div>
+            <button className="btn-outline" style={{ color: "var(--error)" }} disabled={cancelling} onClick={cancelMyTicket}>
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -39,6 +39,7 @@ export const api = {
   callAgain: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/call-again`, { method: "POST", body: payload }),
   returnToQueue: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/return-to-queue`, { method: "POST", body: payload }),
   cancelTicket: (ticketId) => request(`/api/tenant/tickets/${ticketId}/cancel`, { method: "POST" }),
+  noShowTicket: (ticketId) => request(`/api/tenant/tickets/${ticketId}/no-show`, { method: "POST" }),
   routeTicket: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/route`, { method: "POST", body: payload }),
   closeTicket: (ticketId) => request(`/api/tenant/tickets/${ticketId}/close`, { method: "POST" }),
 };
