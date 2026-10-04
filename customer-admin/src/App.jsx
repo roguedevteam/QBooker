@@ -408,7 +408,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                 {isOpen && (
                   <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
                     {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
-                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} tenant={tenant} />)}
+                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} tenant={tenant} defaultExpanded={locServices.length === 1} />)}
                   </div>
                 )}
               </div>
@@ -952,8 +952,8 @@ function licenseSummary(licenses) {
   return { text: "No license", color: "red" };
 }
 
-function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
-  const [expanded, setExpanded] = useState(false);
+function ServiceEditor({ service, allServices, onChange, setError, tenant, defaultExpanded }) {
+  const [expanded, setExpanded] = useState(!!defaultExpanded);
   const [buyTrigger, setBuyTrigger] = useState(0);
   const [licenses, setLicenses] = useState([]);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
