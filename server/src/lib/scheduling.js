@@ -13,9 +13,12 @@ export function perStaffCapacity(slotMinutes) {
   return Math.max(1, Math.floor(BLOCK_MINUTES / slotMinutes));
 }
 
+// walkInStaffCount is now an explicit, independently-set value (not derived from
+// staffCount - bookingStaffCount) — cfg.walkInStaffCount is expected on every caller, but
+// this falls back to the old derived figure for any caller that hasn't been updated yet.
 export function walkInBudget(cfg) {
-  const walkInStaff = Math.max(0, cfg.staffCount - cfg.bookingStaffCount);
-  return walkInStaff * perStaffCapacity(cfg.slotMinutes);
+  const walkInStaff = cfg.walkInStaffCount ?? Math.max(0, cfg.staffCount - cfg.bookingStaffCount);
+  return Math.max(0, walkInStaff) * perStaffCapacity(cfg.slotMinutes);
 }
 
 export function bookableBudget(cfg) {

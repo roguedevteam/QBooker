@@ -282,7 +282,7 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
     );
     if (wasScheduled && license.start_date && license.end_date) {
       const oldRows = (await client.query(
-        `select date, hours, staff_count, booking_staff_count from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
+        `select date, hours, staff_count, booking_staff_count, walkin_staff_count from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
         [req.service.id, license.start_date, license.end_date]
       )).rows;
       if (oldRows.length) {
@@ -297,10 +297,11 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
         for (const row of oldRows) {
           const newDate = addDays(row.date, offsetDays);
           await client.query(
-            `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count) values ($1,$2,$3,$4,$5)
+            `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count) values ($1,$2,$3,$4,$5,$6)
              on conflict (service_id, date) do update set
-               hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count`,
-            [req.service.id, newDate, row.hours, row.staff_count, row.booking_staff_count]
+               hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
+               walkin_staff_count = excluded.walkin_staff_count`,
+            [req.service.id, newDate, row.hours, row.staff_count, row.booking_staff_count, row.walkin_staff_count]
           );
         }
         hoursMoved = true;
@@ -388,13 +389,20 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
     return res.status(409).json({ error: "That date isn't covered by a license for this service." });
   }
   if (isDateFullyPast(date)) return res.status(409).json({ error: "That date has already passed." });
+  const resolvedStaff = staffCount ?? 2;
+  const resolvedBooking = Math.max(0, Math.min(bookingStaffCount ?? 1, resolvedStaff));
+  // walkInStaffCount is independently set now (not just "whoever's left over"), but it still
+  // can't push the total past staffCount — clamp defensively here too, not just client-side.
+  const requestedWalkIn = req.body.walkInStaffCount ?? Math.max(0, resolvedStaff - resolvedBooking);
+  const resolvedWalkIn = Math.max(0, Math.min(requestedWalkIn, resolvedStaff - resolvedBooking));
   const result = await query(
-    `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-     values ($1,$2,$3,$4,$5)
+    `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
+     values ($1,$2,$3,$4,$5,$6)
      on conflict (service_id, date) do update set
-       hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count
+       hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
+       walkin_staff_count = excluded.walkin_staff_count
      returning *`,
-    [req.params.id, date, hours || [], staffCount ?? 2, bookingStaffCount ?? 1]
+    [req.params.id, date, hours || [], resolvedStaff, resolvedBooking, resolvedWalkIn]
   );
   res.json({ dailyConfig: result.rows[0] });
 }));
@@ -402,17 +410,18 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
 router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (req, res) => {
   const { fromDate, toDates } = req.body;
   const sourceResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [req.params.id, fromDate]);
-  const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1 };
+  const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1, walkin_staff_count: 1 };
   let applied = 0;
   for (const date of toDates || []) {
     if (isDateFullyPast(date)) continue;
     if (!(await isServiceLicensedOn(req.params.id, date))) continue;
     await query(
-      `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-       values ($1,$2,$3,$4,$5)
+      `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
+       values ($1,$2,$3,$4,$5,$6)
        on conflict (service_id, date) do update set
-         hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count`,
-      [req.params.id, date, source.hours, source.staff_count, source.booking_staff_count]
+         hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
+         walkin_staff_count = excluded.walkin_staff_count`,
+      [req.params.id, date, source.hours, source.staff_count, source.booking_staff_count, source.walkin_staff_count]
     );
     applied++;
   }
@@ -436,8 +445,8 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(asyn
       if (!isDateFullyPast(d)) {
         const hours = d === today ? (keepHoursForToday || []) : [];
         await query(
-          `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count)
-           values ($1,$2,$3,2,1)
+          `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
+           values ($1,$2,$3,2,1,1)
            on conflict (service_id, date) do update set hours = excluded.hours`,
           [req.params.id, d, hours]
         );
@@ -599,7 +608,8 @@ router.get("/services/:id/availability", asyncHandler(async (req, res) => {
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
 
   const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
-  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, hours: day.hours };
+  const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
+  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, walkInStaffCount, hours: day.hours };
 
   const blockCountResult = await query(
     `select hour_block, count(*) from tickets

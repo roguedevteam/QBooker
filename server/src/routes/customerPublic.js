@@ -59,7 +59,8 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
 
   const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
-  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, hours: day.hours };
+  const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
+  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, walkInStaffCount, hours: day.hours };
 
   const blockCountResult = await query(
     `select count(*) from tickets

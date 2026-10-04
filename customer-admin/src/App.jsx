@@ -1173,6 +1173,14 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 }
 
 // Shared by ServiceEditor (post-setup editing) and ServiceWizard (step 2, right after creation).
+// Booking + walk-in staff can never exceed total staff. When total staff drops, trims walk-in
+// first, then booking, so a deliberate booking count isn't silently clobbered unless it has to be.
+function clampStaffSplit(staff, booking, walkIn) {
+  let b = Math.max(0, Math.min(booking, staff));
+  let w = Math.max(0, Math.min(walkIn, staff - b));
+  return { booking: b, walkIn: w };
+}
+
 function ServiceCalendar({ service, setError, refreshToken }) {
   // No day is selected until the admin picks one on the calendar — picking is only
   // possible for a day actually covered by a license (see the calendar button's
@@ -1184,17 +1192,20 @@ function ServiceCalendar({ service, setError, refreshToken }) {
   const [draftHours, setDraftHours] = useState([]);
   const [staffCount, setStaffCount] = useState(2);
   const [bookingStaffCount, setBookingStaffCount] = useState(1);
+  const [walkInStaffCount, setWalkInStaffCount] = useState(1);
   const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
 
   const paintingRef = useRef(false);
   const paintModeRef = useRef(true);
   const staffCountRef = useRef(2);
   const bookingRef = useRef(1);
+  const walkInRef = useRef(1);
   const saveTimeoutRef = useRef(null);
   const savedIndicatorRef = useRef(null);
 
   useEffect(() => { staffCountRef.current = staffCount; }, [staffCount]);
   useEffect(() => { bookingRef.current = bookingStaffCount; }, [bookingStaffCount]);
+  useEffect(() => { walkInRef.current = walkInStaffCount; }, [walkInStaffCount]);
 
   // Only resets drag state on mouse release — the actual save no longer depends on
   // catching this event, so a missed mouseup can no longer cause a silently-lost save.
@@ -1251,6 +1262,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     setDraftHours(entry?.hours || []);
     setStaffCount(entry?.staff_count ?? 2);
     setBookingStaffCount(entry?.booking_staff_count ?? 1);
+    setWalkInStaffCount(entry?.walkin_staff_count ?? 1);
   }, [selectedDate, monthConfigs]);
 
   const selectedIsPast = !!selectedDate && isDatePastClient(selectedDate);
@@ -1272,8 +1284,8 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current });
-        setMonthConfigs((prev) => ({ ...prev, [dateToSave]: { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current } }));
+        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current, walkInStaffCount: walkInRef.current });
+        setMonthConfigs((prev) => ({ ...prev, [dateToSave]: { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current, walkin_staff_count: walkInRef.current } }));
         setSaveStatus("saved");
         savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
       } catch (err) {
@@ -1310,13 +1322,15 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     const hours = patch.hours ?? draftHours;
     const nextStaff = patch.staffCount ?? staffCount;
     const nextBooking = patch.bookingStaffCount ?? bookingStaffCount;
+    const nextWalkIn = patch.walkInStaffCount ?? walkInStaffCount;
     if (patch.hours) setDraftHours(patch.hours);
     if (patch.staffCount !== undefined) setStaffCount(patch.staffCount);
     if (patch.bookingStaffCount !== undefined) setBookingStaffCount(patch.bookingStaffCount);
+    if (patch.walkInStaffCount !== undefined) setWalkInStaffCount(patch.walkInStaffCount);
     setSaveStatus("saving");
     try {
-      await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking });
-      setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking } }));
+      await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+      setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking, walkin_staff_count: nextWalkIn } }));
       setSaveStatus("saved");
       if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
       savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
@@ -1461,21 +1475,52 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
               <div className="row" style={{ gap: 6 }}>
                 <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Staff:</span>
-                <input className="input" style={{ width: 60 }} type="number" min={1} disabled={selectedIsPast} value={staffCount} onChange={(e) => saveNow({ staffCount: Math.max(1, Number(e.target.value) || 1) })} />
+                <input
+                  className="input"
+                  style={{ width: 60 }}
+                  type="number"
+                  min={1}
+                  disabled={selectedIsPast}
+                  value={staffCount}
+                  onChange={(e) => {
+                    const nextStaff = Math.max(1, Number(e.target.value) || 1);
+                    const { booking: nextBooking, walkIn: nextWalkIn } = clampStaffSplit(nextStaff, bookingStaffCount, walkInStaffCount);
+                    saveNow({ staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                  }}
+                />
                 {service.mode === "hybrid" && (
                   <>
                     <span className="muted" style={{ fontSize: 12 }}>On bookings:</span>
-                    <input className="input" style={{ width: 60 }} type="number" min={0} disabled={selectedIsPast} value={bookingStaffCount} onChange={(e) => saveNow({ bookingStaffCount: Math.max(0, Number(e.target.value) || 0) })} />
+                    <input
+                      className="input"
+                      style={{ width: 60 }}
+                      type="number"
+                      min={0}
+                      disabled={selectedIsPast}
+                      value={bookingStaffCount}
+                      onChange={(e) => {
+                        const nextBooking = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                        const nextWalkIn = Math.min(walkInStaffCount, staffCount - nextBooking);
+                        saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                      }}
+                    />
+                    <span className="muted" style={{ fontSize: 12 }}>On walk-ins:</span>
+                    <input
+                      className="input"
+                      style={{ width: 60 }}
+                      type="number"
+                      min={0}
+                      disabled={selectedIsPast}
+                      value={walkInStaffCount}
+                      onChange={(e) => {
+                        const nextWalkIn = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                        const nextBooking = Math.min(bookingStaffCount, staffCount - nextWalkIn);
+                        saveNow({ walkInStaffCount: nextWalkIn, bookingStaffCount: nextBooking });
+                      }}
+                    />
                   </>
                 )}
               </div>
-              {service.mode === "hybrid" && (
-                staffCount - bookingStaffCount > 0 ? (
-                  <div className="muted" style={{ fontSize: 12 }}>→ {staffCount - bookingStaffCount} staff not on bookings — available to serve walk-ins.</div>
-                ) : (
-                  <div style={{ fontSize: 12, color: "#B3261E" }}>⚠ All staff are on bookings — no walk-in queue offered on this day.</div>
-                )
-              )}
 
               {!selectedIsPast && (
                 <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
