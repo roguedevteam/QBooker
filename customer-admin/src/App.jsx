@@ -550,7 +550,7 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
                 <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
               </div>
               <div className="row">
-                {lic.status === "available" && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
+                {(lic.status === "available" || lic.status === "scheduled") && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
                 <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name)}>Print receipt</button>
               </div>
             </div>

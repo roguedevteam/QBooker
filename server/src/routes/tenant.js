@@ -298,12 +298,20 @@ router.post("/services/:id/licenses/:licenseId/move", adminOnly, asyncHandler(lo
 }));
 
 // Refund stub — records the cancellation now; real money moves once Stripe is wired up.
+// Available or Scheduled can both be refunded — neither has actually started yet. Once
+// Active (today's inside its window) it's been live and can't be refunded from here.
 router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
   const license = await resolveServiceLicense(req.params.licenseId);
   if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
-  if (license.status !== "available") return res.status(409).json({ error: "Only an unscheduled license can be refunded." });
+  if (license.status !== "available" && license.status !== "scheduled") {
+    return res.status(409).json({ error: "Only a license that hasn't started yet (Available or Scheduled) can be refunded." });
+  }
   if (!isWithinRefundWindow(license)) return res.status(409).json({ error: "This license was bought more than 3 months ago and can no longer be refunded." });
 
+  if (license.status === "scheduled" && license.start_date && license.end_date) {
+    await query(`delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
+      [req.service.id, license.start_date, license.end_date]);
+  }
   const result = await query(`update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`, [license.id]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License refunded for "${req.service.name}" — ${license.plan_label}, £${license.price}`]);
