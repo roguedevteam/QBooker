@@ -100,8 +100,16 @@ router.delete("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => 
   res.json({ ok: true });
 }));
 
+// Keep in sync with the slot-length options customer-admin's own UI offers — a support
+// override that saved something outside this set (e.g. "2 min") would show up as a slot
+// length a tenant could never have picked themselves.
+const VALID_SLOT_MINUTES = [5, 10, 15, 30, 60];
+
 router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
   const { name, mode, slotMinutes, archived } = req.body;
+  if (slotMinutes !== undefined && !VALID_SLOT_MINUTES.includes(Number(slotMinutes))) {
+    return res.status(400).json({ error: `Slot length must be one of: ${VALID_SLOT_MINUTES.join(", ")} minutes.` });
+  }
   if (mode !== undefined || slotMinutes !== undefined) {
     const existing = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
     if (!existing) return res.status(404).json({ error: "Service not found." });

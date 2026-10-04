@@ -153,8 +153,13 @@ router.post("/services", adminOnly, asyncHandler(async (req, res) => {
   res.json({ service: result.rows[0] });
 }));
 
+const VALID_SLOT_MINUTES = [5, 10, 15, 30, 60];
+
 router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
   const { name, slotMinutes, mode, queuePaused, queueStaffCount, archived } = req.body;
+  if (slotMinutes !== undefined && !VALID_SLOT_MINUTES.includes(Number(slotMinutes))) {
+    return res.status(400).json({ error: `Slot length must be one of: ${VALID_SLOT_MINUTES.join(", ")} minutes.` });
+  }
   const existing = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
   if (!existing) return res.status(404).json({ error: "Service not found." });
   const result = await query(

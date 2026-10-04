@@ -384,10 +384,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                 className="input" style={{ width: 160, fontWeight: 600 }} defaultValue={loc.name}
                 onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
               />
-              <input
-                className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
-                onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
-              />
+              {loc.address && <span className="muted" style={{ fontSize: 12 }}>{loc.address}</span>}
               {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px", borderRadius: 4 }}>{loc.code}</code>}
             </div>
             <button
@@ -421,12 +418,13 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                       {svc.mode !== "queue" && (
                         <label className="row" style={{ gap: 4 }}>
                           <span className="muted" style={{ fontSize: 11 }}>Slot length:</span>
-                          <input
-                            className="input" type="number" style={{ width: 56 }} defaultValue={svc.slot_minutes} disabled={svc.modeLocked}
+                          <select
+                            value={svc.slot_minutes} disabled={svc.modeLocked}
                             title={svc.modeLocked ? lockTitle : undefined}
-                            onBlur={async (e) => { if (Number(e.target.value) !== svc.slot_minutes) { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); } }}
-                          />
-                          <span className="muted" style={{ fontSize: 11 }}>min</span>
+                            onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); }}
+                          >
+                            {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+                          </select>
                         </label>
                       )}
                     </div>

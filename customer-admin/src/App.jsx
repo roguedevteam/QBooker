@@ -239,11 +239,18 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
   useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); refreshLicenses(); }, []);
 
   const hasLicense = allLicenses.some((l) => l.status !== "refunded");
+  const unscheduledLicenseCount = allLicenses.filter((l) => l.status === "available").length;
   const hasAddress = !!(tenant.company_address && tenant.company_address.trim());
   const hasWebsite = !!(tenant.website_url && tenant.website_url.trim());
   const dismissedSetupTasks = tenant.dismissed_setup_tasks || [];
   const allSetupTasks = [
     { key: "license", label: "Buy a license for a service", done: hasLicense, cta: "Go to Locations", go: () => setTab("locations") },
+    {
+      key: "schedule",
+      label: unscheduledLicenseCount > 1 ? `Schedule your ${unscheduledLicenseCount} purchased licenses` : "Schedule your purchased license",
+      done: unscheduledLicenseCount === 0,
+      cta: "Go to Locations", go: () => setTab("locations"),
+    },
     { key: "address", label: "Enter your business address", done: hasAddress, cta: "Go to Profile", go: () => setTab("profile") },
     { key: "website", label: "Add your business website", done: hasWebsite, cta: "Go to Profile", go: () => setTab("profile") },
   ];
