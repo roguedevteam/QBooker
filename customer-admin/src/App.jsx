@@ -726,12 +726,14 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
           <div style={{ fontSize: 13, fontWeight: 600 }}>{onTrial ? "You're on the free 2-day trial" : "Payment required"}</div>
           <div className="muted" style={{ fontSize: 12 }}>
             {onTrial
-              ? "Choose your two free days on your service's calendar. When you're ready to buy more licenses, add a payment method here."
+              ? "Choose your two free days on your service's calendar. To buy more licenses later you'll be able to pay by card (coming soon), or ask for an invoice below."
               : "Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through."}
           </div>
           {!payMethod && (
             <div className="row">
-              <button className="btn" onClick={() => setPayMethod("card")}>{onTrial ? "Add card" : "Pay by card"}</button>
+              {onTrial
+                ? <button className="btn" disabled title="Card payments are coming soon">Card payments coming soon</button>
+                : <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>}
               <button className="btn-outline" onClick={() => setPayMethod("invoice")}>{onTrial ? "Use invoice" : "Pay by invoice"}</button>
             </div>
           )}

@@ -90,6 +90,7 @@ router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
     return res.status(409).json({ error: "This account isn't waiting on a payment." });
   }
   if (paymentMethod === "card") {
+    if (onTrial) return res.status(409).json({ error: "Card payments are coming soon." });
     const result = await query(
       `update tenants set status='active', payment_method='card' where id=$1 returning *`,
       [req.tenant.id]
