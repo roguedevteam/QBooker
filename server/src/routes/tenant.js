@@ -254,7 +254,7 @@ router.get("/services/:id/licenses", asyncHandler(loadService), asyncHandler(asy
 router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
   const { planId, customDays } = req.body;
   if (req.tenant.payment_method === "trial") {
-    return res.status(402).json({ error: "Add a payment method on the Account tab before buying more licenses." });
+    return res.status(402).json({ error: "You're on the free 2-day trial. Card payments are coming soon; to buy more licenses now, choose Use invoice on the Account tab." });
   }
   const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
   const plan = resolvePlan(planId, customDays, planPricing(pricingRow));

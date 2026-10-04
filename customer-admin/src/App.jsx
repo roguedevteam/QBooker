@@ -1178,6 +1178,11 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — £{selectedPrice()}
             </span>
           </div>
+          {tenant?.payment_method === "trial" ? (
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+              You're on the free 2-day trial. Paying by card is coming soon. To buy more licenses before then, choose "Use invoice" on the Account tab and we'll set you up.
+            </div>
+          ) : (
           <div className="stack" style={{ gap: 8 }}>
             <div className={`payment-option${tenant?.payment_method !== "invoice" ? " active" : ""}`}>
               <span className="payment-option-title">Card</span>
@@ -1192,9 +1197,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               </span>
             </div>
           </div>
+          )}
           <div className="muted" style={{ fontSize: 11 }}>This follows your account's payment method on file — contact us to change it.</div>
           <div className="row">
-            <button className="btn" onClick={buy}>Confirm &amp; buy</button>
+            <button className="btn" disabled={tenant?.payment_method === "trial"} onClick={buy}>Confirm &amp; buy</button>
             <button className="btn-outline" onClick={() => setBuyStep("plan")}>Back</button>
             <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
           </div>
