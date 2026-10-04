@@ -523,12 +523,28 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
           {archivedServices.length > 0 && (
             <div className="card stack">
               <div style={{ fontSize: 13, fontWeight: 600 }}>Archived services ({archivedServices.length})</div>
-              {archivedServices.map((s) => (
-                <div key={s.id} className="row" style={{ justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 13 }}>{s.name} <span className="muted">— {locations.find((l) => l.id === s.location_id)?.name || "—"}</span></span>
-                  <button className="btn-outline" onClick={async () => { try { await api.updateService(s.id, { archived: false }); refreshCore(); } catch (err) { setError(err.message); } }}>Unarchive</button>
-                </div>
-              ))}
+              {archivedServices.map((s) => {
+                const loc = locations.find((l) => l.id === s.location_id);
+                return (
+                  <div key={s.id} className="row" style={{ justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13 }}>{s.name} <span className="muted">— {loc?.name || "—"}</span></span>
+                    <button
+                      className="btn-outline"
+                      onClick={async () => {
+                        try {
+                          // Unarchiving a service whose location is still archived would leave it
+                          // stranded out of view — bring the location back too so it's reachable.
+                          if (loc?.archived) await api.unarchiveLocation(loc.id);
+                          await api.updateService(s.id, { archived: false });
+                          refreshCore();
+                        } catch (err) { setError(err.message); }
+                      }}
+                    >
+                      Unarchive
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
           <div className="card stack">
