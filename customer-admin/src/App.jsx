@@ -21,6 +21,23 @@ function isDateLockedClient(dateStr) {
 
 // Small "copy to clipboard" button — used anywhere a sign-in code is shown so staff don't
 // have to retype it. Shows a brief "Copied" confirmation instead of a silent no-op.
+// Two-rectangles "copy" glyph, swapped for a checkmark briefly after a successful copy —
+// drawn rather than a text/emoji label so it reads as a small, unobtrusive action icon.
+function CopyIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+function CheckIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 function CopyButton({ value, label = "Copy" }) {
   const [copied, setCopied] = useState(false);
   if (!value) return null;
@@ -28,10 +45,12 @@ function CopyButton({ value, label = "Copy" }) {
     <button
       type="button"
       className="btn-outline"
-      style={{ fontSize: 11, padding: "2px 8px" }}
+      title={copied ? "Copied" : label}
+      aria-label={copied ? "Copied" : label}
+      style={{ padding: "3px 6px", lineHeight: 0 }}
       onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
     >
-      {copied ? "Copied" : label}
+      {copied ? <CheckIcon /> : <CopyIcon />}
     </button>
   );
 }
