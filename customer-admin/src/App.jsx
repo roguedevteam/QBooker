@@ -446,7 +446,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                         className="btn-outline"
                         title="Dismiss — won't be shown again"
                         style={{ border: "none", padding: "0 4px", background: "transparent" }}
-                        onClick={() => { if (confirm(`Stop showing "${t.label}"? You can still do this any time from its tab, it just won't nag you about it again.`)) dismissSetupTask(t.key); }}
+                        onClick={() => dismissSetupTask(t.key)}
                       >✕</button>
                     </div>
                   </div>
