@@ -3,7 +3,7 @@ import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
-import { resolveServiceLicenses, resolvePlan, planPricing } from "../lib/serviceLicense.js";
+import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing } from "../lib/serviceLicense.js";
 
 const router = Router();
 router.use(requireAuth("system_admin"));
@@ -24,15 +24,17 @@ router.get("/tenants", asyncHandler(async (req, res) => {
 }));
 
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
-  const { businessName, email, locationCount, status } = req.body;
+  const { businessName, firstName, lastName, email, locationCount, status } = req.body;
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
-       email = coalesce($2, email),
-       location_count = coalesce($3, location_count),
-       status = coalesce($4, status)
-     where id=$5 returning *`,
-    [businessName, email, locationCount, status, req.params.id]
+       first_name = coalesce($2, first_name),
+       last_name = coalesce($3, last_name),
+       email = coalesce($4, email),
+       location_count = coalesce($5, location_count),
+       status = coalesce($6, status)
+     where id=$7 returning *`,
+    [businessName, firstName, lastName, email, locationCount, status, req.params.id]
   );
   if (status === "active") {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -40,6 +42,19 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   }
   res.json({ tenant: result.rows[0] });
 }));
+
+// A service's type (queue/appointment/hybrid) and slot length can only be changed once it's
+// never actually gone live — i.e. every license it's ever had is still just "available"
+// (never assigned dates) and no calendar day has ever had hours set on it. Once a single day
+// has hours, or a license has been scheduled/active/expired, changing the type would silently
+// invalidate real bookings/queue history, so it's locked for good (same as the "can't be
+// changed after this step" rule when the service was first created).
+async function isServiceModeLocked(serviceId) {
+  const configRows = await query(`select 1 from service_daily_config where service_id=$1 limit 1`, [serviceId]);
+  if (configRows.rows.length > 0) return true;
+  const licenses = await resolveServiceLicenses(serviceId);
+  return licenses.some((l) => l.status !== "available" && l.status !== "refunded");
+}
 
 // Full drill-down for one customer — their locations, services, and every license across
 // all of them (freshly resolved, so a window that's just expired/gone-active shows the
@@ -54,12 +69,16 @@ router.get("/tenants/:id/detail", asyncHandler(async (req, res) => {
      where l.tenant_id=$1 order by l.created_at`,
     [tenant.id]
   )).rows;
-  const services = (await query(`select * from services where tenant_id=$1 order by created_at`, [tenant.id])).rows;
+  const rawServices = (await query(`select * from services where tenant_id=$1 order by created_at`, [tenant.id])).rows;
 
   let licenses = [];
-  for (const s of services) {
+  const services = [];
+  for (const s of rawServices) {
     const resolved = await resolveServiceLicenses(s.id);
     licenses = licenses.concat(resolved.map((l) => ({ ...l, service_name: s.name })));
+    const configRows = await query(`select 1 from service_daily_config where service_id=$1 limit 1`, [s.id]);
+    const modeLocked = configRows.rows.length > 0 || resolved.some((l) => l.status !== "available" && l.status !== "refunded");
+    services.push({ ...s, modeLocked });
   }
   licenses.sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at));
 
@@ -83,6 +102,15 @@ router.delete("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => 
 
 router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
   const { name, mode, slotMinutes, archived } = req.body;
+  if (mode !== undefined || slotMinutes !== undefined) {
+    const existing = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
+    if (!existing) return res.status(404).json({ error: "Service not found." });
+    if ((mode !== undefined && mode !== existing.mode) || (slotMinutes !== undefined && slotMinutes !== existing.slot_minutes)) {
+      if (await isServiceModeLocked(req.params.svcId)) {
+        return res.status(409).json({ error: "This service's type/slot length can't change — it has a license that's been scheduled, active or expired, or a day with hours already set." });
+      }
+    }
+  }
   const result = await query(
     `update services set
        name = coalesce($1, name), mode = coalesce($2, mode),
@@ -118,6 +146,33 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.params.id, `Free license granted by platform admin for "${service.name}" — ${plan.planLabel} (${plan.planDays} days)`]);
+  res.json({ license: { ...result.rows[0], service_name: service.name } });
+}));
+
+// Support/admin refund — looser than the customer-facing one (no 90-day window, since this
+// is a deliberate override), but still only for a license that's never actually gone live:
+// Available (never scheduled) or Scheduled (dates assigned, but today hasn't reached them
+// yet, so nothing was ever actually served against it). Active or Expired means it's already
+// been "live" — those can't be refunded from here.
+router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHandler(async (req, res) => {
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
+  if (!service) return res.status(404).json({ error: "Service not found." });
+  const license = await resolveServiceLicense(req.params.licenseId);
+  if (!license || license.service_id !== service.id) return res.status(404).json({ error: "License not found." });
+  if (license.status !== "available" && license.status !== "scheduled") {
+    return res.status(409).json({ error: "Only a license that's never gone live (Available or Scheduled) can be refunded — this one is Active, Expired or already Refunded." });
+  }
+
+  if (license.status === "scheduled" && license.start_date && license.end_date) {
+    await query(`delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
+      [service.id, license.start_date, license.end_date]);
+  }
+  const result = await query(
+    `update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`,
+    [license.id]
+  );
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.params.id, `License refunded by platform admin for "${service.name}" — ${license.plan_label}`]);
   res.json({ license: { ...result.rows[0], service_name: service.name } });
 }));
 

@@ -269,9 +269,31 @@ function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
   );
 }
 
-// Full drill-down for one customer: account details, locations, services, and every
-// license they've ever had, all editable from here — platform support's one-stop view
-// instead of asking the customer to share their screen.
+function RefundLicenseButton({ tenantId, service, license, onRefunded, setError }) {
+  const refundable = license.status === "available" || license.status === "scheduled";
+  if (!refundable) return null;
+  return (
+    <button
+      className="btn-outline"
+      onClick={async () => {
+        if (!confirm(`Refund this ${license.plan_label} license on "${service.name}"? This can't be undone.`)) return;
+        try {
+          await api.refundTenantLicense(tenantId, service.id, license.id);
+          onRefunded();
+        } catch (err) {
+          setError(err.message);
+        }
+      }}
+    >
+      Refund
+    </button>
+  );
+}
+
+// Full drill-down for one customer: account details, and locations → their services →
+// each service's licenses nested together (instead of three separate flat lists you had
+// to cross-reference by name) — platform support's one-stop view instead of asking the
+// customer to share their screen.
 function CustomerDetail({ tenantId, onBack, setError }) {
   const [detail, setDetail] = useState(null);
 
@@ -287,6 +309,8 @@ function CustomerDetail({ tenantId, onBack, setError }) {
 
   if (!detail) return <div className="card muted">Loading…</div>;
   const { tenant, locations, services, licenses } = detail;
+  const servicesByLocation = (locId) => services.filter((s) => s.location_id === locId);
+  const licensesByService = (svcId) => licenses.filter((l) => l.service_id === svcId);
 
   return (
     <div className="stack">
@@ -298,6 +322,20 @@ function CustomerDetail({ tenantId, onBack, setError }) {
       <div className="card stack">
         <div style={{ fontWeight: 600, fontSize: 14 }}>Account</div>
         <div className="wrap">
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>First name</span>
+            <input
+              className="input" style={{ width: 140 }} defaultValue={tenant.first_name || ""}
+              onBlur={async (e) => { if (e.target.value !== (tenant.first_name || "")) { await api.updateTenant(tenant.id, { firstName: e.target.value }); load(); } }}
+            />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Last name</span>
+            <input
+              className="input" style={{ width: 140 }} defaultValue={tenant.last_name || ""}
+              onBlur={async (e) => { if (e.target.value !== (tenant.last_name || "")) { await api.updateTenant(tenant.id, { lastName: e.target.value }); load(); } }}
+            />
+          </label>
           <label className="stack" style={{ gap: 2 }}>
             <span className="muted" style={{ fontSize: 11 }}>Business name</span>
             <input
@@ -332,90 +370,94 @@ function CustomerDetail({ tenantId, onBack, setError }) {
       </div>
 
       <div className="card stack">
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations ({locations.length})</div>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations, services &amp; licenses ({locations.length} location{locations.length === 1 ? "" : "s"})</div>
         {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
-        {locations.map((loc, i) => (
-          <div key={loc.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              <input
-                className="input" style={{ width: 160 }} defaultValue={loc.name}
-                onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
-              />
-              <input
-                className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
-                onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
-              />
-              {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px" }}>{loc.code}</code>}
+        {locations.map((loc, li) => (
+          <div key={loc.id} className="stack" style={{ gap: 8, paddingTop: li === 0 ? 0 : 12, borderTop: li === 0 ? "none" : "1px solid var(--line)" }}>
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <input
+                  className="input" style={{ width: 160 }} defaultValue={loc.name}
+                  onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
+                />
+                <input
+                  className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
+                  onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
+                />
+                {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px" }}>{loc.code}</code>}
+              </div>
+              <button
+                className="btn-outline"
+                onClick={async () => { if (confirm(`Delete location "${loc.name}"? This deletes its services and licenses too — can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
+              >
+                Delete location
+              </button>
             </div>
-            <button
-              className="btn-outline"
-              onClick={async () => { if (confirm(`Delete location "${loc.name}"? This can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
-            >
-              Delete
-            </button>
+
+            <div className="stack" style={{ gap: 8, paddingLeft: 16, borderLeft: "2px solid var(--line)" }}>
+              {servicesByLocation(loc.id).length === 0 && <div className="muted" style={{ fontSize: 12 }}>No services at this location.</div>}
+              {servicesByLocation(loc.id).map((svc) => {
+                const svcLicenses = licensesByService(svc.id);
+                return (
+                  <div key={svc.id} className="stack" style={{ gap: 6 }}>
+                    <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                      <div className="row" style={{ flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: 13 }}>{svc.name}</strong>
+                        <select
+                          value={svc.mode} disabled={svc.modeLocked}
+                          title={svc.modeLocked ? "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set." : undefined}
+                          onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}
+                        >
+                          {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        {svc.mode !== "queue" && (
+                          <input
+                            className="input" type="number" style={{ width: 60 }} defaultValue={svc.slot_minutes} disabled={svc.modeLocked}
+                            title={svc.modeLocked ? "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set." : undefined}
+                            onBlur={async (e) => { if (Number(e.target.value) !== svc.slot_minutes) { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); } }}
+                          />
+                        )}
+                        {svc.archived && <span className="badge badge-amber">Archived</span>}
+                      </div>
+                      <div className="row">
+                        <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
+                        <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
+                          {svc.archived ? "Unarchive" : "Archive"}
+                        </button>
+                        <button
+                          className="btn-outline"
+                          onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+
+                    <table style={{ marginLeft: 16, width: "calc(100% - 16px)" }}>
+                      <thead><tr><th>Plan</th><th>Status</th><th>Dates</th><th>Price</th><th>Purchased</th><th>Actions</th></tr></thead>
+                      <tbody>
+                        {svcLicenses.length === 0 && <tr><td colSpan={6} className="muted" style={{ fontSize: 12, padding: 8 }}>No licenses on this service.</td></tr>}
+                        {svcLicenses.map((lic) => {
+                          const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+                          return (
+                            <tr key={lic.id}>
+                              <td>{lic.plan_label}</td>
+                              <td><span className={`badge badge-${meta.color}`}>{meta.label}</span></td>
+                              <td>{lic.start_date ? `${lic.start_date} to ${lic.end_date}` : "—"}</td>
+                              <td>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</td>
+                              <td>{new Date(lic.purchased_at).toLocaleDateString()}</td>
+                              <td><RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} /></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ))}
-      </div>
-
-      <div className="card stack">
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Services ({services.length})</div>
-        {services.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services yet.</div>}
-        {services.map((svc, i) => {
-          const loc = locations.find((l) => l.id === svc.location_id);
-          return (
-            <div key={svc.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                <strong style={{ fontSize: 13 }}>{svc.name}</strong>
-                <span className="muted" style={{ fontSize: 12 }}>{loc?.name || "—"}</span>
-                <select value={svc.mode} onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}>
-                  {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-                {svc.mode !== "queue" && (
-                  <input
-                    className="input" type="number" style={{ width: 60 }} defaultValue={svc.slot_minutes}
-                    onBlur={async (e) => { if (Number(e.target.value) !== svc.slot_minutes) { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); } }}
-                  />
-                )}
-                {svc.archived && <span className="badge badge-amber">Archived</span>}
-              </div>
-              <div className="row">
-                <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
-                <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
-                  {svc.archived ? "Unarchive" : "Archive"}
-                </button>
-                <button
-                  className="btn-outline"
-                  onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="card stack">
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Licenses ({licenses.length})</div>
-        <table>
-          <thead><tr><th>Service</th><th>Plan</th><th>Status</th><th>Dates</th><th>Price</th><th>Purchased</th></tr></thead>
-          <tbody>
-            {licenses.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>No licenses yet.</td></tr>}
-            {licenses.map((lic) => {
-              const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
-              return (
-                <tr key={lic.id}>
-                  <td>{lic.service_name}</td>
-                  <td>{lic.plan_label}</td>
-                  <td><span className={`badge badge-${meta.color}`}>{meta.label}</span></td>
-                  <td>{lic.start_date ? `${lic.start_date} to ${lic.end_date}` : "—"}</td>
-                  <td>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</td>
-                  <td>{new Date(lic.purchased_at).toLocaleDateString()}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
     </div>
   );
