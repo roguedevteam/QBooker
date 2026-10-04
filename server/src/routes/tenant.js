@@ -34,14 +34,18 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
-// Self-service profile edit — email and company address only. Business name is set at
-// signup and isn't changeable here (it's used in receipts/audit history); contact name and
-// business name can still be corrected by platform admin if genuinely needed.
+// Self-service profile edit — business name, contact name, email and company address.
 router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
-  const { email, companyAddress } = req.body;
+  const { businessName, firstName, lastName, email, companyAddress } = req.body;
   const result = await query(
-    `update tenants set email = coalesce($1, email), company_address = coalesce($2, company_address) where id=$3 returning *`,
-    [email, companyAddress, req.tenant.id]
+    `update tenants set
+       business_name = coalesce($1, business_name),
+       first_name = coalesce($2, first_name),
+       last_name = coalesce($3, last_name),
+       email = coalesce($4, email),
+       company_address = coalesce($5, company_address)
+     where id=$6 returning *`,
+    [businessName, firstName, lastName, email, companyAddress, req.tenant.id]
   );
   res.json({ tenant: result.rows[0] });
 }));

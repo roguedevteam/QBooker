@@ -477,14 +477,40 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
 // receipts/audit history; contact us to change it). Also the one place licenses across
 // every service are listed together, with Refund/Print moved here from each service's own
 // licenses panel so that panel stays focused on scheduling.
+function splitAddress(combined) {
+  const parts = (combined || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 4) return { line1: parts[0], line2: parts[1], city: parts[2], postcode: parts[3] };
+  if (parts.length === 3) return { line1: parts[0], line2: "", city: parts[1], postcode: parts[2] };
+  if (parts.length === 2) return { line1: parts[0], line2: "", city: "", postcode: parts[1] };
+  if (parts.length === 1) return { line1: parts[0], line2: "", city: "", postcode: "" };
+  return { line1: "", line2: "", city: "", postcode: "" };
+}
+function combineAddress(line1, line2, city, postcode) {
+  return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
 function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setError }) {
+  const [businessName, setBusinessName] = useState(tenant.business_name || "");
+  const [firstName, setFirstName] = useState(tenant.first_name || "");
+  const [lastName, setLastName] = useState(tenant.last_name || "");
   const [email, setEmail] = useState(tenant.email || "");
-  const [address, setAddress] = useState(tenant.company_address || "");
+  const initialAddress = splitAddress(tenant.company_address);
+  const [line1, setLine1] = useState(initialAddress.line1);
+  const [line2, setLine2] = useState(initialAddress.line2);
+  const [city, setCity] = useState(initialAddress.city);
+  const [postcode, setPostcode] = useState(initialAddress.postcode);
   const [saved, setSaved] = useState(false);
 
-  async function save(patch) {
+  const dirty = businessName !== (tenant.business_name || "")
+    || firstName !== (tenant.first_name || "") || lastName !== (tenant.last_name || "")
+    || email !== (tenant.email || "") || combineAddress(line1, line2, city, postcode) !== (tenant.company_address || "");
+
+  async function save() {
     try {
-      const r = await api.updateMe(patch);
+      const r = await api.updateMe({
+        businessName, firstName, lastName, email,
+        companyAddress: combineAddress(line1, line2, city, postcode),
+      });
       onTenantChange?.(r.tenant);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -508,26 +534,53 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
   return (
     <div className="stack">
       <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Profile</div>
-        <div className="muted" style={{ fontSize: 12 }}>Business name isn't editable here — contact us if it needs to change.</div>
+        <label className="stack" style={{ gap: 2 }}>
+          <span className="muted" style={{ fontSize: 11 }}>Business name</span>
+          <input
+            className="input" style={{ fontSize: 18, fontWeight: 700, maxWidth: 360 }}
+            value={businessName} onChange={(e) => setBusinessName(e.target.value)}
+          />
+        </label>
+
         <div className="wrap">
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>First name</span>
+            <input className="input" style={{ width: 160 }} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Last name</span>
+            <input className="input" style={{ width: 160 }} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          </label>
           <label className="stack" style={{ gap: 2 }}>
             <span className="muted" style={{ fontSize: 11 }}>Email address</span>
             <input className="input" style={{ width: 240 }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Business address</span>
-            <input className="input" style={{ width: 320 }} value={address} onChange={(e) => setAddress(e.target.value)} />
-          </label>
         </div>
+
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="muted" style={{ fontSize: 11 }}>Business address</span>
+          <div className="wrap">
+            <label className="stack" style={{ gap: 2 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Address line 1</span>
+              <input className="input" style={{ width: 220 }} value={line1} onChange={(e) => setLine1(e.target.value)} />
+            </label>
+            <label className="stack" style={{ gap: 2 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Address line 2</span>
+              <input className="input" style={{ width: 220 }} value={line2} onChange={(e) => setLine2(e.target.value)} />
+            </label>
+            <label className="stack" style={{ gap: 2 }}>
+              <span className="muted" style={{ fontSize: 11 }}>City</span>
+              <input className="input" style={{ width: 160 }} value={city} onChange={(e) => setCity(e.target.value)} />
+            </label>
+            <label className="stack" style={{ gap: 2 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Post / zip code</span>
+              <input className="input" style={{ width: 120 }} value={postcode} onChange={(e) => setPostcode(e.target.value)} />
+            </label>
+          </div>
+        </div>
+
         <div className="row">
-          <button
-            className="btn"
-            disabled={email === (tenant.email || "") && address === (tenant.company_address || "")}
-            onClick={() => save({ email, companyAddress: address })}
-          >
-            Save
-          </button>
+          <button className="btn" disabled={!dirty} onClick={save}>Save</button>
           {saved && <span className="muted" style={{ fontSize: 12 }}>Saved.</span>}
         </div>
       </div>
