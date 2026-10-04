@@ -40,6 +40,7 @@ export const api = {
   getAllLicenses: () => request("/api/tenant/licenses"),
   dismissSetupTask: (task) => request("/api/tenant/setup/dismiss", { method: "POST", body: { task } }),
   deleteMyAccount: () => request("/api/tenant/me", { method: "DELETE" }),
+  payNow: (payload) => request("/api/tenant/pay-now", { method: "POST", body: payload }),
 
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),

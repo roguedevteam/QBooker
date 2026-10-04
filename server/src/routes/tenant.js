@@ -76,7 +76,38 @@ router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
     `update tenants set dismissed_setup_tasks = array(select distinct unnest(dismissed_setup_tasks || $1::text[])) where id=$2 returning *`,
     [[task], req.tenant.id]
   );
-  res.json({ tenant: result.rows[0] });
+  res.json({ tenant: sanitizeTenant(result.rows[0]) });
+}));
+
+// Self-service "pay now" — lets a pending (invoice/pay-later) account settle up itself instead
+// of waiting on us to mark it paid. Card activates immediately (same "Stripe coming soon, no
+// real charge yet" stand-in used at signup); invoice just records/updates the billing details
+// and leaves the account pending for our team to confirm, same as the original invoice flow.
+router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
+  const { paymentMethod, invoiceEmail, invoicePO } = req.body;
+  if (req.tenant.status !== "pending") {
+    return res.status(409).json({ error: "This account isn't waiting on a payment." });
+  }
+  if (paymentMethod === "card") {
+    const result = await query(
+      `update tenants set status='active', payment_method='card' where id=$1 returning *`,
+      [req.tenant.id]
+    );
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, "Card payment received — staff kiosk and customer WhatsApp are now enabled."]);
+    return res.json({ tenant: sanitizeTenant(result.rows[0]) });
+  }
+  if (paymentMethod === "invoice") {
+    if (!invoicePO?.trim()) return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
+    const result = await query(
+      `update tenants set payment_method='invoice', invoice_email=$1, invoice_po=$2 where id=$3 returning *`,
+      [invoiceEmail || null, invoicePO.trim(), req.tenant.id]
+    );
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, "Invoice details submitted — awaiting payment confirmation from our team."]);
+    return res.json({ tenant: sanitizeTenant(result.rows[0]) });
+  }
+  res.status(400).json({ error: "Unknown payment method." });
 }));
 
 // --- Locations — free, unlimited; a routing + staff-access concept only -------------

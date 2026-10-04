@@ -290,6 +290,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
   const hasWebsite = !!(tenant.website_url && tenant.website_url.trim());
   const dismissedSetupTasks = tenant.dismissed_setup_tasks || [];
   const allSetupTasks = [
+    { key: "payment", label: "Complete payment to activate your account", done: tenant.status !== "pending", cta: "Pay now", go: () => setTab("profile") },
     { key: "license", label: "Buy a license for a service", done: hasLicense, cta: "Go to Locations", go: () => setTab("locations") },
     {
       key: "schedule",
@@ -575,6 +576,10 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
   const [city, setCity] = useState(initialAddress.city);
   const [postcode, setPostcode] = useState(initialAddress.postcode);
   const [saved, setSaved] = useState(false);
+  const [payMethod, setPayMethod] = useState(null); // null | "card" | "invoice"
+  const [payInvoiceEmail, setPayInvoiceEmail] = useState(tenant.invoice_email || "");
+  const [payInvoicePO, setPayInvoicePO] = useState(tenant.invoice_po || "");
+  const [paying, setPaying] = useState(false);
 
   const dirty = businessName !== (tenant.business_name || "")
     || firstName !== (tenant.first_name || "") || lastName !== (tenant.last_name || "")
@@ -607,6 +612,33 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
   }
 
   const visibleLicenses = licenses.filter((l) => l.status !== "refunded");
+  const accountUnpaid = tenant.status === "pending";
+
+  async function payByCard() {
+    if (!confirm("Card payment via Stripe is coming soon — for now this activates your account immediately without a real charge. Continue?")) return;
+    setPaying(true);
+    try {
+      const r = await api.payNow({ paymentMethod: "card" });
+      onTenantChange?.(r.tenant);
+      setPayMethod(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPaying(false);
+    }
+  }
+  async function payByInvoice() {
+    setPaying(true);
+    try {
+      const r = await api.payNow({ paymentMethod: "invoice", invoiceEmail: payInvoiceEmail, invoicePO: payInvoicePO });
+      onTenantChange?.(r.tenant);
+      setPayMethod(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPaying(false);
+    }
+  }
 
   async function deleteAccount() {
     const typed = prompt(
@@ -679,6 +711,45 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         </div>
       </div>
 
+      {accountUnpaid && (
+        <div className="card stack" style={{ borderColor: "var(--accent)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Payment required</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
+          </div>
+          {!payMethod && (
+            <div className="row">
+              <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>
+              <button className="btn-outline" onClick={() => setPayMethod("invoice")}>Pay by invoice</button>
+            </div>
+          )}
+          {payMethod === "card" && (
+            <div className="row">
+              <button className="btn" disabled={paying} onClick={payByCard}>{paying ? "Processing…" : "Confirm card payment"}</button>
+              <button className="btn-outline" onClick={() => setPayMethod(null)}>Cancel</button>
+            </div>
+          )}
+          {payMethod === "invoice" && (
+            <div className="stack">
+              <div className="wrap">
+                <label className="stack" style={{ gap: 2 }}>
+                  <span className="muted" style={{ fontSize: 11 }}>Billing email</span>
+                  <input className="input" style={{ width: 220 }} value={payInvoiceEmail} onChange={(e) => setPayInvoiceEmail(e.target.value)} />
+                </label>
+                <label className="stack" style={{ gap: 2 }}>
+                  <span className="muted" style={{ fontSize: 11 }}>PO / reference number</span>
+                  <input className="input" style={{ width: 200 }} value={payInvoicePO} onChange={(e) => setPayInvoicePO(e.target.value)} />
+                </label>
+              </div>
+              <div className="row">
+                <button className="btn" disabled={paying || !payInvoicePO.trim()} onClick={payByInvoice}>{paying ? "Submitting…" : "Submit for invoicing"}</button>
+                <button className="btn-outline" onClick={() => setPayMethod(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card stack" style={{ background: "#FBEEDD" }}>
         <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{staffAppUrl}</code></div>
         <div className="muted" style={{ fontSize: 12 }}>
@@ -710,7 +781,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
                 <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
               </div>
               <div className="row">
-                {(lic.status === "available" || lic.status === "scheduled") && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
+                {(lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
                 <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
               </div>
             </div>
