@@ -48,6 +48,15 @@ function monthLabel(firstOfMonthStr) {
   const d = new Date(firstOfMonthStr + "T00:00:00Z");
   return d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 }
+// Every other on-screen date goes through here instead of the raw "YYYY-MM-DD" value —
+// uses the browser's own locale (no hardcoded format), so it reads dd/mm/yyyy for a UK
+// browser and whatever's locally correct everywhere else, instead of the ambiguous
+// numeric ISO string.
+function formatDateDisplay(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00Z");
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
+}
 function buildCalendarWeeks(firstOfMonthStr) {
   const total = daysInMonthOf(firstOfMonthStr);
   const leading = weekdayIndex(firstOfMonthStr);
@@ -116,7 +125,7 @@ export default function App() {
           {tenant && <span className="muted" style={{ fontSize: 13 }}>— {tenant.business_name}</span>}
         </div>
         <div className="row">
-          {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
+          {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {formatDateDisplay(todayIso())}</span>}
           {tenant && <span className="muted" style={{ fontSize: 12 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
           {tenant ? (
             <button className="btn-outline" onClick={doSignOut}>Sign out</button>
@@ -580,7 +589,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const hasActiveLicense = licenses.some((l) => l.status === "active");
 
   return (
-    <div className="card stack" style={{ gap: 8, ...(service.archived ? { opacity: 0.6 } : null) }}>
+    <div className="card stack" style={{ gap: 8, background: "#F6FAFC", ...(service.archived ? { opacity: 0.6 } : null) }}>
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <div className="row" style={{ flexWrap: "wrap" }}>
           <strong>{service.name}</strong>
@@ -689,7 +698,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
       ["Service", service.name],
       ["Plan", lic.plan_label],
       ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
-      ...(lic.start_date ? [["Dates", `${lic.start_date} to ${lic.end_date}`]] : []),
+      ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
       ["Price", lic.price != null ? `£${lic.price}` : "—"],
       ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
     ];
@@ -762,7 +771,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>
                 <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
-                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{lic.start_date} to {lic.end_date}</span>}
+                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
               </div>
               <div className="row" style={{ flexWrap: "wrap" }}>
                 {lic.status === "available" && schedulingId !== lic.id && (
@@ -803,7 +812,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className="muted" style={{ fontSize: 12 }}>Start date:</span>
                 <input className="input" type="date" style={{ maxWidth: 160 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                <span className="muted" style={{ fontSize: 12 }}>→ ends {addDaysIso(startDate, lic.plan_days - 1)}</span>
+                <span className="muted" style={{ fontSize: 12 }}>→ ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
                 <button className="btn" onClick={() => schedule(lic)}>Confirm</button>
                 <button className="btn-outline" onClick={() => setSchedulingId(null)}>Cancel</button>
               </div>
@@ -1064,7 +1073,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                           title={!inWindow ? "Not covered by a license for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
                           style={{
                             width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #1B1D1F" : "1px solid #DEDDD6",
-                            background: isSelected ? "#1B1D1F" : count > 0 ? "#FBEEDD" : "#fff",
+                            background: isSelected ? "#1B1D1F" : count > 0 ? "#E6EEF3" : "#fff",
                             color: isSelected ? "#fff" : !inWindow ? "#DEDDD6" : "#1B1D1F",
                             opacity: inWindow ? 1 : 0.4,
                           }}
@@ -1101,7 +1110,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                       onMouseEnter={() => continuePaint(h)}
                       className="badge"
                       title={!editable && selectedIsToday ? "Already passed" : undefined}
-                      style={{ cursor: editable ? "pointer" : "default", background: open ? "#1B1D1F" : "#F7F7F4", color: open ? "#fff" : "#1B1D1F", opacity: editable ? 1 : 0.5 }}
+                      style={{ cursor: editable ? "pointer" : "default", background: open ? "#1D5C8A" : "#F7F7F4", color: open ? "#fff" : "#1B1D1F", opacity: editable ? 1 : 0.5 }}
                     >
                       {formatTime(h)}
                     </span>
@@ -1137,7 +1146,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
               {!selectedIsPast && (
                 <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Copy to:</span>
+                  <span style={{ fontSize: 12, minWidth: 68, fontWeight: 700, color: "var(--ink)" }}>Copy to:</span>
                   <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
                   <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
                   <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
@@ -1145,7 +1154,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
               )}
 
               <div className="row" style={{ gap: 6, marginTop: 4, paddingTop: 10, borderTop: "1px solid #DEDDD6" }}>
-                <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Danger zone:</span>
+                <span style={{ fontSize: 12, minWidth: 68, fontWeight: 700, color: "#B3261E" }}>Danger zone:</span>
                 <button className="btn-outline" style={{ color: "#B3261E" }} onClick={clearAllDays}>Clear all days</button>
               </div>
             </>
