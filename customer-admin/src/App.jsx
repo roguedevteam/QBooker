@@ -999,21 +999,6 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     }
   }
 
-  async function clearAllDays() {
-    if (!windows.length) return;
-    if (!confirm("Clear hours across every one of this service's licensed windows? Already-passed hours today are kept — everything else is wiped. This can't be undone.")) return;
-    try {
-      let todayHours = monthConfigs[todayIso()]?.hours;
-      if (todayHours === undefined) {
-        const r = await api.getDailyConfig(service.id, todayIso(), todayIso());
-        todayHours = r.dailyConfig[0]?.hours || [];
-      }
-      const keep = todayHours.filter((h) => h < currentMinutes);
-      await api.clearAllDailyConfig(service.id, { keepHoursForToday: keep });
-      await loadMonth(calendarMonth);
-    } catch (err) { setError(err.message); }
-  }
-
   async function copyToWeek() {
     const idx = weekdayIndex(selectedDate);
     const monday = addDaysIso(selectedDate, -idx);
@@ -1153,10 +1138,6 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                 </div>
               )}
 
-              <div className="row" style={{ gap: 6, marginTop: 4, paddingTop: 10, borderTop: "1px solid #DEDDD6" }}>
-                <span style={{ fontSize: 12, minWidth: 68, color: "#B3261E" }}>Danger zone:</span>
-                <button className="btn-outline" style={{ color: "#B3261E", fontWeight: 400 }} onClick={clearAllDays}>Clear all days</button>
-              </div>
             </>
           )}
         </div>
