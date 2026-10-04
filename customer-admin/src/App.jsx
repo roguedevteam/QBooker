@@ -589,7 +589,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const hasActiveLicense = licenses.some((l) => l.status === "active");
 
   return (
-    <div className="card stack" style={{ gap: 8, background: "#F6FAFC", ...(service.archived ? { opacity: 0.6 } : null) }}>
+    <div className="card stack" style={{ gap: 8, ...(service.archived ? { opacity: 0.6 } : null) }}>
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <div className="row" style={{ flexWrap: "wrap" }}>
           <strong>{service.name}</strong>
