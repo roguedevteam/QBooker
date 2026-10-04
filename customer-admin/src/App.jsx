@@ -590,6 +590,47 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
   const summary = licenseSummary(licenses);
   const hasActiveLicense = licenses.some((l) => l.status === "active");
 
+  // Fake for now — there's no real WhatsApp Business number wired up yet, so the QR just
+  // points at the same stand-in customer link the Setup tab shows, with the service tagged
+  // on so the real version can route straight to it once WhatsApp is actually connected.
+  function printServiceQR() {
+    const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
+    const link = `${CUSTOMER_APP_URL}/?t=${tenant.id}&s=${service.id}`;
+    const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&color=1D5C8A&data=${encodeURIComponent(link)}`;
+    const businessName = tenant?.business_name || "";
+    const html = `<!doctype html><html><head><title>QR code — ${service.name}</title>
+      <meta charset="utf-8" />
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:40px auto;color:#1B1D1F;text-align:center;}
+        .brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:28px;}
+        .brand .mark{width:26px;height:26px;background:#1D5C8A;position:relative;display:inline-block;}
+        .brand .mark::after{content:"";position:absolute;top:-4px;right:-4px;width:12px;height:12px;border-radius:50%;background:#C8690D;}
+        .brand .word{font-size:18px;font-weight:700;letter-spacing:-0.02em;}
+        .card{border:2px solid #1B1D1F;border-radius:14px;padding:32px;}
+        .biz{font-size:13px;color:#5F615B;margin-bottom:2px;}
+        .svc{font-size:20px;font-weight:700;margin-bottom:20px;}
+        img{display:block;margin:0 auto;}
+        .cta{font-size:15px;font-weight:600;margin-top:20px;}
+        .sub{font-size:12px;color:#5F615B;margin-top:6px;}
+        .foot{font-size:11px;color:#5F615B;margin-top:28px;}
+      </style>
+      </head><body>
+        <div class="brand"><span class="mark"></span><span class="word">QBooker</span></div>
+        <div class="card">
+          <div class="biz">${businessName}</div>
+          <div class="svc">${service.name}</div>
+          <img src="${qrImg}" width="260" height="260" alt="QR code" />
+          <div class="cta">📱 Scan to message us on WhatsApp</div>
+          <div class="sub">Join the queue or book instantly — no app to download.</div>
+        </div>
+        <div class="foot">Powered by QBooker</div>
+      </body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, "_blank");
+    if (w) w.onload = () => w.print();
+  }
+
   return (
     <div className="card stack" style={{ gap: 8, ...(service.archived ? { opacity: 0.6 } : null) }}>
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -608,12 +649,14 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
               const action = e.target.value;
               e.target.value = "";
               if (action === "buy") { setExpanded(true); setBuyTrigger((t) => t + 1); }
+              else if (action === "qr") printServiceQR();
               else if (action === "archive") { await api.updateService(service.id, { archived: !service.archived }); onChange(); }
               else if (action === "delete" && confirm(`Delete "${service.name}"? This can't be undone.`)) { await api.deleteService(service.id); onChange(); }
             }}
           >
             <option value="" disabled>⋯</option>
             <option value="buy">Buy a license</option>
+            <option value="qr">Print QR customer display</option>
             <option value="archive">{service.archived ? "Unarchive" : "Archive"}</option>
             <option value="delete">Delete</option>
           </select>
