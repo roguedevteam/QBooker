@@ -13,10 +13,12 @@ router.get("/tenants", asyncHandler(async (req, res) => {
   const result = await query(
     `select t.*,
        coalesce(sl.service_count, 0) as service_count,
-       coalesce(sl.total_spend, 0) as total_spend
+       coalesce(sl.total_spend, 0) as total_spend,
+       coalesce(sl.unpaid_count, 0) as unpaid_count
      from tenants t
      left join (
-       select tenant_id, count(distinct service_id) as service_count, sum(price) as total_spend
+       select tenant_id, count(distinct service_id) as service_count, sum(price) as total_spend,
+         count(*) filter (where paid = false) as unpaid_count
        from service_licenses where status != 'refunded' group by tenant_id
      ) sl on sl.tenant_id = t.id
      order by t.created_at desc`
@@ -167,6 +169,27 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
 // Available (never scheduled) or Scheduled (dates assigned, but today hasn't reached them
 // yet, so nothing was ever actually served against it). Active or Expired means it's already
 // been "live" — those can't be refunded from here.
+// Invoice (or pay-later) licenses stay unpaid until marked paid here. Once an account that was
+// held as "pending" has nothing left unpaid, it goes active — same effect the old account-level
+// "Mark paid" had.
+router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (req, res) => {
+  const result = await query(
+    `update service_licenses set paid=true, paid_at=now() where id=$1 and tenant_id=$2 returning *`,
+    [req.params.licenseId, req.params.id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "License not found." });
+  const lic = result.rows[0];
+  const remaining = (await query(`select count(*)::int c from service_licenses where tenant_id=$1 and paid=false and status != 'refunded'`, [req.params.id])).rows[0].c;
+  let activated = false;
+  if (remaining === 0) {
+    const u = await query(`update tenants set status='active' where id=$1 and status='pending' returning id`, [req.params.id]);
+    activated = u.rows.length > 0;
+  }
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.params.id, `Payment confirmed for ${lic.plan_label} license (£${lic.price})${activated ? " — account activated" : ""}`]);
+  res.json({ license: lic, activated });
+}));
+
 router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHandler(async (req, res) => {
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });

@@ -261,10 +261,14 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
   if (method === "invoice" && Number(plan.price) > 0 && !invoicePO?.trim() && !req.tenant.invoice_po) {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
+  const isFree = !(Number(plan.price) > 0);
+  const licMethod = isFree ? null : method;
+  const licPaid = isFree || method !== "invoice";
   const result = await query(
-    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
-     values ($1,$2,$3,$4,$5,$6,'available') returning *`,
-    [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price]
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid, paid_at, invoice_po)
+     values ($1,$2,$3,$4,$5,$6,'available',$7,$8,$9,$10) returning *`,
+    [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price, licMethod, licPaid, licPaid && !isFree ? new Date() : null,
+      method === "invoice" ? (invoicePO?.trim() || req.tenant.invoice_po || null) : null]
   );
   if (method === "invoice" && Number(plan.price) > 0) {
     await query(

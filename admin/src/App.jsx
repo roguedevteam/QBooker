@@ -271,10 +271,12 @@ function Dashboard({ setError, error, onSignOut }) {
                     <td>{t.service_count}</td>
                     <td>{t.location_count}</td>
                     <td>£{Number(t.total_spend).toFixed(2)}</td>
-                    <td><span className={`badge badge-${t.status === "active" ? "green" : t.status === "disabled" ? "red" : "amber"}`}>{t.status}</span></td>
+                    <td>
+                      <span className={`badge badge-${t.status === "active" ? "green" : t.status === "disabled" ? "red" : "amber"}`}>{t.status}</span>
+                      {Number(t.unpaid_count) > 0 && <span className="badge badge-red" style={{ marginLeft: 6 }} title="Invoice licenses awaiting payment — open the customer to mark them paid">{t.unpaid_count} unpaid</span>}
+                    </td>
                     <td className="row">
                       <button className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
-                      {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
                       {t.status === "disabled"
                         ? <button className="btn-outline" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Enable</button>
                         : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${t.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(t.id, { status: "disabled" }); refresh(); } }}>Disable</button>}
@@ -481,7 +483,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
           </label>
         </div>
         <div className="row">
-          {tenant.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Mark paid</button>}
+          {tenant.status === "pending" && !licenses.some((l) => l.paid === false && l.status !== "refunded") && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Activate account</button>}
           {tenant.status === "disabled"
             ? <button className="btn-outline" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Enable account</button>
             : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${tenant.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(tenant.id, { status: "disabled" }); load(); } }}>Disable account</button>}
@@ -577,9 +579,18 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                             <span style={{ fontWeight: 600 }}>{lic.plan_label}</span>
                             {lic.start_date && <span className="muted">{lic.start_date} to {lic.end_date}</span>}
                             <span className="muted">{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+                            {Number(lic.price) > 0 && (lic.paid === false
+                              ? <span className="badge badge-red">{lic.payment_method === "later" ? "Pay later — unpaid" : "Invoice — unpaid"}</span>
+                              : <span className="badge badge-green">{lic.payment_method === "invoice" ? "Invoice — paid" : "Paid by card"}</span>)}
+                            {lic.invoice_po && <span className="muted">PO {lic.invoice_po}</span>}
                             <span className="muted">Purchased {new Date(lic.purchased_at).toLocaleDateString()}</span>
                           </div>
-                          <RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} />
+                          <div className="row" style={{ gap: 8 }}>
+                            {lic.paid === false && lic.status !== "refunded" && (
+                              <button className="btn" onClick={async () => { try { await api.markLicensePaid(tenant.id, lic.id); load(); } catch (err) { setError(err.message); } }}>Mark paid</button>
+                            )}
+                            <RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} />
+                          </div>
                         </div>
                       );
                     })}

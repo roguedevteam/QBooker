@@ -1219,6 +1219,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="row" style={{ flexWrap: "wrap" }}>
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>
                 <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
+                {lic.paid === false && lic.status !== "refunded" && <span className="badge badge-amber">Invoice — awaiting payment</span>}
                 {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
               </div>
               <div className="row" style={{ flexWrap: "wrap" }}>
