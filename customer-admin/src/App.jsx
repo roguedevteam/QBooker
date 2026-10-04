@@ -137,7 +137,7 @@ export default function App() {
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
-      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} setError={setError} />}
+      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} onTenantChange={setTenant} setError={setError} />}
     </div>
   );
 }
@@ -227,7 +227,7 @@ function LocationWebsiteLine({ loc, setError, onChanged, editing, onDoneEditing 
   return <div className="muted" style={{ fontSize: 12 }}>Website: {loc.website_url}</div>;
 }
 
-function AdminDashboard({ tenant, setError }) {
+function AdminDashboard({ tenant, onTenantChange, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
@@ -240,6 +240,7 @@ function AdminDashboard({ tenant, setError }) {
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
+  const [allLicenses, setAllLicenses] = useState([]);
   const date = todayIso();
   const STAFF_APP_URL = import.meta.env.VITE_STAFF_APP_URL || "http://localhost:5176";
   const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
@@ -263,6 +264,9 @@ function AdminDashboard({ tenant, setError }) {
   async function refreshAudit() {
     try { const logRes = await api.getAuditLog(); setAuditLog(logRes.auditLog); } catch (err) { setError(err.message); }
   }
+  async function refreshLicenses() {
+    try { const r = await api.getAllLicenses(); setAllLicenses(r.licenses); } catch (err) { setError(err.message); }
+  }
   useEffect(() => { refreshCore(); refreshQueue(); refreshAudit(); }, []);
 
   // Light polling for near-real-time (not a WebSocket/Supabase-realtime subscription — just periodic refetch).
@@ -275,8 +279,8 @@ function AdminDashboard({ tenant, setError }) {
     <div className="container stack">
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <div className="wrap">
-          {["dashboard", "locations", "setup", "audit"].map((t) => (
-            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+          {["dashboard", "locations", "profile", "setup", "audit"].map((t) => (
+            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); if (t === "profile") refreshLicenses(); }}>{t}</button>
           ))}
         </div>
         {tab === "locations" && (
@@ -392,6 +396,10 @@ function AdminDashboard({ tenant, setError }) {
         </div>
       )}
 
+      {tab === "profile" && (
+        <ProfileTab tenant={tenant} onTenantChange={onTenantChange} licenses={allLicenses} onLicensesChanged={refreshLicenses} setError={setError} />
+      )}
+
       {tab === "setup" && (
         <div className="stack">
           <div className="card stack" style={{ background: "#FBEEDD" }}>
@@ -461,6 +469,94 @@ function AdminDashboard({ tenant, setError }) {
           {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
         </div>
       )}
+    </div>
+  );
+}
+
+// Email and company address are editable here — business name isn't (it's used across
+// receipts/audit history; contact us to change it). Also the one place licenses across
+// every service are listed together, with Refund/Print moved here from each service's own
+// licenses panel so that panel stays focused on scheduling.
+function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setError }) {
+  const [email, setEmail] = useState(tenant.email || "");
+  const [address, setAddress] = useState(tenant.company_address || "");
+  const [saved, setSaved] = useState(false);
+
+  async function save(patch) {
+    try {
+      const r = await api.updateMe(patch);
+      onTenantChange?.(r.tenant);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function refund(lic) {
+    if (!confirm(`Refund this ${lic.plan_label} license on "${lic.service_name}"? This can't be undone.`)) return;
+    try {
+      await api.refundServiceLicense(lic.service_id, lic.id);
+      onLicensesChanged?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const visibleLicenses = licenses.filter((l) => l.status !== "refunded");
+
+  return (
+    <div className="stack">
+      <div className="card stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Profile</div>
+        <div className="muted" style={{ fontSize: 12 }}>Business name isn't editable here — contact us if it needs to change.</div>
+        <div className="wrap">
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Email address</span>
+            <input className="input" style={{ width: 240 }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Business address</span>
+            <input className="input" style={{ width: 320 }} value={address} onChange={(e) => setAddress(e.target.value)} />
+          </label>
+        </div>
+        <div className="row">
+          <button
+            className="btn"
+            disabled={email === (tenant.email || "") && address === (tenant.company_address || "")}
+            onClick={() => save({ email, companyAddress: address })}
+          >
+            Save
+          </button>
+          {saved && <span className="muted" style={{ fontSize: 12 }}>Saved.</span>}
+        </div>
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Licenses ({visibleLicenses.length})</div>
+        {visibleLicenses.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No licenses yet.</div>}
+        {visibleLicenses.map((lic, i) => {
+          const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+          return (
+            <div
+              key={lic.id} className="row"
+              style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}
+            >
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <span className={`badge badge-${meta.color}`}>{meta.label}</span>
+                <strong style={{ fontSize: 13 }}>{lic.service_name}</strong>
+                <span style={{ fontSize: 13 }}>{lic.plan_label}</span>
+                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
+                <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+              </div>
+              <div className="row">
+                {lic.status === "available" && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
+                <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name)}>Print receipt</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -551,6 +647,38 @@ const LICENSE_STATUS_META = {
   expired: { label: "Expired", color: "red" },
   refunded: { label: "Refunded", color: "red" },
 };
+
+// Shared by the Profile tab's licenses list and each service's own licenses panel.
+function printLicenseReceipt(lic, serviceName, businessName) {
+  const rows = [
+    ["Service", serviceName],
+    ["Plan", lic.plan_label],
+    ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
+    ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
+    ["Price", lic.price != null ? `£${lic.price}` : "—"],
+    ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
+  ];
+  const html = `<!doctype html><html><head><title>Receipt — ${businessName}</title>
+    <meta charset="utf-8" />
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:40px auto;color:#1B1D1F;}
+      h1{font-size:20px;margin-bottom:2px;}
+      .sub{color:#5F615B;font-size:13px;margin-bottom:24px;}
+      table{width:100%;border-collapse:collapse;}
+      td{padding:8px 0;border-bottom:1px solid #E6E6E1;font-size:14px;}
+      td:first-child{color:#5F615B;width:40%;}
+      td:last-child{font-weight:600;text-align:right;}
+    </style>
+    </head><body>
+      <h1>${businessName}</h1>
+      <div class="sub">License receipt</div>
+      <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+    </body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (w) w.onload = () => w.print();
+}
 
 // A compact, always-visible summary of a service's license health — shown in the
 // collapsed header row so you don't have to expand every service to check coverage.
@@ -740,42 +868,6 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   async function move(lic, targetServiceId) {
     try { await api.moveServiceLicense(service.id, lic.id, targetServiceId); await load(); onChanged?.(); } catch (err) { setError(err.message); } finally { setMovingId(null); }
   }
-  async function refund(lic) {
-    if (!confirm("Refund this license? This can't be undone.")) return;
-    try { await api.refundServiceLicense(service.id, lic.id); await load(); onChanged?.(); } catch (err) { setError(err.message); }
-  }
-  function printReceipt(lic) {
-    const businessName = tenant?.business_name || "";
-    const rows = [
-      ["Service", service.name],
-      ["Plan", lic.plan_label],
-      ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
-      ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
-      ["Price", lic.price != null ? `£${lic.price}` : "—"],
-      ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
-    ];
-    const html = `<!doctype html><html><head><title>Receipt — ${businessName}</title>
-      <meta charset="utf-8" />
-      <style>
-        body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:40px auto;color:#1B1D1F;}
-        h1{font-size:20px;margin-bottom:2px;}
-        .sub{color:#5F615B;font-size:13px;margin-bottom:24px;}
-        table{width:100%;border-collapse:collapse;}
-        td{padding:8px 0;border-bottom:1px solid #E6E6E1;font-size:14px;}
-        td:first-child{color:#5F615B;width:40%;}
-        td:last-child{font-weight:600;text-align:right;}
-      </style>
-      </head><body>
-        <h1>${businessName}</h1>
-        <div class="sub">License receipt</div>
-        <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
-      </body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, "_blank");
-    if (w) w.onload = () => w.print();
-  }
-
   const visible = licenses.filter((l) => l.status !== "refunded");
   const otherServices = (allServices || []).filter((s) => s.id !== service.id && !s.archived);
 
@@ -881,18 +973,14 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     onChange={(e) => {
                       const action = e.target.value;
                       e.target.value = "";
-                      if (action === "refund") refund(lic);
-                      else if (action === "print") printReceipt(lic);
-                      else if (action === "move") setMovingId(lic.id);
+                      if (action === "move") setMovingId(lic.id);
                       else if (action === "changeDates") { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }
                       else if (action === "unschedule") unschedule(lic);
                     }}
                   >
                     <option value="" disabled>Actions</option>
-                    {lic.status === "available" && <option value="refund">Refund</option>}
                     {lic.status === "scheduled" && <option value="changeDates">Change dates</option>}
                     {lic.status === "scheduled" && <option value="unschedule">Unschedule</option>}
-                    <option value="print">Print Receipt</option>
                     {lic.status === "available" && otherServices.length > 0 && <option value="move">Move License</option>}
                   </select>
                 )}

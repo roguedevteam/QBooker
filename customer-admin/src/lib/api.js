@@ -36,6 +36,8 @@ export const api = {
   verifyAdminOtp: (email, code) => request("/api/auth/admin/verify-otp", { method: "POST", body: { email, code }, auth: false }),
 
   me: () => request("/api/tenant/me"),
+  updateMe: (patch) => request("/api/tenant/me", { method: "PATCH", body: patch }),
+  getAllLicenses: () => request("/api/tenant/licenses"),
 
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),

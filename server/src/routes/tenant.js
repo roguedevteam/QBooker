@@ -34,6 +34,18 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
+// Self-service profile edit — email and company address only. Business name is set at
+// signup and isn't changeable here (it's used in receipts/audit history); contact name and
+// business name can still be corrected by platform admin if genuinely needed.
+router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
+  const { email, companyAddress } = req.body;
+  const result = await query(
+    `update tenants set email = coalesce($1, email), company_address = coalesce($2, company_address) where id=$3 returning *`,
+    [email, companyAddress, req.tenant.id]
+  );
+  res.json({ tenant: result.rows[0] });
+}));
+
 // --- Locations — free, unlimited; a routing + staff-access concept only -------------
 router.get("/locations", asyncHandler(async (req, res) => {
   const result = await query(
@@ -73,6 +85,20 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
 router.delete("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   res.json({ ok: true });
+}));
+
+// Every license this tenant has ever bought, across every service, with status freshly
+// resolved — backs the Profile tab's licenses list (refund/print live there now instead of
+// each service's own dropdown).
+router.get("/licenses", asyncHandler(async (req, res) => {
+  const services = (await query(`select id, name from services where tenant_id=$1`, [req.tenant.id])).rows;
+  let licenses = [];
+  for (const s of services) {
+    const resolved = await resolveServiceLicenses(s.id);
+    licenses = licenses.concat(resolved.map((l) => ({ ...l, service_name: s.name })));
+  }
+  licenses.sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at));
+  res.json({ licenses });
 }));
 
 // --- Services --------------------------------------------------------------------
