@@ -441,20 +441,29 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                 <div style={{ height: "100%", width: `${setupPercent}%`, background: "var(--brand)", borderRadius: 3 }} />
               </div>
               <div className="stack" style={{ gap: 6 }}>
-                {setupTasks.filter((t) => !t.done).map((t) => (
-                  <div key={t.key} className="row" style={{ justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: t.key === "payment" ? "var(--error, #B3261E)" : undefined, fontWeight: t.key === "payment" ? 600 : undefined }}>{t.label}</span>
-                    <div className="row">
-                      <button className="btn-outline" onClick={t.go}>{t.cta}</button>
-                      <button
-                        className="btn-outline"
-                        title="Dismiss — won't be shown again"
-                        style={{ border: "none", padding: "0 4px", background: "transparent" }}
-                        onClick={() => dismissSetupTask(t.key)}
-                      >✕</button>
+                {setupTasks.filter((t) => !t.done).map((t) => {
+                  const isPayment = t.key === "payment";
+                  return (
+                    <div
+                      key={t.key} className="row"
+                      style={{
+                        justifyContent: "space-between",
+                        ...(isPayment ? { background: "#FBE9E7", borderRadius: 6, padding: "6px 10px", margin: "-6px -10px" } : null),
+                      }}
+                    >
+                      <span style={{ fontSize: 13, color: isPayment ? "#B3261E" : undefined, fontWeight: isPayment ? 600 : undefined }}>{t.label}</span>
+                      <div className="row">
+                        <button className="btn-outline" onClick={t.go} style={isPayment ? { borderColor: "#B3261E", color: "#B3261E" } : undefined}>{t.cta}</button>
+                        <button
+                          className="btn-outline"
+                          title="Dismiss — won't be shown again"
+                          style={{ border: "none", padding: "0 4px", background: "transparent" }}
+                          onClick={() => dismissSetupTask(t.key)}
+                        >✕</button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
