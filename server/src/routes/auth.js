@@ -70,7 +70,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
 
     const accessCode = genAccessCode();
     // Trial accounts are fully active. Buying further licenses needs payment details first.
-    const paymentMethod = "trial";
+    const paymentMethod = "card"; // nothing is charged or stored at signup; payment is chosen when buying a license
     const status = "active";
     const signupCountry = countryForIp(req.ip);
     const tenantResult = await client.query(

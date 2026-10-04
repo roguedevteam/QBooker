@@ -85,12 +85,10 @@ router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
 // and leaves the account pending for our team to confirm, same as the original invoice flow.
 router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
   const { paymentMethod, invoiceEmail, invoicePO } = req.body;
-  const onTrial = req.tenant.payment_method === "trial";
-  if (req.tenant.status !== "pending" && !onTrial) {
+  if (req.tenant.status !== "pending") {
     return res.status(409).json({ error: "This account isn't waiting on a payment." });
   }
   if (paymentMethod === "card") {
-    if (onTrial) return res.status(409).json({ error: "Card payments are coming soon." });
     const result = await query(
       `update tenants set status='active', payment_method='card' where id=$1 returning *`,
       [req.tenant.id]
@@ -102,7 +100,7 @@ router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
   if (paymentMethod === "invoice") {
     if (!invoicePO?.trim()) return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
     const result = await query(
-      `update tenants set payment_method='invoice', invoice_email=$1, invoice_po=$2${onTrial ? ", status='pending'" : ""} where id=$3 returning *`,
+      `update tenants set payment_method='invoice', invoice_email=$1, invoice_po=$2 where id=$3 returning *`,
       [invoiceEmail || null, invoicePO.trim(), req.tenant.id]
     );
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -252,22 +250,33 @@ router.get("/services/:id/licenses", asyncHandler(loadService), asyncHandler(asy
 }));
 
 router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
-  const { planId, customDays } = req.body;
-  if (req.tenant.payment_method === "trial") {
-    return res.status(402).json({ error: "You're on the free 2-day trial. Card payments are coming soon; to buy more licenses now, choose Use invoice on the Account tab." });
-  }
+  const { planId, customDays, paymentMethod, invoiceEmail, invoicePO } = req.body;
   const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
   const plan = resolvePlan(planId, customDays, planPricing(pricingRow));
   if (!plan) return res.status(400).json({ error: "Unknown plan type." });
 
+  // Card or invoice is chosen at the point of buying. Card is still the Stripe stand-in (no
+  // card details are collected or stored here); invoice records the billing details.
+  const method = paymentMethod === "invoice" || paymentMethod === "card" ? paymentMethod : req.tenant.payment_method;
+  if (method === "invoice" && Number(plan.price) > 0 && !invoicePO?.trim() && !req.tenant.invoice_po) {
+    return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
+  }
   const result = await query(
     `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
      values ($1,$2,$3,$4,$5,$6,'available') returning *`,
     [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price]
   );
-  const chargeNote = req.tenant.payment_method === "invoice"
+  if (method === "invoice" && Number(plan.price) > 0) {
+    await query(
+      `update tenants set payment_method='invoice', invoice_email=coalesce($1, invoice_email), invoice_po=coalesce($2, invoice_po) where id=$3`,
+      [invoiceEmail || null, invoicePO?.trim() || null, req.tenant.id]
+    );
+  } else if (method === "card" && req.tenant.payment_method !== "card") {
+    await query(`update tenants set payment_method='card' where id=$1`, [req.tenant.id]);
+  }
+  const chargeNote = method === "invoice"
     ? `£${plan.price} added to next invoice`
-    : `£${plan.price} charged to card on file`;
+    : `£${plan.price} paid by card`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License bought for "${req.service.name}" — ${plan.planLabel}, ${chargeNote} (not yet scheduled)`]);
   res.json({ license: result.rows[0], charge: { amount: plan.price, note: chargeNote } });

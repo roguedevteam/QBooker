@@ -622,7 +622,6 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
 
   const visibleLicenses = licenses.filter((l) => l.status !== "refunded");
   const accountUnpaid = tenant.status === "pending";
-  const onTrial = tenant.payment_method === "trial";
 
   async function payByCard() {
     if (!confirm("Card payment via Stripe is coming soon — for now this activates your account immediately without a real charge. Continue?")) return;
@@ -721,20 +720,16 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         </div>
       </div>
 
-      {(accountUnpaid || onTrial) && (
+      {accountUnpaid && (
         <div className="card stack" style={{ borderColor: "var(--accent)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{onTrial ? "You're on the free 2-day trial" : "Payment required"}</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Payment required</div>
           <div className="muted" style={{ fontSize: 12 }}>
-            {onTrial
-              ? "Choose your two free days on your service's calendar. To buy more licenses later you'll be able to pay by card (coming soon), or ask for an invoice below."
-              : "Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through."}
+            Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
           </div>
           {!payMethod && (
             <div className="row">
-              {onTrial
-                ? <button className="btn" disabled title="Card payments are coming soon">Card payments coming soon</button>
-                : <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>}
-              <button className="btn-outline" onClick={() => setPayMethod("invoice")}>{onTrial ? "Use invoice" : "Pay by invoice"}</button>
+              <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>
+              <button className="btn-outline" onClick={() => setPayMethod("invoice")}>Pay by invoice</button>
             </div>
           )}
           {payMethod === "card" && (
@@ -1083,6 +1078,9 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const [buyStep, setBuyStep] = useState("plan");
   const [planId, setPlanId] = useState("week");
   const [customDays, setCustomDays] = useState(7);
+  const [buyPay, setBuyPay] = useState(tenant?.payment_method === "invoice" ? "invoice" : "card");
+  const [buyEmail, setBuyEmail] = useState(tenant?.invoice_email || "");
+  const [buyPO, setBuyPO] = useState(tenant?.invoice_po || "");
   const [schedulingId, setSchedulingId] = useState(null);
   const [startDate, setStartDate] = useState(todayIso());
   const [movingId, setMovingId] = useState(null);
@@ -1106,7 +1104,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
   async function buy() {
     try {
-      const r = await api.buyServiceLicense(service.id, { planId, customDays: planId === "custom" ? customDays : undefined });
+      const r = await api.buyServiceLicense(service.id, {
+        planId, customDays: planId === "custom" ? customDays : undefined,
+        paymentMethod: buyPay, invoiceEmail: buyPay === "invoice" ? buyEmail : undefined, invoicePO: buyPay === "invoice" ? buyPO : undefined,
+      });
       setBuying(false);
       await load();
       onChanged?.();
@@ -1178,29 +1179,30 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — £{selectedPrice()}
             </span>
           </div>
-          {tenant?.payment_method === "trial" ? (
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              You're on the free 2-day trial. Paying by card is coming soon. To buy more licenses before then, choose "Use invoice" on the Account tab and we'll set you up.
-            </div>
-          ) : (
           <div className="stack" style={{ gap: 8 }}>
-            <div className={`payment-option${tenant?.payment_method !== "invoice" ? " active" : ""}`}>
+            <div className={`payment-option${buyPay === "card" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("card")}>
               <span className="payment-option-title">Card</span>
-              <span className="payment-option-desc">Charged to the card on file — access is immediate.</span>
+              <span className="payment-option-desc">Pay by card — access is immediate. Card payments are handled securely by Stripe, so QBooker never stores your card details.</span>
             </div>
-            <div className={`payment-option${tenant?.payment_method === "invoice" ? " active" : ""}`}>
+            <div className={`payment-option${buyPay === "invoice" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("invoice")}>
               <span className="payment-option-title">Invoice</span>
-              <span className="payment-option-desc">
-                {tenant?.status === "pending"
-                  ? "Added to your account's invoice — your initial invoice payment hasn't been confirmed yet, so this license will be held, same as the rest of your account, until it clears."
-                  : "Added to your next invoice — access is immediate, billed per your invoice terms."}
-              </span>
+              <span className="payment-option-desc">Added to your next invoice — access is immediate, billed per your invoice terms.</span>
             </div>
+            {buyPay === "invoice" && (
+              <div className="wrap">
+                <label className="stack" style={{ gap: 2 }}>
+                  <span className="muted" style={{ fontSize: 11 }}>Billing email</span>
+                  <input className="input" style={{ width: 220 }} value={buyEmail} onChange={(e) => setBuyEmail(e.target.value)} />
+                </label>
+                <label className="stack" style={{ gap: 2 }}>
+                  <span className="muted" style={{ fontSize: 11 }}>PO / reference number</span>
+                  <input className="input" style={{ width: 200 }} value={buyPO} onChange={(e) => setBuyPO(e.target.value)} />
+                </label>
+              </div>
+            )}
           </div>
-          )}
-          <div className="muted" style={{ fontSize: 11 }}>This follows your account's payment method on file — contact us to change it.</div>
           <div className="row">
-            <button className="btn" disabled={tenant?.payment_method === "trial"} onClick={buy}>Confirm &amp; buy</button>
+            <button className="btn" disabled={buyPay === "invoice" && !buyPO.trim()} onClick={buy}>Confirm &amp; buy</button>
             <button className="btn-outline" onClick={() => setBuyStep("plan")}>Back</button>
             <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
           </div>
