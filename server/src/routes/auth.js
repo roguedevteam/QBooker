@@ -6,6 +6,9 @@ import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import { planPricing, resolvePlan } from "../lib/serviceLicense.js";
+import { domainAcceptsMail } from "../lib/emailCheck.js";
+import { countryForIp } from "../lib/geo.js";
+import { sanitizeTenant } from "../lib/tenantView.js";
 
 const router = Router();
 
@@ -39,11 +42,20 @@ router.post("/signup", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
   }
 
+  // Catches typos and made-up domains before we ever create an account against them — good
+  // for deliverability on anything we send, and one less way for a junk account to appear.
+  if (!(await domainAcceptsMail(email))) {
+    return res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." });
+  }
+
   // One email = one account. If it already exists, don't create a duplicate — just send
   // them straight back to sign in, same as if they'd used the admin login screen directly.
   const existing = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
   if (existing.rows.length > 0) {
     const tenant = existing.rows[0];
+    if (tenant.status === "disabled") {
+      return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+    }
     const code = genOtp();
     await query(`insert into admin_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [tenant.id, code]);
     const body = `Your QBooker admin sign-in code is ${code}.`;
@@ -64,15 +76,19 @@ router.post("/signup", asyncHandler(async (req, res) => {
     await client.query("BEGIN");
 
     const accessCode = genAccessCode();
-    const status = paymentMethod === "invoice" ? "pending" : "active";
+    // Both invoice and pay-later leave the account "pending" — they can sign in and configure
+    // everything straight away, but staff kiosk/customer WhatsApp aren't enabled until system
+    // admin confirms payment (the existing "Mark paid" action, same as invoice today).
+    const status = paymentMethod === "invoice" || paymentMethod === "later" ? "pending" : "active";
+    const signupCountry = countryForIp(req.ip);
     const tenantResult = await client.query(
       `insert into tenants
         (business_name, email, location_count, access_code, payment_method, status, invoice_email, invoice_po,
-         first_name, last_name, company_address)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         first_name, last_name, company_address, signup_country)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        returning *`,
       [businessName, email, locations.length, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null,
-        firstName, lastName, companyAddress || null]
+        firstName, lastName, companyAddress || null, signupCountry]
     );
     const tenant = tenantResult.rows[0];
 
@@ -123,7 +139,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
     const body = `Your QBooker admin sign-in code is ${code}.`;
     await logSimulatedMessage({ tenantId: tenant.id, channel: "email", toReference: email, body });
 
-    res.json({ tenant, demoOtp: code });
+    res.json({ tenant: sanitizeTenant(tenant), demoOtp: code });
   } catch (err) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error(err);
@@ -139,6 +155,9 @@ router.post("/admin/request-otp", asyncHandler(async (req, res) => {
   const result = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
   if (result.rows.length === 0) return res.status(404).json({ error: "No account found with that email." });
   const tenant = result.rows[0];
+  if (tenant.status === "disabled") {
+    return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+  }
   const code = genOtp();
   await query(`insert into admin_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [tenant.id, code]);
   const body = `Your QBooker admin sign-in code is ${code}.`;
@@ -151,6 +170,9 @@ router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
   const tenantResult = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
   if (tenantResult.rows.length === 0) return res.status(404).json({ error: "No account found with that email." });
   const tenant = tenantResult.rows[0];
+  if (tenant.status === "disabled") {
+    return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+  }
   const otpResult = await query(
     `select * from admin_otp where tenant_id=$1 and code=$2 and consumed=false and expires_at > now() order by created_at desc limit 1`,
     [tenant.id, code]
@@ -158,7 +180,7 @@ router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
   if (otpResult.rows.length === 0) return res.status(401).json({ error: "Incorrect or expired code." });
   await query(`update admin_otp set consumed=true where id=$1`, [otpResult.rows[0].id]);
   const token = signSession({ role: "tenant_admin", tenantId: tenant.id }, "30d");
-  res.json({ token, tenant });
+  res.json({ token, tenant: sanitizeTenant(tenant) });
 }));
 
 // --- Staff OTP login ---------------------------------------------------------
@@ -167,6 +189,10 @@ router.post("/staff/request-otp", asyncHandler(async (req, res) => {
   const locResult = await query(`select * from locations where staff_access_code = $1`, [accessCode]);
   if (locResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any location." });
   const location = locResult.rows[0];
+  const tenantCheck = await query(`select status from tenants where id=$1`, [location.tenant_id]);
+  if (tenantCheck.rows[0]?.status === "disabled") {
+    return res.status(403).json({ error: "This account has been disabled — contact your manager." });
+  }
   const code = genOtp();
   await query(`insert into staff_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [location.tenant_id, code]);
   const body = `Your QBooker staff sign-in code is ${code}.`;
@@ -181,6 +207,9 @@ router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   const location = locResult.rows[0];
   const tenantResult = await query(`select * from tenants where id = $1`, [location.tenant_id]);
   const tenant = tenantResult.rows[0];
+  if (tenant.status === "disabled") {
+    return res.status(403).json({ error: "This account has been disabled — contact your manager." });
+  }
   const otpResult = await query(
     `select * from staff_otp where tenant_id=$1 and code=$2 and consumed=false and expires_at > now() order by created_at desc limit 1`,
     [tenant.id, code]
@@ -188,7 +217,7 @@ router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   if (otpResult.rows.length === 0) return res.status(401).json({ error: "Incorrect or expired code." });
   await query(`update staff_otp set consumed=true where id=$1`, [otpResult.rows[0].id]);
   const token = signSession({ role: "staff", tenantId: tenant.id, locationId: location.id }, "10h");
-  res.json({ token, tenant, location: { id: location.id, name: location.name } });
+  res.json({ token, tenant: sanitizeTenant(tenant), location: { id: location.id, name: location.name } });
 }));
 
 // --- System admin login (real password, not simulated) -----------------------

@@ -214,9 +214,9 @@ function Dashboard({ setError, error, onSignOut }) {
         {tab === "customers" && !viewingTenantId && (
           <div className="card">
             <table>
-              <thead><tr><th>Business</th><th>Email</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
-                {tenants.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
+                {tenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
                 {tenants.map((t) => (
                   <tr key={t.id}>
                     <td>
@@ -229,13 +229,21 @@ function Dashboard({ setError, error, onSignOut }) {
                       </button>
                     </td>
                     <td>{t.email}</td>
+                    <td>
+                      {t.signup_country
+                        ? <span className={t.signup_country === "GB" ? "muted" : "badge badge-amber"} style={{ fontSize: 12 }} title={t.signup_country !== "GB" ? "Signed up from outside the UK — worth a second look" : undefined}>{t.signup_country}</span>
+                        : <span className="muted" style={{ fontSize: 12 }}>—</span>}
+                    </td>
                     <td>{t.service_count}</td>
                     <td>{t.location_count}</td>
                     <td>£{Number(t.total_spend).toFixed(2)}</td>
-                    <td><span className={`badge badge-${t.status === "active" ? "green" : "amber"}`}>{t.status}</span></td>
+                    <td><span className={`badge badge-${t.status === "active" ? "green" : t.status === "disabled" ? "red" : "amber"}`}>{t.status}</span></td>
                     <td className="row">
                       <button className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
                       {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
+                      {t.status === "disabled"
+                        ? <button className="btn-outline" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Enable</button>
+                        : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${t.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(t.id, { status: "disabled" }); refresh(); } }}>Disable</button>}
                       <button className="btn-outline" onClick={async () => { if (confirmDeleteCustomer(t.business_name)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
                     </td>
                   </tr>
@@ -384,7 +392,9 @@ function CustomerDetail({ tenantId, onBack, setError }) {
     <div className="stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <button className="btn-outline" onClick={onBack}>← All customers</button>
-        <span className={`badge badge-${tenant.status === "active" ? "green" : "amber"}`}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>
+        <span className={`badge badge-${tenant.status === "active" ? "green" : tenant.status === "disabled" ? "red" : "amber"}`}>
+          {tenant.status === "pending" ? "Payment pending" : tenant.status === "disabled" ? "Disabled" : "Active"}
+        </span>
       </div>
 
       <div className="card stack">
@@ -426,9 +436,20 @@ function CustomerDetail({ tenantId, onBack, setError }) {
             />
           </label>
           <AddressFields key={tenant.id} tenantId={tenant.id} companyAddress={tenant.company_address} onSaved={load} setError={setError} />
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Signed up from</span>
+            <span style={{ padding: "8px 0" }}>
+              {tenant.signup_country
+                ? <span className={tenant.signup_country === "GB" ? undefined : "badge badge-amber"}>{tenant.signup_country}{tenant.signup_country !== "GB" ? " — outside the UK" : ""}</span>
+                : <span className="muted">Unknown</span>}
+            </span>
+          </label>
         </div>
         <div className="row">
           {tenant.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Mark paid</button>}
+          {tenant.status === "disabled"
+            ? <button className="btn-outline" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Enable account</button>
+            : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${tenant.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(tenant.id, { status: "disabled" }); load(); } }}>Disable account</button>}
           <button
             className="btn-outline"
             onClick={async () => { if (confirmDeleteCustomer(tenant.business_name)) { await api.deleteTenant(tenant.id); onBack(); } }}

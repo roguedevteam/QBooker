@@ -15,6 +15,7 @@ import {
   planPricing, resolvePlan,
 } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
+import { sanitizeTenant } from "../lib/tenantView.js";
 
 const router = Router();
 
@@ -23,6 +24,11 @@ router.use(requireAuth("tenant_admin", "staff"));
 async function loadTenant(req, res, next) {
   const result = await query(`select * from tenants where id=$1`, [req.auth.tenantId]);
   if (result.rows.length === 0) return res.status(404).json({ error: "Account not found." });
+  // Blocks an already-issued token too, not just a fresh login — otherwise disabling an
+  // account mid-session wouldn't actually do anything until the token expired on its own.
+  if (result.rows[0].status === "disabled") {
+    return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+  }
   req.tenant = result.rows[0];
   next();
 }
@@ -33,7 +39,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
+router.get("/me", (req, res) => res.json({ tenant: sanitizeTenant(req.tenant), staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
 // Self-service profile edit — business name, contact name, email, company address and
 // website (website moved here from being per-location — it's a business-wide thing now).
@@ -50,7 +56,7 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
      where id=$7 returning *`,
     [businessName, firstName, lastName, email, companyAddress, websiteUrl, req.tenant.id]
   );
-  res.json({ tenant: result.rows[0] });
+  res.json({ tenant: sanitizeTenant(result.rows[0]) });
 }));
 
 // Self-service account deletion — permanent, same as the system-admin "Delete customer"

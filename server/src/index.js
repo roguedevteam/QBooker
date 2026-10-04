@@ -10,6 +10,9 @@ import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 
 const app = express();
+// Railway/Render sit in front of this as a reverse proxy — without this, req.ip is always the
+// proxy's own address, which would make every signup look like it's coming from the same place.
+app.set("trust proxy", true);
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim());
 const restrictedCors = cors({ origin: allowedOrigins, credentials: true });

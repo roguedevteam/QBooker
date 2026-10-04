@@ -41,6 +41,9 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   if (status === "active") {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
       [req.params.id, "Invoice payment confirmed by our team — staff kiosk and customer WhatsApp are now enabled."]);
+  } else if (status === "disabled") {
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.params.id, "Account disabled by our team — sign-in is blocked until it's re-enabled."]);
   }
   res.json({ tenant: result.rows[0] });
 }));

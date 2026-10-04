@@ -640,7 +640,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const step2Valid = namesFilled && !hasDuplicateNames;
   const isServiceValid = (s) => s.name.trim() && s.planId && (s.planId !== "custom" || Number(s.customDays) > 0);
   const step3Valid = services.every(isServiceValid);
-  const step4Valid = paymentMethod === "card" || (invoiceEmail.trim() && poNumber.trim());
+  const step4Valid = paymentMethod === "card" || paymentMethod === "later" || (invoiceEmail.trim() && poNumber.trim());
 
   function next() { setStep((s) => Math.min(lastStep, s + 1)); }
   function back() { setStep((s) => Math.max(1, s - 1)); }
@@ -839,6 +839,12 @@ function Signup({ onDone, setError, onBackToLanding }) {
                 onClick={() => setPaymentMethod("invoice")}
                 title="Invoice"
                 desc="Your account can be fully configured straight away, but staff kiosk and customer WhatsApp won't be enabled until payment is received."
+              />
+              <PaymentOption
+                active={paymentMethod === "later"}
+                onClick={() => setPaymentMethod("later")}
+                title="Pay later"
+                desc="Get set up and explore the system now — staff kiosk and customer WhatsApp switch on once we've sorted payment with you."
               />
             </div>
             {paymentMethod === "invoice" && (

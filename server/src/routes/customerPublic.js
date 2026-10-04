@@ -9,6 +9,7 @@ const router = Router();
 async function loadTenant(req, res, next) {
   const result = await query(`select * from tenants where id=$1`, [req.params.tenantId]);
   if (result.rows.length === 0) return res.status(404).json({ error: "Business not found." });
+  if (result.rows[0].status === "disabled") return res.status(404).json({ error: "Business not found." });
   req.tenant = result.rows[0];
   next();
 }
