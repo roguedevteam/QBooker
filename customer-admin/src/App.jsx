@@ -273,43 +273,39 @@ function AdminDashboard({ tenant, setError }) {
 
   return (
     <div className="container stack">
-      <div className="wrap">
-        {["dashboard", "locations", "setup", "audit"].map((t) => (
-          <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
-        ))}
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div className="wrap">
+          {["dashboard", "locations", "setup", "audit"].map((t) => (
+            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); }}>{t}</button>
+          ))}
+        </div>
+        {tab === "locations" && (
+          <div className="row">
+            {archivedCount > 0 && (
+              <button
+                className="btn-outline"
+                style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
+                onClick={() => setShowArchived((v) => !v)}
+              >
+                {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+              </button>
+            )}
+            {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
+          </div>
+        )}
       </div>
 
       {tab === "locations" && (
         <div className="stack">
           <PendingPaymentBanner tenant={tenant} />
 
-          <div className="card stack" style={{ gap: 8, padding: "12px 16px" }}>
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-              <div className="stack" style={{ gap: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Locations</div>
-                <div className="muted" style={{ fontSize: 12 }}>Locations are free and unlimited — licenses are bought per service, not per location.</div>
-              </div>
-              <div className="row">
-                {archivedCount > 0 && (
-                  <button
-                    className="btn-outline"
-                    style={{ border: "none", padding: 0, textDecoration: "underline", background: "transparent" }}
-                    onClick={() => setShowArchived((v) => !v)}
-                  >
-                    {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
-                  </button>
-                )}
-                {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
-              </div>
+          {addingLocation && (
+            <div className="card row">
+              <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
+              <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
+              <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
             </div>
-            {addingLocation && (
-              <div className="row">
-                <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
-                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
-                <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
-              </div>
-            )}
-          </div>
+          )}
 
           {locations.map((loc) => {
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
