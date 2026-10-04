@@ -99,7 +99,7 @@ const MODES = [
 
 const SETUP_STEPS = [
   { name: "Create your account", text: "Your name, your business name and your email address." },
-  { name: "Add a service and choose a licence", text: "Pick a day, week, month, year or custom period for each service." },
+  { name: "Add your service", text: "Name it, choose queue, appointments or hybrid, and pick your two free days." },
   { name: "Share your WhatsApp link", text: "Patients can start queuing straight away." },
 ];
 
@@ -179,6 +179,9 @@ function Landing({ onStart, simulatedBadge }) {
 
   return (
     <div id="top" className="lp">
+      <div className="lp-promo">
+        <div className="wide"><strong>Two free days</strong> <span>No card needed</span> <span>Try us out</span></div>
+      </div>
       {/* NAV */}
       <header className="lp-nav">
         <div className="wide lp-nav-inner">
@@ -193,7 +196,7 @@ function Landing({ onStart, simulatedBadge }) {
           <div className="row" style={{ gap: 18 }}>
             {simulatedBadge && <span className="badge badge-amber">Simulated date: {simulatedBadge}</span>}
             <a href={ADMIN_APP_URL} className="lp-login">Log in</a>
-            <button className="btn-ink" style={{ padding: "10px 18px", fontSize: 14 }} onClick={onStart}>Start free</button>
+            <button className="btn-ink" style={{ padding: "10px 18px", fontSize: 14 }} onClick={onStart}>Start free trial</button>
           </div>
         </div>
       </header>
@@ -204,11 +207,11 @@ function Landing({ onStart, simulatedBadge }) {
           <h1 className="lp-h1">A WhatsApp queue for your clinic, live in under 60 seconds</h1>
           <p className="lp-lead">QBooker is queue management for NHS and healthcare services that don't run every day. Patients join from WhatsApp, your team calls them forward, and there's no hardware to buy or install.</p>
           <div className="lp-actions">
-            <button className="btn-accent" onClick={onStart}>Start free</button>
+            <button className="btn-accent" onClick={onStart}>Start free trial</button>
             <a href="#hybrid" className="lp-link">See how the hybrid queue works</a>
           </div>
           <ul className="lp-checks">
-            <li>Free for your first location and service, with no obligation</li>
+            <li>Two free days to try it, with no card needed</li>
             <li>No patient data or clinical records stored</li>
             <li>UK-based servers and support</li>
           </ul>
@@ -324,7 +327,7 @@ function Landing({ onStart, simulatedBadge }) {
       <section id="setup" className="lp-section">
         <div className="wide">
           <h2 className="lp-h2">Live in under 60 seconds, with nothing to learn</h2>
-          <p className="lp-lead" style={{ marginBottom: 40 }}>QBooker is built so nobody needs training. Create an account, choose your licence and you're ready to go.</p>
+          <p className="lp-lead" style={{ marginBottom: 40 }}>QBooker is built so nobody needs training. Create an account, add a service and you're ready to go, with two free days and no card.</p>
           <div className="lp-steps">
             {SETUP_STEPS.map((s, i) => (
               <div key={s.name} className="lp-step">
@@ -368,13 +371,13 @@ function Landing({ onStart, simulatedBadge }) {
       {/* PRICING */}
       <section id="pricing" className="lp-section">
         <div className="wide">
-          <h2 className="lp-h2">Free to try, then pay per service</h2>
+          <h2 className="lp-h2">Two free days, then pay per service</h2>
           <p className="lp-lead" style={{ marginBottom: 40 }}>Test it on a real clinic day before you spend anything.</p>
           <div className="lp-pricing">
             <div className="lp-offer">
-              <h3>Free while we launch</h3>
-              <p>Your first location with one service is free to use. No obligation, so you can try it on a real clinic day and see how patients get on.</p>
-              <button className="btn-accent" onClick={onStart}>Start free</button>
+              <h3>Two free days for every new account</h3>
+              <p>Sign up and try QBooker on a real clinic day. No card needed and nothing to cancel, so you can see how patients get on before you spend anything.</p>
+              <button className="btn-accent" onClick={onStart}>Start free trial</button>
             </div>
             <div>
               <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month, a year or a custom period.</p>
@@ -424,9 +427,9 @@ function Landing({ onStart, simulatedBadge }) {
         <div className="wide lp-cta">
           <div>
             <h2 className="lp-h2" style={{ marginBottom: 10 }}>Ready to run your next clinic day without the paperwork?</h2>
-            <p className="lp-lead">Free for your first location and service.</p>
+            <p className="lp-lead">Two free days. No card needed.</p>
           </div>
-          <button className="btn-accent" onClick={onStart}>Start free</button>
+          <button className="btn-accent" onClick={onStart}>Start free trial</button>
         </div>
       </section>
 
@@ -564,7 +567,6 @@ function PaymentOption({ active, onClick, title, desc }) {
 }
 
 function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, removable }) {
-  const price = servicePlanPrice(svc, pricing);
   return (
     <div className="card stack" style={{ gap: 10 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -598,30 +600,6 @@ function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, re
         )}
       </div>
       <div className="muted" style={{ fontSize: 11 }}>Can't be changed after signup — delete and recreate the service in your admin dashboard if you need to change it later.</div>
-
-      <div style={{ borderTop: "1px solid var(--line)" }} />
-
-      <div className="plan-grid">
-        {PLAN_META.map((p) => {
-          const onSale = p.id !== "custom" && pricing.sale?.active && pricing.sale[p.id] != null;
-          const planPrice = p.id === "custom" ? null : (onSale ? pricing.sale[p.id] : pricing[p.id]);
-          return (
-            <button key={p.id} type="button" className={svc.planId === p.id ? "plan-option active" : "plan-option"} onClick={() => onChange({ ...svc, planId: p.id })}>
-              <span className="plan-option-label">{p.label}</span>
-              {planPrice != null && <span className="plan-option-price">£{planPrice}</span>}
-              {p.id === "custom" && <span className="plan-option-price">from £{pricing.customDailyRate}/day</span>}
-            </button>
-          );
-        })}
-      </div>
-      {svc.planId === "custom" && (
-        <Field label="Number of days">
-          <input className="input" type="number" min={1} value={svc.customDays} onChange={(e) => onChange({ ...svc, customDays: Number(e.target.value) })} style={{ maxWidth: 120 }} />
-        </Field>
-      )}
-      <div className="row" style={{ justifyContent: "flex-end" }}>
-        <span className="muted" style={{ fontSize: 12 }}>License for this service: <strong style={{ color: "var(--ink)" }}>£{price}</strong></span>
-      </div>
     </div>
   );
 }
@@ -684,7 +662,8 @@ function Signup({ onDone, setError, onBackToLanding }) {
   }
 
   const total = services.reduce((sum, s) => sum + (Number(servicePlanPrice(s, pricing)) || 0), 0).toFixed(2);
-  const needsPayment = Number(total) > 0;
+  // Every new account starts on a free 2-day trial — no payment step at signup.
+  const needsPayment = false;
   const stepLabels = needsPayment ? STEP_LABELS : STEP_LABELS_FREE;
   const lastStep = stepLabels.length;
   // If editing services back on step 3 drops the total to free (or raises it back above
@@ -711,16 +690,11 @@ function Signup({ onDone, setError, onBackToLanding }) {
       // Nothing to charge — every service's license came out free (e.g. a sale or £0
       // pricing), so there's no payment method to collect; bill as "card" with no
       // invoice fields since there's nothing to invoice either.
-      const effectivePaymentMethod = needsPayment ? paymentMethod : "card";
       const payload = {
         businessName, firstName, lastName, email,
-        paymentMethod: effectivePaymentMethod,
-        invoiceEmail: needsPayment ? invoiceEmail : "",
-        invoicePO: needsPayment ? poNumber : "",
         locations: locationNames.map((n) => ({ name: n.trim() })),
         services: services.map((s) => ({
           name: s.name.trim(), locationIndex: s.locationIndex, mode: s.mode, slotMinutes: s.slotMinutes,
-          planId: s.planId, customDays: s.planId === "custom" ? Number(s.customDays) : undefined,
         })),
       };
       const result = await api.signup(payload);
@@ -824,9 +798,8 @@ function Signup({ onDone, setError, onBackToLanding }) {
             <div className="stack" style={{ gap: 2 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>Add your services</div>
               <div className="muted" style={{ fontSize: 12 }}>
-                Each service belongs to one location and gets its own license — pick whatever length fits (a day, a week,
-                a month, a year, or a custom number of days). Access begins the moment you set opening hours for it,
-                whenever you're actually ready — nothing is wasted while you're still setting up.
+                Each service belongs to one location. Your 2 free days go on the first service you add, and you choose
+                which two days from its calendar once you're in, so nothing is wasted while you're still setting up.
               </div>
             </div>
             <div className="stack" style={{ gap: 12 }}>
@@ -866,8 +839,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
             </div>
 
             <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
-              <span className="muted" style={{ fontSize: 12 }}>{services.length} service license{services.length === 1 ? "" : "s"}</span>
-              <strong>Total: £{total}</strong>
+              <span style={{ fontSize: 13 }}><strong>2 free days</strong> — no card needed. Add more licences whenever you're ready.</span>
             </div>
 
             <div className="row" style={{ justifyContent: "space-between" }}>

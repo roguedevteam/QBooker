@@ -248,3 +248,7 @@ html { scroll-padding-top: 80px; }
   .lp-nav-inner .badge, .lp-login { display: none; }
   .wide { padding: 0 20px; }
 }
+.lp-promo { background: var(--accent); color: #fff; font-size: 14px; text-align: center; padding: 9px 0; }
+.lp-promo .wide { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 20px; }
+.lp-promo .wide > * + *::before { content: ""; display: inline-block; width: 4px; height: 4px; background: #fff; margin-right: 20px; vertical-align: middle; }
+@media (max-width: 760px) { .lp-promo { font-size: 13px; } .lp-promo .wide > * + *::before { margin-right: 12px; } .lp-promo .wide { gap: 2px 12px; } }

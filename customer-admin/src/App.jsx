@@ -622,6 +622,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
 
   const visibleLicenses = licenses.filter((l) => l.status !== "refunded");
   const accountUnpaid = tenant.status === "pending";
+  const onTrial = tenant.payment_method === "trial";
 
   async function payByCard() {
     if (!confirm("Card payment via Stripe is coming soon — for now this activates your account immediately without a real charge. Continue?")) return;
@@ -720,16 +721,18 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         </div>
       </div>
 
-      {accountUnpaid && (
+      {(accountUnpaid || onTrial) && (
         <div className="card stack" style={{ borderColor: "var(--accent)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Payment required</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{onTrial ? "You're on the free 2-day trial" : "Payment required"}</div>
           <div className="muted" style={{ fontSize: 12 }}>
-            Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
+            {onTrial
+              ? "Choose your two free days on your service's calendar. When you're ready to buy more licenses, add a payment method here."
+              : "Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through."}
           </div>
           {!payMethod && (
             <div className="row">
-              <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>
-              <button className="btn-outline" onClick={() => setPayMethod("invoice")}>Pay by invoice</button>
+              <button className="btn" onClick={() => setPayMethod("card")}>{onTrial ? "Add card" : "Pay by card"}</button>
+              <button className="btn-outline" onClick={() => setPayMethod("invoice")}>{onTrial ? "Use invoice" : "Pay by invoice"}</button>
             </div>
           )}
           {payMethod === "card" && (

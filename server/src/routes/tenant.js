@@ -85,7 +85,8 @@ router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
 // and leaves the account pending for our team to confirm, same as the original invoice flow.
 router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
   const { paymentMethod, invoiceEmail, invoicePO } = req.body;
-  if (req.tenant.status !== "pending") {
+  const onTrial = req.tenant.payment_method === "trial";
+  if (req.tenant.status !== "pending" && !onTrial) {
     return res.status(409).json({ error: "This account isn't waiting on a payment." });
   }
   if (paymentMethod === "card") {
@@ -100,7 +101,7 @@ router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
   if (paymentMethod === "invoice") {
     if (!invoicePO?.trim()) return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
     const result = await query(
-      `update tenants set payment_method='invoice', invoice_email=$1, invoice_po=$2 where id=$3 returning *`,
+      `update tenants set payment_method='invoice', invoice_email=$1, invoice_po=$2${onTrial ? ", status='pending'" : ""} where id=$3 returning *`,
       [invoiceEmail || null, invoicePO.trim(), req.tenant.id]
     );
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -251,6 +252,9 @@ router.get("/services/:id/licenses", asyncHandler(loadService), asyncHandler(asy
 
 router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
   const { planId, customDays } = req.body;
+  if (req.tenant.payment_method === "trial") {
+    return res.status(402).json({ error: "Add a payment method on the Account tab before buying more licenses." });
+  }
   const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
   const plan = resolvePlan(planId, customDays, planPricing(pricingRow));
   if (!plan) return res.status(400).json({ error: "Unknown plan type." });

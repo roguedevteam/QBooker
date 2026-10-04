@@ -5,7 +5,6 @@ import { signSession } from "../lib/auth.js";
 import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
-import { planPricing, resolvePlan } from "../lib/serviceLicense.js";
 import { domainAcceptsMail } from "../lib/emailCheck.js";
 import { countryForIp } from "../lib/geo.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
@@ -19,7 +18,6 @@ const router = Router();
 router.post("/signup", asyncHandler(async (req, res) => {
   const {
     businessName, firstName, lastName, email, companyAddress,
-    paymentMethod, invoiceEmail, invoicePO,
     locations, services,
   } = req.body;
 
@@ -35,11 +33,8 @@ router.post("/signup", asyncHandler(async (req, res) => {
   if (new Set(normalizedNames).size !== normalizedNames.length) {
     return res.status(400).json({ error: "Location names must be unique." });
   }
-  if (services.some((s) => !s?.name?.trim() || s.locationIndex == null || !s.planId)) {
-    return res.status(400).json({ error: "Every service needs a name, a location, and a license plan." });
-  }
-  if (paymentMethod === "invoice" && !invoicePO?.trim()) {
-    return res.status(400).json({ error: "A PO / reference number is required for invoice payment." });
+  if (services.some((s) => !s?.name?.trim() || s.locationIndex == null)) {
+    return res.status(400).json({ error: "Every service needs a name and a location." });
   }
 
   // Catches typos and made-up domains before we ever create an account against them — good
@@ -63,12 +58,10 @@ router.post("/signup", asyncHandler(async (req, res) => {
     return res.json({ alreadyExists: true, demoOtp: code, businessName: tenant.business_name });
   }
 
-  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
-  const pricing = planPricing(pricingRow);
-  const resolvedServices = services.map((s) => ({ ...s, plan: resolvePlan(s.planId, s.customDays, pricing) }));
-  if (resolvedServices.some((s) => !s.plan)) {
-    return res.status(400).json({ error: "Unknown license plan type." });
-  }
+  // Every new account gets one free 2-day trial license, no card needed. It's issued as an
+  // ordinary Available license (movable between services), so the admin picks the two days.
+  const trialPlan = { planId: "trial", planLabel: "2-day free trial", planDays: 2, price: 0 };
+  const resolvedServices = services;
 
   let client;
   try {
@@ -76,10 +69,9 @@ router.post("/signup", asyncHandler(async (req, res) => {
     await client.query("BEGIN");
 
     const accessCode = genAccessCode();
-    // Both invoice and pay-later leave the account "pending" — they can sign in and configure
-    // everything straight away, but staff kiosk/customer WhatsApp aren't enabled until system
-    // admin confirms payment (the existing "Mark paid" action, same as invoice today).
-    const status = paymentMethod === "invoice" || paymentMethod === "later" ? "pending" : "active";
+    // Trial accounts are fully active. Buying further licenses needs payment details first.
+    const paymentMethod = "trial";
+    const status = "active";
     const signupCountry = countryForIp(req.ip);
     const tenantResult = await client.query(
       `insert into tenants
@@ -87,7 +79,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
          first_name, last_name, company_address, signup_country)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        returning *`,
-      [businessName, email, locations.length, accessCode, paymentMethod, status, invoiceEmail || null, invoicePO || null,
+      [businessName, email, locations.length, accessCode, paymentMethod, status, null, null,
         firstName, lastName, companyAddress || null, signupCountry]
     );
     const tenant = tenantResult.rows[0];
@@ -107,7 +99,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
     // Each service is created against its location (fixed for good) and immediately gets
     // one Available license bound to it — not scheduled yet; the admin assigns dates from
     // the service's own calendar once they're in.
-    let totalCharge = 0;
+    let serviceIndex = 0;
     for (const s of resolvedServices) {
       const location = locationRows[s.locationIndex];
       if (!location) throw Object.assign(new Error("A service referenced a location that doesn't exist."), { statusCode: 400 });
@@ -115,17 +107,19 @@ router.post("/signup", asyncHandler(async (req, res) => {
         `insert into services (tenant_id, location_id, name, mode, slot_minutes) values ($1,$2,$3,$4,$5) returning *`,
         [tenant.id, location.id, s.name.trim(), s.mode || "hybrid", s.slotMinutes || 15]
       );
-      await client.query(
-        `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
-         values ($1,$2,$3,$4,$5,$6,'available')`,
-        [tenant.id, svcResult.rows[0].id, s.plan.planId, s.plan.planLabel, s.plan.planDays, s.plan.price]
-      );
-      totalCharge += Number(s.plan.price) || 0;
+      if (serviceIndex === 0) {
+        await client.query(
+          `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
+           values ($1,$2,$3,$4,$5,$6,'available')`,
+          [tenant.id, svcResult.rows[0].id, trialPlan.planId, trialPlan.planLabel, trialPlan.planDays, trialPlan.price]
+        );
+      }
+      serviceIndex++;
     }
 
     await client.query(
       `insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [tenant.id, `Account activated for ${businessName} — ${locations.length} location(s), ${services.length} service(s), £${totalCharge.toFixed(2)} charged`]
+      [tenant.id, `Account activated for ${businessName} — ${locations.length} location(s), ${services.length} service(s), 2-day free trial started`]
     );
 
     await client.query("COMMIT");
