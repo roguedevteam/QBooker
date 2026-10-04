@@ -651,6 +651,9 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
+  // Buying is two steps, same shape as the signup wizard: pick the license type first,
+  // then (only when it isn't free) confirm how it's paid for, before it's actually bought.
+  const [buyStep, setBuyStep] = useState("plan");
   const [planId, setPlanId] = useState("week");
   const [customDays, setCustomDays] = useState(7);
   const [schedulingId, setSchedulingId] = useState(null);
@@ -660,7 +663,14 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
   // "Buy a license" lives in ServiceEditor's header (to the left of its Actions ⋯ menu);
   // it bumps buyTrigger to open the plan picker here.
-  useEffect(() => { if (buyTrigger) setBuying(true); }, [buyTrigger]);
+  useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); } }, [buyTrigger]);
+
+  function selectedPrice() {
+    if (!pricing) return 0;
+    if (planId === "custom") return (Number(customDays) || 1) * pricing.customDailyRate;
+    const onSale = pricing.sale?.active && pricing.sale[planId] != null;
+    return Number(onSale ? pricing.sale[planId] : pricing[planId]) || 0;
+  }
 
   async function load() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
@@ -731,11 +741,14 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
     <div className="stack" style={{ gap: 8 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <strong style={{ fontSize: 13 }}>Licenses</strong>
-        {showBuyButton && !buying && <button className="btn-outline" onClick={() => setBuying(true)}>Buy a license</button>}
+        {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a license</button>}
       </div>
 
-      {buying && pricing && (
+      {buying && pricing && buyStep === "plan" && (
         <div className="card stack" style={{ background: "#FBEEDD" }}>
+          <div className="stack" style={{ gap: 2 }}>
+            <strong style={{ fontSize: 13 }}>Select license type</strong>
+          </div>
           <div className="plan-grid">
             {["day", "week", "month", "year", "custom"].map((id) => {
               const onSale = id !== "custom" && pricing.sale?.active && pricing.sale[id] != null;
@@ -755,7 +768,40 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
             </div>
           )}
           <div className="row">
-            <button className="btn" onClick={buy}>Buy</button>
+            <button className="btn" onClick={() => (selectedPrice() > 0 ? setBuyStep("payment") : buy())}>
+              {selectedPrice() > 0 ? "Continue" : "Buy — free"}
+            </button>
+            <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {buying && pricing && buyStep === "payment" && (
+        <div className="card stack" style={{ background: "#FBEEDD" }}>
+          <div className="stack" style={{ gap: 2 }}>
+            <strong style={{ fontSize: 13 }}>How this is paid</strong>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — £{selectedPrice()}
+            </span>
+          </div>
+          <div className="stack" style={{ gap: 8 }}>
+            <div className={`payment-option${tenant?.payment_method !== "invoice" ? " active" : ""}`}>
+              <span className="payment-option-title">Card</span>
+              <span className="payment-option-desc">Charged to the card on file — access is immediate.</span>
+            </div>
+            <div className={`payment-option${tenant?.payment_method === "invoice" ? " active" : ""}`}>
+              <span className="payment-option-title">Invoice</span>
+              <span className="payment-option-desc">
+                {tenant?.status === "pending"
+                  ? "Added to your account's invoice — your initial invoice payment hasn't been confirmed yet, so this license will be held, same as the rest of your account, until it clears."
+                  : "Added to your next invoice — access is immediate, billed per your invoice terms."}
+              </span>
+            </div>
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>This follows your account's payment method on file — contact us to change it.</div>
+          <div className="row">
+            <button className="btn" onClick={buy}>Confirm &amp; buy</button>
+            <button className="btn-outline" onClick={() => setBuyStep("plan")}>Back</button>
             <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
           </div>
         </div>
