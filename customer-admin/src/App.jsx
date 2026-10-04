@@ -649,7 +649,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant }) {
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, hideHeader = false, onBought }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -681,10 +681,11 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
   async function buy() {
     try {
-      await api.buyServiceLicense(service.id, { planId, customDays: planId === "custom" ? customDays : undefined });
+      const r = await api.buyServiceLicense(service.id, { planId, customDays: planId === "custom" ? customDays : undefined });
       setBuying(false);
       await load();
       onChanged?.();
+      onBought?.(r.license);
     } catch (err) { setError(err.message); }
   }
   async function schedule(lic) {
@@ -741,10 +742,12 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <strong style={{ fontSize: 13 }}>Licenses</strong>
-        {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a license</button>}
-      </div>
+      {!hideHeader && (
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <strong style={{ fontSize: 13 }}>Licenses</strong>
+          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a license</button>}
+        </div>
+      )}
 
       {buying && pricing && buyStep === "plan" && (
         <div className="card stack" style={{ background: "#FBEEDD" }}>
@@ -1269,22 +1272,21 @@ function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, set
   if (step === 2) {
     return (
       <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 3: buy a license for "{createdService.name}"</div>
-        <div className="muted" style={{ fontSize: 12 }}>This license is bound to this service. Assign it to calendar dates now, or later from the service's own panel.</div>
-        <ServiceLicensesPanel service={createdService} allServices={allServices || []} setError={setError} onChanged={() => {}} tenant={tenant} />
-        <div className="row">
-          <button className="btn" onClick={() => setStep(3)}>Next: set hours →</button>
-        </div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: buy a license for "{createdService.name}"</div>
+        <div className="muted" style={{ fontSize: 12 }}>This license is bound to this service. Assign it to calendar dates any time from the service's own panel.</div>
+        <ServiceLicensesPanel
+          service={createdService} allServices={allServices || []} setError={setError}
+          onChanged={() => {}} tenant={tenant} buyTrigger={1} hideHeader
+          onBought={() => setStep(3)}
+        />
       </div>
     );
   }
 
   return (
     <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 3 of 3: set hours for "{createdService.name}"</div>
-      </div>
-      <ServiceCalendar service={createdService} setError={setError} />
+      <div style={{ fontSize: 13, fontWeight: 600 }}>"{createdService.name}" is ready</div>
+      <div className="muted" style={{ fontSize: 12 }}>License bought — assign it to calendar dates any time from the service's own panel.</div>
       <div className="row">
         <button className="btn-outline" onClick={addAnother}>+ Add another service</button>
         <button className="btn" onClick={() => onDone(createdService)}>Done</button>
