@@ -1073,7 +1073,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                           title={!inWindow ? "Not covered by a license for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
                           style={{
                             width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #1B1D1F" : "1px solid #DEDDD6",
-                            background: isSelected ? "#1B1D1F" : count > 0 ? "#E6EEF3" : "#fff",
+                            background: isSelected ? "#1D5C8A" : count > 0 ? "#E6EEF3" : "#fff",
                             color: isSelected ? "#fff" : !inWindow ? "#DEDDD6" : "#1B1D1F",
                             opacity: inWindow ? 1 : 0.4,
                           }}
@@ -1121,8 +1121,8 @@ function ServiceCalendar({ service, setError, refreshToken }) {
               {!selectedIsPast && (
                 <div className="row" style={{ gap: 6 }}>
                   <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>This day:</span>
-                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
+                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={fillNineToFive}>Set 9–5</button>
+                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={clearDay}>Clear day</button>
                 </div>
               )}
 
@@ -1146,16 +1146,16 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
               {!selectedIsPast && (
                 <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, minWidth: 68, fontWeight: 700, color: "var(--ink)" }}>Copy to:</span>
-                  <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
-                  <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
-                  <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
+                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Copy to:</span>
+                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToWeek}>Rest of week</button>
+                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToMonth}>Rest of month</button>
+                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToWholePeriod}>All licensed dates</button>
                 </div>
               )}
 
               <div className="row" style={{ gap: 6, marginTop: 4, paddingTop: 10, borderTop: "1px solid #DEDDD6" }}>
-                <span style={{ fontSize: 12, minWidth: 68, fontWeight: 700, color: "#B3261E" }}>Danger zone:</span>
-                <button className="btn-outline" style={{ color: "#B3261E" }} onClick={clearAllDays}>Clear all days</button>
+                <span style={{ fontSize: 12, minWidth: 68, color: "#B3261E" }}>Danger zone:</span>
+                <button className="btn-outline" style={{ color: "#B3261E", fontWeight: 400 }} onClick={clearAllDays}>Clear all days</button>
               </div>
             </>
           )}
