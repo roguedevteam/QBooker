@@ -3,6 +3,13 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { api, setToken, hasToken } from "./lib/api.js";
 
 const PLAN_LABELS = { day: "Day", week: "Week", month: "Month", year: "Year", custom: "Custom" };
+const LICENSE_STATUS_META = {
+  available: { label: "Available", color: "amber" },
+  scheduled: { label: "Scheduled", color: "blue" },
+  active: { label: "Active", color: "green" },
+  expired: { label: "Expired", color: "red" },
+  refunded: { label: "Refunded", color: "red" },
+};
 
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
 function Logo({ size = 28, dark = false }) {
@@ -64,6 +71,7 @@ function Login({ onSignedIn, setError, error }) {
 function Dashboard({ setError, error, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [tenants, setTenants] = useState([]);
+  const [viewingTenantId, setViewingTenantId] = useState(null);
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [overview, setOverview] = useState(null);
 
@@ -127,7 +135,15 @@ function Dashboard({ setError, error, onSignOut }) {
           </div>
         )}
 
-        {tab === "customers" && (
+        {tab === "customers" && viewingTenantId && (
+          <CustomerDetail
+            tenantId={viewingTenantId}
+            onBack={() => { setViewingTenantId(null); refresh(); }}
+            setError={setError}
+          />
+        )}
+
+        {tab === "customers" && !viewingTenantId && (
           <div className="card">
             <table>
               <thead><tr><th>Business</th><th>Email</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
@@ -136,21 +152,21 @@ function Dashboard({ setError, error, onSignOut }) {
                 {tenants.map((t) => (
                   <tr key={t.id}>
                     <td>
-                      <input className="input" style={{ width: 140 }} defaultValue={t.business_name}
-                        onBlur={async (e) => { if (e.target.value !== t.business_name) { await api.updateTenant(t.id, { businessName: e.target.value }); refresh(); } }} />
+                      <button
+                        className="btn-outline"
+                        style={{ border: "none", padding: 0, background: "transparent", fontWeight: 600, textDecoration: "underline" }}
+                        onClick={() => setViewingTenantId(t.id)}
+                      >
+                        {t.business_name}
+                      </button>
                     </td>
-                    <td>
-                      <input className="input" style={{ width: 160 }} defaultValue={t.email}
-                        onBlur={async (e) => { if (e.target.value !== t.email) { await api.updateTenant(t.id, { email: e.target.value }); refresh(); } }} />
-                    </td>
+                    <td>{t.email}</td>
                     <td>{t.service_count}</td>
-                    <td>
-                      <input className="input" type="number" style={{ width: 60 }} defaultValue={t.location_count}
-                        onBlur={async (e) => { if (Number(e.target.value) !== t.location_count) { await api.updateTenant(t.id, { locationCount: Number(e.target.value) }); refresh(); } }} />
-                    </td>
+                    <td>{t.location_count}</td>
                     <td>£{Number(t.total_spend).toFixed(2)}</td>
                     <td><span className={`badge badge-${t.status === "active" ? "green" : "amber"}`}>{t.status}</span></td>
                     <td className="row">
+                      <button className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
                       {t.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Mark paid</button>}
                       <button className="btn-outline" onClick={async () => { if (confirm(`Delete ${t.business_name}? This can't be undone.`)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
                     </td>
@@ -209,6 +225,197 @@ function Dashboard({ setError, error, onSignOut }) {
         )}
 
         {tab === "testing" && <ClockPanel setError={setError} />}
+      </div>
+    </div>
+  );
+}
+
+function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
+  const [open, setOpen] = useState(false);
+  const [planId, setPlanId] = useState("week");
+  const [customDays, setCustomDays] = useState(7);
+  const [granting, setGranting] = useState(false);
+
+  async function grant() {
+    setGranting(true);
+    try {
+      await api.grantFreeLicense(tenantId, service.id, { planId, customDays: planId === "custom" ? customDays : undefined });
+      setOpen(false);
+      onGranted();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGranting(false);
+    }
+  }
+
+  if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Free license</button>;
+  return (
+    <span className="row" style={{ gap: 4 }}>
+      <select value={planId} onChange={(e) => setPlanId(e.target.value)}>
+        {["day", "week", "month", "year", "custom"].map((id) => (
+          <option key={id} value={id}>{PLAN_LABELS[id]}</option>
+        ))}
+      </select>
+      {planId === "custom" && (
+        <input
+          className="input" type="number" min={1} style={{ width: 60 }} value={customDays}
+          onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))}
+        />
+      )}
+      <button className="btn" disabled={granting} onClick={grant}>{granting ? "Granting…" : "Grant"}</button>
+      <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
+    </span>
+  );
+}
+
+// Full drill-down for one customer: account details, locations, services, and every
+// license they've ever had, all editable from here — platform support's one-stop view
+// instead of asking the customer to share their screen.
+function CustomerDetail({ tenantId, onBack, setError }) {
+  const [detail, setDetail] = useState(null);
+
+  async function load() {
+    try {
+      const r = await api.getTenantDetail(tenantId);
+      setDetail(r);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  useEffect(() => { load(); }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!detail) return <div className="card muted">Loading…</div>;
+  const { tenant, locations, services, licenses } = detail;
+
+  return (
+    <div className="stack">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <button className="btn-outline" onClick={onBack}>← All customers</button>
+        <span className={`badge badge-${tenant.status === "active" ? "green" : "amber"}`}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Account</div>
+        <div className="wrap">
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Business name</span>
+            <input
+              className="input" style={{ width: 200 }} defaultValue={tenant.business_name}
+              onBlur={async (e) => { if (e.target.value !== tenant.business_name) { await api.updateTenant(tenant.id, { businessName: e.target.value }); load(); } }}
+            />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Email</span>
+            <input
+              className="input" style={{ width: 220 }} defaultValue={tenant.email}
+              onBlur={async (e) => { if (e.target.value !== tenant.email) { await api.updateTenant(tenant.id, { email: e.target.value }); load(); } }}
+            />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Location count (billing)</span>
+            <input
+              className="input" type="number" style={{ width: 80 }} defaultValue={tenant.location_count}
+              onBlur={async (e) => { if (Number(e.target.value) !== tenant.location_count) { await api.updateTenant(tenant.id, { locationCount: Number(e.target.value) }); load(); } }}
+            />
+          </label>
+        </div>
+        <div className="row">
+          {tenant.status === "pending" && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Mark paid</button>}
+          <button
+            className="btn-outline"
+            onClick={async () => { if (confirm(`Delete ${tenant.business_name}? This can't be undone.`)) { await api.deleteTenant(tenant.id); onBack(); } }}
+          >
+            Delete customer
+          </button>
+        </div>
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations ({locations.length})</div>
+        {locations.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No locations yet.</div>}
+        {locations.map((loc, i) => (
+          <div key={loc.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <input
+                className="input" style={{ width: 160 }} defaultValue={loc.name}
+                onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
+              />
+              <input
+                className="input" style={{ width: 200 }} placeholder="Address" defaultValue={loc.address || ""}
+                onBlur={async (e) => { if (e.target.value !== (loc.address || "")) { await api.updateTenantLocation(tenant.id, loc.id, { address: e.target.value }); load(); } }}
+              />
+              {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px" }}>{loc.code}</code>}
+            </div>
+            <button
+              className="btn-outline"
+              onClick={async () => { if (confirm(`Delete location "${loc.name}"? This can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
+            >
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Services ({services.length})</div>
+        {services.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services yet.</div>}
+        {services.map((svc, i) => {
+          const loc = locations.find((l) => l.id === svc.location_id);
+          return (
+            <div key={svc.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 13 }}>{svc.name}</strong>
+                <span className="muted" style={{ fontSize: 12 }}>{loc?.name || "—"}</span>
+                <select value={svc.mode} onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}>
+                  {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                {svc.mode !== "queue" && (
+                  <input
+                    className="input" type="number" style={{ width: 60 }} defaultValue={svc.slot_minutes}
+                    onBlur={async (e) => { if (Number(e.target.value) !== svc.slot_minutes) { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); } }}
+                  />
+                )}
+                {svc.archived && <span className="badge badge-amber">Archived</span>}
+              </div>
+              <div className="row">
+                <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
+                <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
+                  {svc.archived ? "Unarchive" : "Archive"}
+                </button>
+                <button
+                  className="btn-outline"
+                  onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card stack">
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Licenses ({licenses.length})</div>
+        <table>
+          <thead><tr><th>Service</th><th>Plan</th><th>Status</th><th>Dates</th><th>Price</th><th>Purchased</th></tr></thead>
+          <tbody>
+            {licenses.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>No licenses yet.</td></tr>}
+            {licenses.map((lic) => {
+              const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+              return (
+                <tr key={lic.id}>
+                  <td>{lic.service_name}</td>
+                  <td>{lic.plan_label}</td>
+                  <td><span className={`badge badge-${meta.color}`}>{meta.label}</span></td>
+                  <td>{lic.start_date ? `${lic.start_date} to ${lic.end_date}` : "—"}</td>
+                  <td>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</td>
+                  <td>{new Date(lic.purchased_at).toLocaleDateString()}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

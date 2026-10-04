@@ -3,6 +3,7 @@ import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
+import { resolveServiceLicenses, resolvePlan, planPricing } from "../lib/serviceLicense.js";
 
 const router = Router();
 router.use(requireAuth("system_admin"));
@@ -38,6 +39,86 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
       [req.params.id, "Invoice payment confirmed by our team — staff kiosk and customer WhatsApp are now enabled."]);
   }
   res.json({ tenant: result.rows[0] });
+}));
+
+// Full drill-down for one customer — their locations, services, and every license across
+// all of them (freshly resolved, so a window that's just expired/gone-active shows the
+// right status) — backs the "view customer" detail screen.
+router.get("/tenants/:id/detail", asyncHandler(async (req, res) => {
+  const tenant = (await query(`select * from tenants where id=$1`, [req.params.id])).rows[0];
+  if (!tenant) return res.status(404).json({ error: "Customer not found." });
+
+  const locations = (await query(
+    `select l.*, lc.code from locations l
+     left join location_codes lc on lc.location_id = l.id
+     where l.tenant_id=$1 order by l.created_at`,
+    [tenant.id]
+  )).rows;
+  const services = (await query(`select * from services where tenant_id=$1 order by created_at`, [tenant.id])).rows;
+
+  let licenses = [];
+  for (const s of services) {
+    const resolved = await resolveServiceLicenses(s.id);
+    licenses = licenses.concat(resolved.map((l) => ({ ...l, service_name: s.name })));
+  }
+  licenses.sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at));
+
+  res.json({ tenant, locations, services, licenses });
+}));
+
+router.patch("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
+  const { name, address } = req.body;
+  const result = await query(
+    `update locations set name=coalesce($1,name), address=coalesce($2,address) where id=$3 and tenant_id=$4 returning *`,
+    [name, address, req.params.locId, req.params.id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Location not found." });
+  res.json({ location: result.rows[0] });
+}));
+
+router.delete("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
+  await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.locId, req.params.id]);
+  res.json({ ok: true });
+}));
+
+router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
+  const { name, mode, slotMinutes, archived } = req.body;
+  const result = await query(
+    `update services set
+       name = coalesce($1, name), mode = coalesce($2, mode),
+       slot_minutes = coalesce($3, slot_minutes), archived = coalesce($4, archived)
+     where id=$5 and tenant_id=$6 returning *`,
+    [name, mode, slotMinutes, archived, req.params.svcId, req.params.id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+  res.json({ service: result.rows[0] });
+}));
+
+router.delete("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
+  await query(`delete from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Platform-granted comp license — price 0, otherwise behaves exactly like a bought one
+// (available -> can be scheduled from the customer's own service panel). Label is tagged
+// so it's obviously a grant, not a real purchase, wherever licenses are listed.
+router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (req, res) => {
+  const { planId, customDays } = req.body;
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
+  if (!service) return res.status(404).json({ error: "Service not found." });
+
+  const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
+  const plan = resolvePlan(planId, customDays, planPricing(pricingRow));
+  if (!plan) return res.status(400).json({ error: "Unknown plan type." });
+
+  const result = await query(
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
+     values ($1,$2,$3,$4,$5,0,'available') returning *`,
+    [req.params.id, service.id, plan.planId, `${plan.planLabel} (free — granted)`, plan.planDays]
+  );
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.params.id, `Free license granted by platform admin for "${service.name}" — ${plan.planLabel} (${plan.planDays} days)`]);
+  res.json({ license: { ...result.rows[0], service_name: service.name } });
 }));
 
 router.delete("/tenants/:id", asyncHandler(async (req, res) => {
