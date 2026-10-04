@@ -246,7 +246,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
-  const [openLocationId, setOpenLocationId] = useState(null); // accordion — only one location open at a time
+  const [locationOverrides, setLocationOverrides] = useState({}); // { [locId]: boolean } — explicit open/close, overrides the default
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -346,19 +346,17 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
           {visibleLocations.map((loc) => {
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
             const soleLocation = visibleLocations.length === 1;
-            const isOpen = soleLocation || openLocationId === loc.id;
+            // Defaults open for the only location you have, or a location with just one
+            // service — nothing to pick between, so there's no reason to make them click in.
+            // An explicit click always overrides that default, either way.
+            const defaultOpen = soleLocation || locServices.length === 1;
+            const override = locationOverrides[loc.id];
+            const isOpen = override !== undefined ? override : defaultOpen;
             const addingHere = addingServiceFor === loc.id;
             return (
               <div key={loc.id} className="card stack">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div className="row">
-                    {soleLocation ? (
-                      <span className="muted" style={{ fontSize: 14, width: 20, textAlign: "center" }}>▾</span>
-                    ) : (
-                      <button className="btn-outline" onClick={() => setOpenLocationId((prev) => (prev === loc.id ? null : loc.id))}>
-                        {isOpen ? "▾" : "▸"}
-                      </button>
-                    )}
                     <input
                       className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
                       onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
@@ -368,25 +366,30 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     <CopyButton value={loc.staff_access_code} />
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
-                  {isOpen && (
-                    <div className="row">
-                      <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setOpenLocationId(loc.id); }}>+ Add service</button>
-                      <button
-                        className="btn-outline row"
-                        style={{ gap: 4 }}
-                        title="Archive location"
-                        aria-label="Archive location"
-                        onClick={async () => {
-                          if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
-                            await api.archiveLocation(loc.id);
-                            refreshCore();
-                          }
-                        }}
-                      >
-                        <ArchiveIcon /> Archive
-                      </button>
-                    </div>
-                  )}
+                  <div className="row">
+                    {isOpen && (
+                      <>
+                        <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setLocationOverrides((prev) => ({ ...prev, [loc.id]: true })); }}>+ Add service</button>
+                        <button
+                          className="btn-outline row"
+                          style={{ gap: 4 }}
+                          title="Archive location"
+                          aria-label="Archive location"
+                          onClick={async () => {
+                            if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
+                              await api.archiveLocation(loc.id);
+                              refreshCore();
+                            }
+                          }}
+                        >
+                          <ArchiveIcon /> Archive
+                        </button>
+                      </>
+                    )}
+                    <button className="btn-outline" onClick={() => setLocationOverrides((prev) => ({ ...prev, [loc.id]: !isOpen }))} title={isOpen ? "Collapse" : "Expand"}>
+                      {isOpen ? "▾" : "▸"}
+                    </button>
+                  </div>
                 </div>
 
                 {addingHere && (
