@@ -537,7 +537,7 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
         <label className="stack" style={{ gap: 2 }}>
           <span className="muted" style={{ fontSize: 11 }}>Business name</span>
           <input
-            className="input" style={{ fontSize: 18, fontWeight: 700, maxWidth: 360 }}
+            className="input" style={{ fontSize: 18, fontWeight: 400, maxWidth: 360 }}
             value={businessName} onChange={(e) => setBusinessName(e.target.value)}
           />
         </label>
