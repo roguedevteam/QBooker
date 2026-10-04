@@ -18,6 +18,23 @@ function formatTime(min) {
 function isDateLockedClient(dateStr) {
   return dateStr <= todayIso();
 }
+
+// Small "copy to clipboard" button — used anywhere a sign-in code is shown so staff don't
+// have to retype it. Shows a brief "Copied" confirmation instead of a silent no-op.
+function CopyButton({ value, label = "Copy" }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+  return (
+    <button
+      type="button"
+      className="btn-outline"
+      style={{ fontSize: 11, padding: "2px 8px" }}
+      onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+    >
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
 function isDatePastClient(dateStr) {
   return dateStr < todayIso();
 }
@@ -328,6 +345,7 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
                     />
                     <code style={{ fontSize: 12, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
+                    <CopyButton value={loc.staff_access_code} />
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   {isOpen && (
