@@ -1,11 +1,15 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
-let token = localStorage.getItem("qf_admin_token") || null;
+// sessionStorage (not localStorage) — cleared automatically when the tab/window closes,
+// so testers always land back on the sign-in screen for a new session instead of being
+// silently logged back into whichever account was last used, while still surviving an
+// ordinary reload/navigation within the same tab.
+let token = sessionStorage.getItem("qf_admin_token") || null;
 
 export function setToken(role, t) {
   token = t;
-  if (t) localStorage.setItem("qf_admin_token", t);
-  else localStorage.removeItem("qf_admin_token");
+  if (t) sessionStorage.setItem("qf_admin_token", t);
+  else sessionStorage.removeItem("qf_admin_token");
 }
 export function hasToken() {
   return !!token;
