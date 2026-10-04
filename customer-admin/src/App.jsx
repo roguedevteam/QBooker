@@ -320,8 +320,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
     <div className="container stack">
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <div className="wrap">
-          {["dashboard", "locations", "profile", "setup", "audit"].map((t) => (
-            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); if (t === "profile") refreshLicenses(); }}>{t}</button>
+          {["dashboard", "locations", "profile", "audit"].map((t) => (
+            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); if (t === "profile") refreshLicenses(); }}>{t === "profile" ? "account" : t}</button>
           ))}
         </div>
         {tab === "locations" && (
@@ -414,24 +414,11 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
       )}
 
       {tab === "profile" && (
-        <ProfileTab tenant={tenant} onTenantChange={onTenantChange} onAccountDeleted={onAccountDeleted} licenses={allLicenses} onLicensesChanged={refreshLicenses} setError={setError} />
-      )}
-
-      {tab === "setup" && (
-        <div className="stack">
-          <div className="card stack" style={{ background: "#FBEEDD" }}>
-            <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{STAFF_APP_URL}</code></div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Each location has its own sign-in code (open it in the Locations tab) — share that location's code with the staff working there.
-            </div>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13 }}>Customer link:</span>
-              <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
-              <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
-            </div>
-            <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
-          </div>
-        </div>
+        <ProfileTab
+          tenant={tenant} onTenantChange={onTenantChange} onAccountDeleted={onAccountDeleted}
+          licenses={allLicenses} onLicensesChanged={refreshLicenses} setError={setError}
+          staffAppUrl={STAFF_APP_URL} customerLink={customerLink}
+        />
       )}
 
       {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
@@ -573,7 +560,7 @@ function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
 }
 
-function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLicensesChanged, setError }) {
+function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLicensesChanged, setError, staffAppUrl, customerLink }) {
   const [businessName, setBusinessName] = useState(tenant.business_name || "");
   const [firstName, setFirstName] = useState(tenant.first_name || "");
   const [lastName, setLastName] = useState(tenant.last_name || "");
@@ -687,6 +674,19 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
           <button className="btn" disabled={!dirty} onClick={save}>Save</button>
           {saved && <span className="muted" style={{ fontSize: 12 }}>Saved.</span>}
         </div>
+      </div>
+
+      <div className="card stack" style={{ background: "#FBEEDD" }}>
+        <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{staffAppUrl}</code></div>
+        <div className="muted" style={{ fontSize: 12 }}>
+          Each location has its own sign-in code (open it in the Locations tab) — share that location's code with the staff working there.
+        </div>
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13 }}>Customer link:</span>
+          <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
+          <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+        </div>
+        <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
       </div>
 
       <div className="card stack">
