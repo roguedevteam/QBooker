@@ -1253,7 +1253,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     Assign dates
                   </button>
                 )}
-                {movingId === lic.id ? (
+                {lic.status !== "scheduled" && movingId !== lic.id ? null : movingId === lic.id ? (
                   <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
                     <option value="" disabled>Move to…</option>
                     {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
