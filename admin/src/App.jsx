@@ -137,6 +137,8 @@ function Dashboard({ setError, error, onSignOut }) {
   const [viewingTenantId, setViewingTenantId] = useState(null);
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [overview, setOverview] = useState(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerStatusFilter, setCustomerStatusFilter] = useState("all"); // all | enabled | disabled
 
   async function refresh() {
     try {
@@ -150,6 +152,14 @@ function Dashboard({ setError, error, onSignOut }) {
     }
   }
   useEffect(() => { refresh(); }, []);
+
+  const filteredTenants = tenants.filter((t) => {
+    const q = customerSearch.trim().toLowerCase();
+    if (q && !t.business_name?.toLowerCase().includes(q) && !t.email?.toLowerCase().includes(q)) return false;
+    if (customerStatusFilter === "disabled" && t.status !== "disabled") return false;
+    if (customerStatusFilter === "enabled" && t.status === "disabled") return false;
+    return true;
+  });
 
   const chartData = overview
     ? Object.entries(overview.revenueByPlan).map(([planId, revenue]) => ({ name: PLAN_LABELS[planId] || planId, Revenue: revenue }))
@@ -212,12 +222,36 @@ function Dashboard({ setError, error, onSignOut }) {
         )}
 
         {tab === "customers" && !viewingTenantId && (
-          <div className="card">
+          <div className="stack">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <input
+                className="input" style={{ width: 280 }}
+                placeholder="Search business or email…"
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)}
+              />
+              <div className="row">
+                {[
+                  { id: "all", label: "All" },
+                  { id: "enabled", label: "Enabled" },
+                  { id: "disabled", label: "Disabled" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    className={customerStatusFilter === f.id ? "btn" : "btn-outline"}
+                    onClick={() => setCustomerStatusFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="card">
             <table>
               <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
-                {tenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>No customers yet.</td></tr>}
-                {tenants.map((t) => (
+                {filteredTenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>{tenants.length === 0 ? "No customers yet." : "No customers match your search."}</td></tr>}
+                {filteredTenants.map((t) => (
                   <tr key={t.id}>
                     <td>
                       <button
@@ -250,6 +284,7 @@ function Dashboard({ setError, error, onSignOut }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 

@@ -443,7 +443,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
               <div className="stack" style={{ gap: 6 }}>
                 {setupTasks.filter((t) => !t.done).map((t) => (
                   <div key={t.key} className="row" style={{ justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13 }}>{t.label}</span>
+                    <span style={{ fontSize: 13, color: t.key === "payment" ? "var(--error, #B3261E)" : undefined, fontWeight: t.key === "payment" ? 600 : undefined }}>{t.label}</span>
                     <div className="row">
                       <button className="btn-outline" onClick={t.go}>{t.cta}</button>
                       <button
