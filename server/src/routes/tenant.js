@@ -34,18 +34,32 @@ function adminOnly(req, res, next) {
 
 router.get("/me", (req, res) => res.json({ tenant: req.tenant, staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
 
-// Self-service profile edit — business name, contact name, email and company address.
+// Self-service profile edit — business name, contact name, email, company address and
+// website (website moved here from being per-location — it's a business-wide thing now).
 router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
-  const { businessName, firstName, lastName, email, companyAddress } = req.body;
+  const { businessName, firstName, lastName, email, companyAddress, websiteUrl } = req.body;
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
        first_name = coalesce($2, first_name),
        last_name = coalesce($3, last_name),
        email = coalesce($4, email),
-       company_address = coalesce($5, company_address)
-     where id=$6 returning *`,
-    [businessName, firstName, lastName, email, companyAddress, req.tenant.id]
+       company_address = coalesce($5, company_address),
+       website_url = coalesce($6, website_url)
+     where id=$7 returning *`,
+    [businessName, firstName, lastName, email, companyAddress, websiteUrl, req.tenant.id]
+  );
+  res.json({ tenant: result.rows[0] });
+}));
+
+// Dashboard setup-progress checklist — lets a tenant permanently dismiss a nag they don't
+// want to action (e.g. "add a website"), without it coming back.
+router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
+  const { task } = req.body;
+  if (!task) return res.status(400).json({ error: "Task required." });
+  const result = await query(
+    `update tenants set dismissed_setup_tasks = array(select distinct unnest(dismissed_setup_tasks || $1::text[])) where id=$2 returning *`,
+    [[task], req.tenant.id]
   );
   res.json({ tenant: result.rows[0] });
 }));
@@ -78,10 +92,11 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, address, websiteUrl, archived } = req.body;
+  // Website is business-wide now (see PATCH /me) — no longer edited per location.
+  const { name, address, archived } = req.body;
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address), website_url=coalesce($3,website_url), archived=coalesce($4,archived) where id=$5 and tenant_id=$6 returning *`,
-    [name, address, websiteUrl, archived, req.params.id, req.tenant.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived) where id=$4 and tenant_id=$5 returning *`,
+    [name, address, archived, req.params.id, req.tenant.id]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Location not found." });
   if (archived === true) {

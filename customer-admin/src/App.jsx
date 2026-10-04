@@ -195,44 +195,11 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-// The website (opening hours) field — editing is triggered from the location's "⋯" Actions
-// menu, not a button here. While not editing, shows the current value (if any) as plain text.
-function LocationWebsiteLine({ loc, setError, onChanged, editing, onDoneEditing }) {
-  const [url, setUrl] = useState(loc.website_url || "");
-  const [saved, setSaved] = useState(false);
-
-  async function save() {
-    try {
-      await api.updateLocation(loc.id, { websiteUrl: url.trim() || null });
-      setSaved(true);
-      onChanged();
-      onDoneEditing();
-      setTimeout(() => setSaved(false), 1500);
-    } catch (err) { setError(err.message); }
-  }
-
-  if (editing) {
-    return (
-      <div className="row" style={{ flexWrap: "wrap" }}>
-        <span className="muted" style={{ fontSize: 12 }}>Website (opening hours):</span>
-        <input className="input" autoFocus style={{ maxWidth: 260 }} placeholder="https://yourbusiness.example" value={url} onChange={(e) => setUrl(e.target.value)} />
-        <button className="btn-outline" onClick={save}>Save</button>
-        <button className="btn-outline" onClick={() => { setUrl(loc.website_url || ""); onDoneEditing(); }}>Cancel</button>
-        {saved && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
-      </div>
-    );
-  }
-
-  if (!loc.website_url) return null;
-  return <div className="muted" style={{ fontSize: 12 }}>Website: {loc.website_url}</div>;
-}
-
 function AdminDashboard({ tenant, onTenantChange, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [openLocationId, setOpenLocationId] = useState(null); // accordion — only one location open at a time
-  const [editingWebsiteFor, setEditingWebsiteFor] = useState(null);
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -273,12 +240,22 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
 
   const hasLicense = allLicenses.some((l) => l.status !== "refunded");
   const hasAddress = !!(tenant.company_address && tenant.company_address.trim());
-  const setupTasks = [
+  const hasWebsite = !!(tenant.website_url && tenant.website_url.trim());
+  const dismissedSetupTasks = tenant.dismissed_setup_tasks || [];
+  const allSetupTasks = [
     { key: "license", label: "Buy a license for a service", done: hasLicense, cta: "Go to Locations", go: () => setTab("locations") },
     { key: "address", label: "Enter your business address", done: hasAddress, cta: "Go to Profile", go: () => setTab("profile") },
+    { key: "website", label: "Add your business website", done: hasWebsite, cta: "Go to Profile", go: () => setTab("profile") },
   ];
+  const setupTasks = allSetupTasks.filter((t) => !dismissedSetupTasks.includes(t.key));
   const setupDone = setupTasks.filter((t) => t.done).length;
-  const setupPercent = Math.round((setupDone / setupTasks.length) * 100);
+  const setupPercent = setupTasks.length === 0 ? 100 : Math.round((setupDone / setupTasks.length) * 100);
+  async function dismissSetupTask(key) {
+    try {
+      const r = await api.dismissSetupTask(key);
+      onTenantChange?.(r.tenant);
+    } catch (err) { setError(err.message); }
+  }
 
   // Light polling for near-real-time (not a WebSocket/Supabase-realtime subscription — just periodic refetch).
   useEffect(() => {
@@ -356,9 +333,6 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                         if (action === "addService") {
                           setAddingServiceFor(loc.id);
                           setOpenLocationId(loc.id);
-                        } else if (action === "website") {
-                          setOpenLocationId(loc.id);
-                          setEditingWebsiteFor(loc.id);
                         } else if (action === "archive" && confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
                           await api.archiveLocation(loc.id);
                           refreshCore();
@@ -367,21 +341,10 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                     >
                       <option value="" disabled>⋯</option>
                       <option value="addService">Add service</option>
-                      <option value="website">Edit website</option>
                       <option value="archive">Archive location</option>
                     </select>
                   )}
                 </div>
-
-                {isOpen && (
-                  <LocationWebsiteLine
-                    loc={loc}
-                    setError={setError}
-                    onChanged={refreshCore}
-                    editing={editingWebsiteFor === loc.id}
-                    onDoneEditing={() => setEditingWebsiteFor(null)}
-                  />
-                )}
 
                 {addingHere && (
                   <ServiceWizard
@@ -447,7 +410,15 @@ function AdminDashboard({ tenant, onTenantChange, setError }) {
                 {setupTasks.filter((t) => !t.done).map((t) => (
                   <div key={t.key} className="row" style={{ justifyContent: "space-between" }}>
                     <span style={{ fontSize: 13 }}>{t.label}</span>
-                    <button className="btn-outline" onClick={t.go}>{t.cta}</button>
+                    <div className="row">
+                      <button className="btn-outline" onClick={t.go}>{t.cta}</button>
+                      <button
+                        className="btn-outline"
+                        title="Dismiss — won't be shown again"
+                        style={{ border: "none", padding: "0 4px", background: "transparent" }}
+                        onClick={() => { if (confirm(`Stop showing "${t.label}"? You can still do this any time from its tab, it just won't nag you about it again.`)) dismissSetupTask(t.key); }}
+                      >✕</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -537,6 +508,7 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
   const [firstName, setFirstName] = useState(tenant.first_name || "");
   const [lastName, setLastName] = useState(tenant.last_name || "");
   const [email, setEmail] = useState(tenant.email || "");
+  const [website, setWebsite] = useState(tenant.website_url || "");
   const initialAddress = splitAddress(tenant.company_address);
   const [line1, setLine1] = useState(initialAddress.line1);
   const [line2, setLine2] = useState(initialAddress.line2);
@@ -546,12 +518,14 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
 
   const dirty = businessName !== (tenant.business_name || "")
     || firstName !== (tenant.first_name || "") || lastName !== (tenant.last_name || "")
-    || email !== (tenant.email || "") || combineAddress(line1, line2, city, postcode) !== (tenant.company_address || "");
+    || email !== (tenant.email || "") || website !== (tenant.website_url || "")
+    || combineAddress(line1, line2, city, postcode) !== (tenant.company_address || "");
 
   async function save() {
     try {
       const r = await api.updateMe({
         businessName, firstName, lastName, email,
+        websiteUrl: website.trim() || null,
         companyAddress: combineAddress(line1, line2, city, postcode),
       });
       onTenantChange?.(r.tenant);
@@ -597,6 +571,10 @@ function ProfileTab({ tenant, onTenantChange, licenses, onLicensesChanged, setEr
           <label className="stack" style={{ gap: 2 }}>
             <span className="muted" style={{ fontSize: 11 }}>Email address</span>
             <input className="input" style={{ width: 240 }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Website</span>
+            <input className="input" style={{ width: 240 }} placeholder="https://yourbusiness.example" value={website} onChange={(e) => setWebsite(e.target.value)} />
           </label>
         </div>
 
