@@ -89,8 +89,26 @@ function CustomerWhatsApp({ tenantId }) {
   async function handle(action, payload) {
     if (action === "greet") {
       user("Hi");
-      if (locations.length > 1) bot("Which location?", locations.map((l) => ({ label: l.name, action: "loc", payload: l.id })));
-      else await showServices(locations[0]?.id);
+      if (locations.length > 1) {
+        const checks = await Promise.all(locations.map(async (l) => {
+          const locServices = services.filter((s) => s.location_id === l.id);
+          if (locServices.length === 0) return { location: l, open: false };
+          const results = await Promise.all(locServices.map((s) =>
+            api.getAvailability(tenantId, s.id, todayIso(), nowMinutes()).catch(() => ({ open: false }))
+          ));
+          return { location: l, open: results.some((r) => r.open) };
+        }));
+        // Every location shows up, even ones with nothing to join right now — but only the
+        // ones with something open right now are actually clickable.
+        bot("Which location?", checks.map(({ location, open }) => ({
+          label: open ? `${location.name} — open now` : `${location.name} — not available`,
+          action: open ? "loc" : null,
+          payload: location.id,
+          disabled: !open,
+        })));
+      } else {
+        await showServices(locations[0]?.id);
+      }
     } else if (action === "loc") {
       user(locations.find((l) => l.id === payload)?.name);
       await showServices(payload);
@@ -189,7 +207,17 @@ function CustomerWhatsApp({ tenantId }) {
         <div className="card stack" style={{ minHeight: 300 }}>
           {messages.map((m, i) => <div key={i} style={{ textAlign: m.from === "user" ? "right" : "left", whiteSpace: "pre-line" }}>{m.text}</div>)}
           <div className="wrap">
-            {options.map((o, i) => <button key={i} className="btn-outline" onClick={() => handle(o.action, o.payload)}>{o.label}</button>)}
+            {options.map((o, i) => (
+              <button
+                key={i}
+                className="btn-outline"
+                disabled={o.disabled}
+                style={o.disabled ? { opacity: 0.5, cursor: "default" } : undefined}
+                onClick={() => { if (!o.disabled) handle(o.action, o.payload); }}
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>

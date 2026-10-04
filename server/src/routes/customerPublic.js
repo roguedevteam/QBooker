@@ -23,7 +23,7 @@ router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
     `select l.id, l.name, l.website_url, lc.code from locations l
      left join location_codes lc on lc.location_id = l.id
-     where l.tenant_id=$1 order by l.created_at`,
+     where l.tenant_id=$1 and l.archived=false order by l.created_at`,
     [req.tenant.id]
   );
   res.json({ locations: result.rows });
