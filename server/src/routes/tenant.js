@@ -200,13 +200,27 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
   const check = await checkSchedulable(req.service.id, startDate, endDate, license.id);
   if (!check.ok) return res.status(409).json({ error: check.error });
 
+  const wasScheduled = license.status === "scheduled";
   const status = startDate <= getToday() ? "active" : "scheduled";
   const result = await query(
     `update service_licenses set start_date=$1, end_date=$2, status=$3 where id=$4 returning *`,
     [startDate, endDate, status, license.id]
   );
+  // "Change dates" on an already-scheduled license moves it, it doesn't start fresh —
+  // any hours configured across the OLD window (minus whatever overlaps the new one)
+  // are now for dates this license no longer covers, so clear them the same way
+  // unscheduling does. Otherwise they sit there invisibly and can resurface if the
+  // service is ever rescheduled back over those old dates.
+  let hoursCleared = false;
+  if (wasScheduled && license.start_date && license.end_date) {
+    const cleared = await query(
+      `delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3 and not (date >= $4 and date <= $5)`,
+      [req.service.id, license.start_date, license.end_date, startDate, endDate]
+    );
+    hoursCleared = cleared.rowCount > 0;
+  }
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `License ${license.status === "available" ? "scheduled" : "moved"} for "${req.service.name}" — ${license.plan_label}, ${startDate} to ${endDate}`]);
+    [req.tenant.id, `License ${wasScheduled ? "moved" : "scheduled"} for "${req.service.name}" — ${license.plan_label}, ${startDate} to ${endDate}${hoursCleared ? " (hours cleared on old dates no longer covered)" : ""}`]);
   res.json({ license: result.rows[0] });
 }));
 

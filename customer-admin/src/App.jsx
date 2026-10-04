@@ -667,6 +667,9 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
     } catch (err) { setError(err.message); }
   }
   async function schedule(lic) {
+    if (lic.status === "scheduled" && startDate !== lic.start_date) {
+      if (!confirm("Change this license's dates? Any hours already set on its old dates that fall outside the new window will be cleared.")) return;
+    }
     try { await api.scheduleServiceLicense(service.id, lic.id, startDate); setSchedulingId(null); await load(); onChanged?.(); } catch (err) { setError(err.message); }
   }
   async function unschedule(lic) {
