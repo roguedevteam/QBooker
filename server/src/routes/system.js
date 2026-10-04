@@ -24,17 +24,18 @@ router.get("/tenants", asyncHandler(async (req, res) => {
 }));
 
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
-  const { businessName, firstName, lastName, email, locationCount, status } = req.body;
+  const { businessName, firstName, lastName, email, companyAddress, locationCount, status } = req.body;
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
        first_name = coalesce($2, first_name),
        last_name = coalesce($3, last_name),
        email = coalesce($4, email),
-       location_count = coalesce($5, location_count),
-       status = coalesce($6, status)
-     where id=$7 returning *`,
-    [businessName, firstName, lastName, email, locationCount, status, req.params.id]
+       company_address = coalesce($5, company_address),
+       location_count = coalesce($6, location_count),
+       status = coalesce($7, status)
+     where id=$8 returning *`,
+    [businessName, firstName, lastName, email, companyAddress, locationCount, status, req.params.id]
   );
   if (status === "active") {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,

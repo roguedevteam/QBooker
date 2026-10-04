@@ -321,9 +321,6 @@ function CustomerDetail({ tenantId, onBack, setError }) {
 
       <div className="card stack">
         <div style={{ fontWeight: 600, fontSize: 14 }}>Account</div>
-        {tenant.company_address && (
-          <div className="muted" style={{ fontSize: 12 }}>{tenant.company_address}</div>
-        )}
         <div className="wrap">
           <label className="stack" style={{ gap: 2 }}>
             <span className="muted" style={{ fontSize: 11 }}>First name</span>
@@ -358,6 +355,13 @@ function CustomerDetail({ tenantId, onBack, setError }) {
             <input
               className="input" type="number" style={{ width: 80 }} defaultValue={tenant.location_count}
               onBlur={async (e) => { if (Number(e.target.value) !== tenant.location_count) { await api.updateTenant(tenant.id, { locationCount: Number(e.target.value) }); load(); } }}
+            />
+          </label>
+          <label className="stack" style={{ gap: 2 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Business address</span>
+            <input
+              className="input" style={{ width: 320 }} defaultValue={tenant.company_address || ""}
+              onBlur={async (e) => { if (e.target.value !== (tenant.company_address || "")) { await api.updateTenant(tenant.id, { companyAddress: e.target.value }); load(); } }}
             />
           </label>
         </div>
