@@ -250,7 +250,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}{staff ? ` · ${staff.firstName} ${staff.lastName}` : ""}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}{staff ? ` · ${staff.firstName} ${staff.lastName}` : ""}</span><button className="btn-outline" disabled={busy} title={busy ? "Close your current ticket first" : undefined} onClick={onSignOut}>{busy ? "Sign out (close your ticket first)" : "Sign out"}</button></div>
       <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
         <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
@@ -326,7 +326,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
                   {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
                   <td>{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
                   <td>{t.called_at ? formatClock(t.called_at) : "—"}</td>
-                  <td>{t.finished_at ? formatClock(t.finished_at) : t.status === "seen" ? "In progress" : "—"}</td>
+                  <td>{t.closed_by_system ? "System closed" : t.finished_at ? formatClock(t.finished_at) : t.status === "seen" ? "In progress" : "—"}</td>
                   <td>{t.called_by_name || "—"}</td>
                   <td><span className={`badge badge-${t.status === "seen" ? "green" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
                 </tr>

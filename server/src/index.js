@@ -8,6 +8,7 @@ import systemRoutes, { publicRouter } from "./routes/system.js";
 import customerPublicRoutes from "./routes/customerPublic.js";
 import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
+import { closeStaleTickets } from "./lib/closeStaleTickets.js";
 
 const app = express();
 // Railway/Render sit in front of this as a reverse proxy — without this, req.ip is always the
@@ -39,6 +40,10 @@ app.use((err, req, res, next) => {
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`QBooker API listening on port ${port}`));
+
+// End-of-day sweep: tickets still in progress after their day are system-closed.
+setInterval(() => { closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err)); }, 10 * 60 * 1000);
+closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err));
 
 // Safety net: an unhandled promise rejection (e.g. a database call that wasn't
 // wrapped in try/catch) would otherwise crash the whole process on Node 15+.

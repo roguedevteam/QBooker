@@ -17,6 +17,7 @@ import {
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
 import { domainAcceptsMail } from "../lib/emailCheck.js";
+import { closeStaleTickets } from "../lib/closeStaleTickets.js";
 
 const router = Router();
 
@@ -606,6 +607,7 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(asyn
 // --- Tickets ----------------------------------------------------------------------
 router.get("/tickets", asyncHandler(async (req, res) => {
   const { date } = req.query;
+  await closeStaleTickets();
   const result = await query(
     `select * from tickets where tenant_id=$1 and visit_date=$2 order by created_at desc`,
     [req.tenant.id, date || new Date().toISOString().slice(0, 10)]
