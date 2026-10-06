@@ -175,10 +175,27 @@ function CustomerWhatsApp({ tenantId }) {
         }
         const opts = [];
         if (r.walkIn?.available) opts.push({ label: "Join the queue now", action: "join", payload: svc.id });
-        (r.bookableSlots || []).forEach((t) => opts.push({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: svc.id, slotTime: t } }));
+        const slots = r.bookableSlots || [];
+        slots.slice(0, 3).forEach((t) => opts.push({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: svc.id, slotTime: t } }));
+        if (slots.length > 3) opts.push({ label: `See other times (${slots.length - 3} more)`, action: "times", payload: { serviceId: svc.id, slots: slots.slice(3) } });
         if (opts.length === 0) bot(`${svc.name} is fully booked for the rest of today.`, [{ label: "Choose another service", action: "greet" }]);
         else bot("Here's what's available:", opts);
       } catch (err) { setError(err.message); }
+    } else if (action === "times") {
+      user("See other times");
+      const { serviceId, slots } = payload;
+      const size = 60;
+      const groupsBy = (sz) => { const m = new Map(); slots.forEach((t) => { const k = Math.floor(t / sz); m.set(k, [...(m.get(k) || []), t]); }); return m; };
+      let groups = groupsBy(size);
+      let sz = size;
+      if ([...groups.values()].some((g) => g.length > 9)) { sz = 30; groups = groupsBy(sz); }
+      const blocks = [...groups.entries()];
+      const slotOpts = (list) => list.map((t) => ({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId, slotTime: t } }));
+      if (blocks.length === 1 || slots.length <= 9) bot("Pick a time:", slotOpts(slots.slice(0, 9)));
+      else bot("Which part of the day suits you?", blocks.slice(0, 9).map(([k, g]) => ({ label: `${formatTime(k * sz)} – ${formatTime(k * sz + sz - 1)} (${g.length} free)`, action: "timeblock", payload: { serviceId, slots: g } })));
+    } else if (action === "timeblock") {
+      user("Choose a time block");
+      bot("Pick a time:", payload.slots.slice(0, 9).map((t) => ({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: payload.serviceId, slotTime: t } })));
     } else if (action === "join") {
       const svc = services.find((s) => s.id === payload);
       try {
