@@ -249,7 +249,7 @@ function Dashboard({ setError, error, onSignOut }) {
             </div>
             <div className="card">
             <table>
-              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend (ex VAT)</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {filteredTenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>{tenants.length === 0 ? "No customers yet." : "No customers match your search."}</td></tr>}
                 {filteredTenants.map((t) => (
@@ -293,11 +293,11 @@ function Dashboard({ setError, error, onSignOut }) {
 
         {tab === "pricing" && (
           <div className="stack">
-            <div className="muted" style={{ fontSize: 12 }}>All prices are entered and stored ex VAT. Customers see the inc-VAT amount (20%) in brackets.</div>
+            <div className="muted" style={{ fontSize: 12 }}>Enter prices without VAT. Customers see the VAT-inclusive amount (20%) in brackets.</div>
             <div className="card wrap">
               {["day", "week", "month", "year"].map((k) => (
                 <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="muted">{PLAN_LABELS[k]} (per location, ex VAT)</span>
+                  <span className="muted">{PLAN_LABELS[k]} (per location)</span>
                   <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
                     onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
                 </label>
@@ -442,7 +442,7 @@ function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
   if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Annual license</button>;
   return (
     <span className="row" style={{ gap: 4 }}>
-      <span className="muted" style={{ fontSize: 12 }}>Agreed price £ (ex VAT)</span>
+      <span className="muted" style={{ fontSize: 12 }}>Agreed price £</span>
       <input className="input" type="number" min={1} style={{ width: 90 }} value={price} onChange={(e) => setPrice(e.target.value)} />
       <button className="btn" disabled={!(Number(price) > 0)} onClick={add}>Add</button>
       <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>

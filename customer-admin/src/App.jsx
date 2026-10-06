@@ -969,7 +969,7 @@ function ShopTab({ tenant, locations }) {
 
   const services = [
     { name: "Remote Staff Training", price: "Get a quote", desc: "A video session with your team covering the Staff Kiosk — calling tickets, handling no-shows, day-to-day use.", action: { label: "Get a quote", onClick: () => enquire("Remote staff training enquiry") } },
-    { name: "Admin System Set-up", price: "£125 ex VAT (£150 inc VAT)", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
+    { name: "Admin System Set-up", price: "£125 (£150 inc VAT)", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
   ];
 
   return (
@@ -1025,7 +1025,7 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
     ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
     ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
     ...(lic.price != null ? [
-      ["Price (ex VAT)", exMoney(lic.price)],
+      ["Price", exMoney(lic.price)],
       [`VAT (${VAT_RATE * 100}%)`, exMoney(incVat(lic.price) - Number(lic.price))],
       ["Total (inc VAT)", exMoney(incVat(lic.price))],
     ] : [["Price", "—"]]),
@@ -1274,7 +1274,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               return (
                 <div key={id} className={`plan-option${planId === id ? " active" : ""}`} onClick={() => setPlanId(id)}>
                   <span className="plan-option-label">{id === "custom" ? "Custom" : id.charAt(0).toUpperCase() + id.slice(1)}</span>
-                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>ex VAT ({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc)</small></span>
+                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc)</small></span>
                 </div>
               );
             })}

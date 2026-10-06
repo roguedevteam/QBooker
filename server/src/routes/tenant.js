@@ -344,8 +344,8 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
     await query(`update tenants set payment_method='card' where id=$1`, [req.tenant.id]);
   }
   const chargeNote = method === "invoice"
-    ? `£${plan.price} ex VAT added to next invoice`
-    : method === "later" ? `£${plan.price} ex VAT to pay later` : `£${plan.price} ex VAT paid by card`;
+    ? `£${plan.price} added to next invoice`
+    : method === "later" ? `£${plan.price} to pay later` : `£${plan.price} paid by card`;
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License bought for "${req.service.name}" — ${plan.planLabel}, ${chargeNote} (not yet scheduled)`]);
   res.json({ license: result.rows[0], charge: { amount: plan.price, note: chargeNote } });
@@ -498,7 +498,7 @@ router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(
   }
   const result = await query(`update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`, [license.id]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `License refunded for "${req.service.name}" — ${license.plan_label}, £${license.price} ex VAT`]);
+    [req.tenant.id, `License refunded for "${req.service.name}" — ${license.plan_label}, £${license.price}`]);
   res.json({ license: result.rows[0] });
 }));
 

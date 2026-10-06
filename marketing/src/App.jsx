@@ -118,7 +118,7 @@ const FAQS = [
   { q: "What's the difference between queue, appointments and hybrid?", a: "A queue is walk-ins only, first come first served. Appointments are booked slots only. Hybrid runs both together in one service, so people on site can join the queue now while others reserve a slot for later." },
   { q: "What if a patient doesn't use WhatsApp?", a: "They can still turn up as normal and your team adds them to the same queue by hand." },
   { q: "Can I run more than one location?", a: "Yes. Each location gets its own sign-in code and queue, and staff only see their own." },
-  { q: "How long does setup take?", a: "Under 60 seconds to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 ex VAT (£150 inc VAT)." },
+  { q: "How long does setup take?", a: "Under 60 seconds to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 (£150 inc VAT)." },
   { q: "Is there a contract?", a: "No long-term contract. Buy a licence for a day, week, month or custom period at a time. Annual licences are available on request." },
 ];
 
@@ -344,7 +344,7 @@ function Landing({ onStart, simulatedBadge }) {
               <p className="muted" style={{ fontSize: 14.5, margin: "4px 0 0", maxWidth: 520 }}>An engineer can join a one-hour call to set up your system and train your team.</p>
             </div>
             <div className="row" style={{ gap: 16 }}>
-              <strong style={{ fontSize: 18 }}>£125 ex VAT (£150 inc VAT)</strong>
+              <strong style={{ fontSize: 18 }}>£125 (£150 inc VAT)</strong>
               <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Book a call</button></a>
             </div>
           </div>
@@ -393,7 +393,7 @@ function Landing({ onStart, simulatedBadge }) {
                         <div key={k} className="lp-price">
                           {onSale && <span className="muted" style={{ fontSize: 13, textDecoration: "line-through" }}>{exMoney(pricing[k])}</span>}
                           <strong style={{ color: onSale ? "var(--accent)" : undefined }}>{exMoney(onSale ? pricing.sale[k] : pricing[k])}</strong>
-                          <span className="muted" style={{ fontSize: 12 }}>ex VAT ({exMoney(incVat(onSale ? pricing.sale[k] : pricing[k]))} inc VAT)</span>
+                          <span className="muted" style={{ fontSize: 12 }}>({exMoney(incVat(onSale ? pricing.sale[k] : pricing[k]))} inc VAT)</span>
                           <span className="muted">{label}</span>
                         </div>
                       );
