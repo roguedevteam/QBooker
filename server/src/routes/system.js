@@ -182,7 +182,7 @@ router.post("/tenants/:id/services/:svcId/licenses/annual", asyncHandler(async (
     [req.params.id, service.id, price.toFixed(2)]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.params.id, `Annual license added by platform admin for "${service.name}" at agreed price £${price.toFixed(2)}`]);
+    [req.params.id, `Annual license added by platform admin for "${service.name}" at agreed price £${price.toFixed(2)} ex VAT`]);
   res.json({ license: { ...result.rows[0], service_name: service.name } });
 }));
 
@@ -231,7 +231,7 @@ router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (re
     activated = u.rows.length > 0;
   }
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.params.id, `Payment confirmed for ${lic.plan_label} license (£${lic.price})${activated ? " — account activated" : ""}`]);
+    [req.params.id, `Payment confirmed for ${lic.plan_label} license (£${lic.price} ex VAT)${activated ? " — account activated" : ""}`]);
   res.json({ license: lic, activated });
 }));
 

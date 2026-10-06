@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { priceText, exMoney, incVat, VAT_RATE } from "./lib/vat.js";
 import { api, setToken, hasToken } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 
@@ -898,7 +899,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
                 <strong style={{ fontSize: 13 }}>{lic.service_name}</strong>
                 <span style={{ fontSize: 13 }}>{lic.plan_label}</span>
                 {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
-                <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+                <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? priceText(lic.price) : "Free"}</span>
                 {lic.paid === false && lic.payment_method === "later" && <span className="badge badge-red">Unpaid — pay later</span>}
               </div>
               <div className="row">
@@ -968,7 +969,7 @@ function ShopTab({ tenant, locations }) {
 
   const services = [
     { name: "Remote Staff Training", price: "Get a quote", desc: "A video session with your team covering the Staff Kiosk — calling tickets, handling no-shows, day-to-day use.", action: { label: "Get a quote", onClick: () => enquire("Remote staff training enquiry") } },
-    { name: "Admin System Set-up", price: "£125", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
+    { name: "Admin System Set-up", price: "£125 ex VAT (£150 inc VAT)", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
   ];
 
   return (
@@ -1023,7 +1024,11 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
     ["Plan", lic.plan_label],
     ["Status", LICENSE_STATUS_META[lic.status]?.label || lic.status],
     ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
-    ["Price", lic.price != null ? `£${lic.price}` : "—"],
+    ...(lic.price != null ? [
+      ["Price (ex VAT)", exMoney(lic.price)],
+      [`VAT (${VAT_RATE * 100}%)`, exMoney(incVat(lic.price) - Number(lic.price))],
+      ["Total (inc VAT)", exMoney(incVat(lic.price))],
+    ] : [["Price", "—"]]),
     ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
   ];
   const html = `<!doctype html><html><head><title>Receipt — ${businessName}</title>
@@ -1269,7 +1274,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               return (
                 <div key={id} className={`plan-option${planId === id ? " active" : ""}`} onClick={() => setPlanId(id)}>
                   <span className="plan-option-label">{id === "custom" ? "Custom" : id.charAt(0).toUpperCase() + id.slice(1)}</span>
-                  <span className="plan-option-price">{id === "custom" ? `from £${pricing.customDailyRate}/day` : `£${price}`}</span>
+                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>ex VAT ({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc)</small></span>
                 </div>
               );
             })}
@@ -1294,7 +1299,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
           <div className="stack" style={{ gap: 2 }}>
             <strong style={{ fontSize: 13 }}>How this is paid</strong>
             <span className="muted" style={{ fontSize: 12 }}>
-              {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — £{selectedPrice()}
+              {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — {priceText(selectedPrice())}
             </span>
           </div>
           <div className="stack" style={{ gap: 8 }}>

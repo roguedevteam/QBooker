@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { priceText } from "./lib/vat.js";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { api, setToken, hasToken } from "./lib/api.js";
 
@@ -185,14 +186,14 @@ function Dashboard({ setError, error, onSignOut }) {
         {tab === "dashboard" && overview && (
           <div className="stack">
             <div className="wrap">
-              <div className="card">£{overview.totalRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Revenue (active)</div></div>
-              <div className="card">£{overview.pendingRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Pending invoices</div></div>
+              <div className="card">£{overview.totalRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Revenue, ex VAT (active)</div></div>
+              <div className="card">£{overview.pendingRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Pending invoices, ex VAT</div></div>
               <div className="card">{overview.customerCount}<div className="muted" style={{ fontSize: 11 }}>Customers</div></div>
               <div className="card">{overview.totalLocations}<div className="muted" style={{ fontSize: 11 }}>Locations, all customers</div></div>
             </div>
             {overview.deletedCustomerCount > 0 && (
               <div className="muted" style={{ fontSize: 12 }}>
-                Includes £{overview.deletedRevenue.toFixed(2)} from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
+                Includes £{overview.deletedRevenue.toFixed(2)} (ex VAT) from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
               </div>
             )}
             <div className="card">
@@ -248,7 +249,7 @@ function Dashboard({ setError, error, onSignOut }) {
             </div>
             <div className="card">
             <table>
-              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend (ex VAT)</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {filteredTenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>{tenants.length === 0 ? "No customers yet." : "No customers match your search."}</td></tr>}
                 {filteredTenants.map((t) => (
@@ -292,10 +293,11 @@ function Dashboard({ setError, error, onSignOut }) {
 
         {tab === "pricing" && (
           <div className="stack">
+            <div className="muted" style={{ fontSize: 12 }}>All prices are entered and stored ex VAT. Customers see the inc-VAT amount (20%) in brackets.</div>
             <div className="card wrap">
               {["day", "week", "month", "year"].map((k) => (
                 <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="muted">{PLAN_LABELS[k]} (per location)</span>
+                  <span className="muted">{PLAN_LABELS[k]} (per location, ex VAT)</span>
                   <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
                     onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
                 </label>
@@ -440,7 +442,7 @@ function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
   if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Annual license</button>;
   return (
     <span className="row" style={{ gap: 4 }}>
-      <span className="muted" style={{ fontSize: 12 }}>Agreed price £</span>
+      <span className="muted" style={{ fontSize: 12 }}>Agreed price £ (ex VAT)</span>
       <input className="input" type="number" min={1} style={{ width: 90 }} value={price} onChange={(e) => setPrice(e.target.value)} />
       <button className="btn" disabled={!(Number(price) > 0)} onClick={add}>Add</button>
       <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
@@ -647,7 +649,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
                             <span className={`badge badge-${meta.color}`}>{meta.label}</span>
                             <span style={{ fontWeight: 600 }}>{lic.plan_label}</span>
                             {lic.start_date && <span className="muted">{lic.start_date} to {lic.end_date}</span>}
-                            <span className="muted">{Number(lic.price) > 0 ? `£${lic.price}` : "Free"}</span>
+                            <span className="muted">{Number(lic.price) > 0 ? priceText(lic.price) : "Free"}</span>
                             {Number(lic.price) > 0 && (lic.paid === false
                               ? <span className="badge badge-red">{lic.payment_method === "later" ? "Pay later — unpaid" : "Invoice — unpaid"}</span>
                               : <span className="badge badge-green">{lic.payment_method === "invoice" ? "Invoice — paid" : "Paid by card"}</span>)}
