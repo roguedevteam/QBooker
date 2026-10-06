@@ -37,7 +37,6 @@ export const api = {
 
   callNext: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/call-next`, { method: "POST", body: payload }),
   callTicket: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/call`, { method: "POST", body: payload }),
-  takeOverTicket: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/take-over`, { method: "POST", body: payload }),
   callAgain: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/call-again`, { method: "POST", body: payload }),
   returnToQueue: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/return-to-queue`, { method: "POST", body: payload }),
   cancelTicket: (ticketId) => request(`/api/tenant/tickets/${ticketId}/cancel`, { method: "POST" }),

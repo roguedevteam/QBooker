@@ -686,22 +686,6 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   res.json({ ticket, message: body });
 }));
 
-// Take over a ticket that's being served from another room — e.g. that staff member closed their
-// browser or went off shift. Only for tickets still in progress (called, not finished).
-router.post("/tickets/:id/take-over", asyncHandler(async (req, res) => {
-  const { roomLabel } = req.body;
-  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) first." });
-  const result = await query(
-    `update tickets set called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status='seen' and called_at is not null and finished_at is null returning *`,
-    [req.params.id, req.tenant.id, roomLabel.trim(), req.staff?.id || null, staffName(req)]
-  );
-  if (result.rows.length === 0) return res.status(409).json({ error: "That ticket isn't in progress any more." });
-  const t = result.rows[0];
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${t.ticket_number} taken over by ${staffName(req) || roomLabel.trim()} (${roomLabel.trim()})`]);
-  res.json({ ticket: t });
-}));
-
 router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });

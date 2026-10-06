@@ -211,11 +211,6 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
       await refreshTickets();
     } catch (err) { setError(err.message); await refreshTickets(); } finally { setCalling(false); }
   }
-  // Pick up a ticket another room started serving (their browser closed, they left, etc.).
-  async function takeOver(t) {
-    try { setCalling(true); await api.takeOverTicket(t.id, { roomLabel: room }); await refreshTickets(); }
-    catch (err) { setError(err.message); await refreshTickets(); } finally { setCalling(false); }
-  }
   // Is there anyone the "Call next" button could actually call right now? Mirrors the server's rule.
   function workTypeFor(serviceId) {
     const svc = services.find((x) => x.id === serviceId);
@@ -235,7 +230,6 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   // staff member whose browser closed picks straight back up by entering the same room name.
   const inProgress = tickets.filter((t) => t.status === "seen" && t.called_at && !t.finished_at && locServices.some((x) => x.id === t.service_id));
   const mine = inProgress.filter((t) => t.called_by_staff_id === staff?.id);
-  const elsewhere = inProgress.filter((t) => !mine.includes(t));
   const nowServing = Object.fromEntries(mine.map((t) => [t.service_id, t]));
   const busy = mine.length > 0;
   const canCall = roomSet && !busy && !calling;
@@ -262,21 +256,6 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
       </div>
       {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Set your room name to start calling tickets.</div>}
-
-      {elsewhere.length > 0 && (
-        <div className="card stack" style={{ borderColor: "var(--accent)" }}>
-          <strong style={{ fontSize: 13 }}>In progress with another room</strong>
-          <div className="muted" style={{ fontSize: 12 }}>
-            These are being served by someone else. If they've left or closed the page, you can take a ticket over to finish or release it.
-          </div>
-          {elsewhere.map((t) => (
-            <div key={t.id} className="row" style={{ justifyContent: "space-between" }}>
-              <span><strong>{t.ticket_number}</strong> · {services.find((x) => x.id === t.service_id)?.name} · {t.called_by_name || "unknown"}{t.called_room ? ` (${t.called_room})` : ""} · called {formatClock(t.called_at)}</span>
-              <button className="btn-outline" disabled={!roomSet || busy || calling} onClick={() => takeOver(t)}>Take over</button>
-            </div>
-          ))}
-        </div>
-      )}
 
       {locServices.filter((s) => serviceIds.includes(s.id) || nowServing[s.id]).map((s) => {
         const serving = nowServing[s.id];
