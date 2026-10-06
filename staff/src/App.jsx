@@ -55,18 +55,21 @@ export default function App() {
     restore();
   }, []);
 
-  if (restoring) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
+  if (restoring) return <div className="container muted center-text">Loading…</div>;
 
   return (
     <div>
-      <div className="header row" style={{ justifyContent: "space-between" }}>
-        <div className="row" style={{ gap: 10 }}>
-          <Logo />
-          {tenant && <span className="muted" style={{ fontSize: 13 }}>— {tenant.business_name} Staff Kiosk</span>}
+      <header className="app-header">
+        <div className="app-header-left">
+          <Logo dark />
+          {tenant && <span className="sub">{tenant.business_name}<span className="hide-sm"> Staff Kiosk</span></span>}
         </div>
-        {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
-      </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+        <div className="row">
+          {tenant && staff && <span className="sub hide-sm">Signed in as {staff.firstName} {staff.lastName}</span>}
+          {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
+        </div>
+      </header>
+      {error && <div className="alert" role="alert"><span>{error}</span><button className="btn-outline" onClick={() => setError("")}>Dismiss</button></div>}
 
       {!tenant && <StaffLogin onSignedIn={(t, st) => { setTenant(t); setStaff(st); }} setError={setError} />}
       {tenant && !locationId && <LocationPicker staff={staff} onPick={setLocationId} onSignOut={() => { setToken(null); setTenant(null); setStaff(null); }} setError={setError} />}
@@ -95,23 +98,31 @@ function StaffLogin({ onSignedIn, setError }) {
   }
 
   return (
-    <div className="narrow card stack">
-      <h3>Staff sign-in</h3>
-      <p className="muted" style={{ fontSize: 12 }}>Sign in with the email address your manager added you with. We'll send you a code.</p>
-      {step === "email" && <>
-        <input className="input" type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && email.trim()) sendCode(); }} />
-        <button className="btn" disabled={!email.trim()} onClick={sendCode}>Send code</button>
-      </>}
-      {step === "otp" && <>
-        <div className="muted" style={{ fontSize: 13 }}>If that email is registered, a code has been sent to it.</div>
-        {demoOtp && <div className="muted">Demo code: <strong>{demoOtp}</strong></div>}
-        <input className="input" placeholder="6-digit code" value={otp} onChange={(e) => setOtp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && otp.trim()) verify(); }} />
-        <div className="row">
-          <button className="btn" disabled={!otp.trim()} onClick={verify}>Verify</button>
-          <button className="btn-outline" onClick={() => { setStep("email"); setOtp(""); }}>Use a different email</button>
-        </div>
-      </>}
-    </div>
+    <main className="narrow">
+      <div className="card stack">
+        <h1>Staff sign-in</h1>
+        <p className="muted">Sign in with the email address your manager added you with. We'll send you a code.</p>
+        {step === "email" && <>
+          <div>
+            <label className="field-label" htmlFor="staff-email">Email address</label>
+            <input id="staff-email" className="input" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && email.trim()) sendCode(); }} />
+          </div>
+          <button className="btn btn-primary" disabled={!email.trim()} onClick={sendCode}>Send code</button>
+        </>}
+        {step === "otp" && <>
+          <div className="muted">If that email is registered, a code has been sent to it.</div>
+          {demoOtp && <div className="muted">Demo code: <strong>{demoOtp}</strong></div>}
+          <div>
+            <label className="field-label" htmlFor="staff-otp">6-digit code</label>
+            <input id="staff-otp" className="input mono" inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={otp} onChange={(e) => setOtp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && otp.trim()) verify(); }} />
+          </div>
+          <div className="wrap">
+            <button className="btn btn-primary" disabled={!otp.trim()} onClick={verify}>Verify</button>
+            <button className="btn-outline" onClick={() => { setStep("email"); setOtp(""); }}>Use a different email</button>
+          </div>
+        </>}
+      </div>
+    </main>
   );
 }
 
@@ -126,16 +137,23 @@ function LocationPicker({ staff, onPick, onSignOut, setError }) {
     }).catch((e) => setError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (!locations) return <div className="container muted" style={{ textAlign: "center", paddingTop: 40 }}>Loading…</div>;
+  if (!locations) return <div className="container muted center-text">Loading…</div>;
   return (
-    <div className="narrow card stack">
-      <h3>Hi {staff?.firstName} — where are you working today?</h3>
+    <main className="setup">
+      <div>
+        <h1>Hi {staff?.firstName}, where are you working today?</h1>
+        <p className="muted" style={{ marginTop: 4 }}>Choose your location to start your shift.</p>
+      </div>
       {locations.length === 0 && <div className="muted">No locations have been set up yet — ask your manager.</div>}
-      {locations.map((l) => <button key={l.id} className="btn-outline" onClick={() => onPick(l.id)}>{l.name}</button>)}
-      <button className="btn-outline" onClick={onSignOut}>Sign out</button>
-    </div>
+      <div className="opts">
+        {locations.map((l) => <button key={l.id} type="button" className="opt" onClick={() => onPick(l.id)}>{l.name}</button>)}
+      </div>
+      <div><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+    </main>
   );
 }
+
+const ROLE_LABELS = { queue: "Queue", appointments: "Appointments", both: "Both" };
 
 function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   const [locations, setLocations] = useState([]);
@@ -165,31 +183,54 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   }, [started]);
 
   if (!locationId) {
-    return <div className="narrow card" style={{ color: "#B3261E" }}>This sign-in code isn't linked to a location — please check with your manager.</div>;
+    return <div className="narrow"><div className="card" style={{ color: "var(--error)" }}>This sign-in code isn't linked to a location — please check with your manager.</div></div>;
   }
 
   const locServices = services.filter((s) => s.location_id === locationId);
+  const locationName = locations.find((l) => l.id === locationId)?.name;
   if (!started) {
     return (
-      <div className="narrow card stack">
-        <h3>Which services are you covering?</h3>
-        {locServices.map((s) => (
-          <div key={s.id} className="stack" style={{ gap: 6 }}>
-            <label className="row"><input type="checkbox" onChange={(e) => setServiceIds((prev) => e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id))} /> {s.name}</label>
-            {serviceIds.includes(s.id) && s.mode === "hybrid" && (
-              <div className="row" style={{ marginLeft: 26, gap: 14, flexWrap: "wrap" }}>
-                <span className="muted" style={{ fontSize: 12 }}>You'll work:</span>
-                {[["queue", "Queue"], ["appointments", "Appointments"], ["both", "Both"]].map(([val, label]) => (
-                  <label key={val} className="row" style={{ gap: 4, fontSize: 13 }}>
-                    <input type="radio" name={`role-${s.id}`} checked={(roles[s.id] || "both") === val} onChange={() => setRoles((prev) => ({ ...prev, [s.id]: val }))} /> {label}
+      <main className="setup">
+        <div>
+          <h1>Start your shift</h1>
+          <p className="muted" style={{ marginTop: 4 }}>{locationName ? `You are working at ${locationName}. ` : ""}Choose the services you are covering.</p>
+        </div>
+        <div className="setup-grid">
+          <fieldset>
+            <legend className="field-label">Which services are you covering?</legend>
+            <div className="opts">
+              {locServices.map((s) => (
+                <div key={s.id}>
+                  <label className="opt">
+                    <input type="checkbox" checked={serviceIds.includes(s.id)} onChange={(e) => setServiceIds((prev) => e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id))} />
+                    <span className="box" aria-hidden="true" />{s.name}
                   </label>
-                ))}
-              </div>
-            )}
+                  {serviceIds.includes(s.id) && s.mode === "hybrid" && (
+                    <fieldset className="role-pick">
+                      <legend className="field-hint" style={{ marginTop: 0, marginBottom: 6 }}>You'll work on {s.name}:</legend>
+                      <div className="seg-group">
+                        {[["queue", "Queue"], ["appointments", "Appointments"], ["both", "Both"]].map(([val, label]) => (
+                          <label key={val} className="seg">
+                            <input type="radio" name={`role-${s.id}`} checked={(roles[s.id] || "both") === val} onChange={() => setRoles((prev) => ({ ...prev, [s.id]: val }))} />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  )}
+                </div>
+              ))}
+              {locServices.length === 0 && <div className="muted">No services are set up at this location yet.</div>}
+            </div>
+          </fieldset>
+          <div>
+            <label className="field-label" htmlFor="room-setup">Room or desk name</label>
+            <input id="room-setup" className="input" style={{ minHeight: 56 }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
+            <div className="field-hint">People are told to go here when you call them. You can set this later too.</div>
           </div>
-        ))}
-        <button className="btn" disabled={serviceIds.length === 0} onClick={() => setStarted(true)}>Start shift</button>
-      </div>
+        </div>
+        <button className="btn btn-start btn-block" disabled={serviceIds.length === 0} onClick={() => setStarted(true)}>Start shift</button>
+      </main>
     );
   }
 
@@ -218,10 +259,13 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
     if (svc?.mode === "appointment") return "appointments";
     return roles[serviceId] || "both";
   }
+  function callable(t, serviceId, mins) {
+    const wt = workTypeFor(serviceId);
+    return t.service_id === serviceId && ((wt !== "appointments" && t.type === "walk_in" && t.status === "waiting") || (wt !== "queue" && t.type === "booked" && t.status === "booked" && t.slot_time <= mins));
+  }
   function hasWaiting(serviceId) {
     const mins = nowMinutes();
-    const wt = workTypeFor(serviceId);
-    return tickets.some((t) => t.service_id === serviceId && ((wt !== "appointments" && t.type === "walk_in" && t.status === "waiting") || (wt !== "queue" && t.type === "booked" && t.status === "booked" && t.slot_time <= mins)));
+    return tickets.some((t) => callable(t, serviceId, mins));
   }
   const roomSet = !!room.trim();
   // One person at a time: until the current ticket is closed (or returned, cancelled, no-show,
@@ -247,95 +291,137 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   const doneList = myTickets.filter((t) => !(t.status === "waiting" || t.status === "booked"))
     .sort((a, b) => new Date(b.called_at || b.created_at) - new Date(a.called_at || a.created_at));
   const showServiceCol = serviceIds.length > 1;
+  const svcName = (id) => services.find((x) => x.id === id)?.name || "—";
+  const activeServices = locServices.filter((s) => serviceIds.includes(s.id) || nowServing[s.id]);
+  const servingServices = activeServices.filter((s) => nowServing[s.id]);
+  const nextFor = (serviceId) => waitingList.find((t) => callable(t, serviceId, nowMin));
+
+  const covered = locServices.filter((s) => serviceIds.includes(s.id));
+  const modeText = [...new Set(covered.map((s) => ROLE_LABELS[workTypeFor(s.id)]))].join(" / ");
+  const ctxParts = [locationName, covered.map((s) => s.name).join(", "), room.trim() || "No room set", modeText].filter(Boolean);
+  const callNote = !roomSet ? "Set your room name to start calling tickets." : busy ? "Close this ticket to call the next person." : "";
 
   return (
-    <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}{staff ? ` · ${staff.firstName} ${staff.lastName}` : ""}</span><button className="btn-outline" disabled={busy} title={busy ? "Close your current ticket first" : undefined} onClick={onSignOut}>{busy ? "Sign out (close your ticket first)" : "Sign out"}</button></div>
-      <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
-        <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
-        <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
+    <>
+      <div className="kiosk-bar">
+        <div className="who">
+          <div className="name">{staff ? `${staff.firstName} ${staff.lastName}` : tenant?.business_name}</div>
+          <div className="ctx">{ctxParts.join(" · ")}</div>
+        </div>
+        <div className="chips">
+          {ctxParts.map((p, i) => <span key={i} className={`chip${!roomSet && p === "No room set" ? " chip-warn" : ""}`}>{p}</span>)}
+        </div>
+        {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {date}</span>}
+        <button className="btn-signout" disabled={busy} title={busy ? "Close your ticket first" : undefined} onClick={onSignOut}>Sign out</button>
       </div>
-      {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Set your room name to start calling tickets.</div>}
 
-      {locServices.filter((s) => serviceIds.includes(s.id) || nowServing[s.id]).map((s) => {
-        const serving = nowServing[s.id];
-        return (
-          <div key={s.id} className="card stack">
-            <div>{s.name}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#1B1D1F" }}>{serving?.ticket_number || "—"}</div>
-            {serving && <div style={{ fontSize: 13 }}>{room.trim() ? `📍 ${room.trim()}` : "Now serving"}</div>}
-            <button className="btn" disabled={!canCall || !hasWaiting(s.id)} onClick={() => callNext(s.id)}>{!roomSet ? "Set your room to call tickets" : busy ? "Finish your current ticket first" : hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
-            {serving && (
-              <div className="stack">
-                <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id))}>Close ticket — finished serving</button>
-                <div className="row">
-                  <button className="btn-outline" style={{ flex: 1 }} onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }))}>Return to queue</button>
-                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.noShowTicket(serving.id))}>No-show</button>
-                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id))}>Cancel ticket</button>
+      <main className="kiosk-main">
+        <div className="col">
+          {servingServices.map((s) => {
+            const serving = nowServing[s.id];
+            const others = locServices.filter((x) => x.id !== s.id);
+            return (
+              <section key={s.id} className="serving" aria-label={`Now serving, ${s.name}`}>
+                <div className="top">
+                  <span className="badge badge-blue">Now serving</span>
+                  <span className="when">{serving.called_at ? `Called ${formatClock(serving.called_at)}` : ""}{room.trim() ? `${serving.called_at ? " · " : ""}${room.trim()}` : ""}</span>
                 </div>
-                <div className="row">
-                  <button className="btn-outline" style={{ flex: 1 }} disabled={!roomSet} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>
-                  {locServices.filter((x) => x.id !== s.id).length > 0 && (
-                    <select style={{ flex: 1 }} defaultValue="" onChange={(e) => { if (e.target.value) doAction(() => api.routeTicket(serving.id, { newServiceId: e.target.value, clockMinutes: nowMinutes() })); }}>
-                      <option value="">Route to service…</option>
-                      {locServices.filter((x) => x.id !== s.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-                    </select>
-                  )}
+                <div className="ticket mono">{serving.ticket_number}</div>
+                <div className="svc">{s.name} <span className="muted">· {serving.type === "booked" ? `Booked ${formatTime(serving.slot_time)}` : "Walk-in"}</span></div>
+                <button className="btn-primary" disabled={calling} onClick={() => doAction(() => api.closeTicket(serving.id))}>Close ticket</button>
+                <div className="pair">
+                  <button className="btn-outline" onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }))}>Put back in queue</button>
+                  <button className="btn-outline btn-danger" onClick={() => doAction(() => api.noShowTicket(serving.id))}>Mark no show</button>
                 </div>
+                <div className="pair">
+                  <button className="btn-outline" disabled={!roomSet} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>
+                  <button className="btn-outline btn-danger" onClick={() => doAction(() => api.cancelTicket(serving.id))}>Cancel ticket</button>
+                </div>
+                {others.length > 0 && (
+                  <select className="select" aria-label="Route to another service" defaultValue="" onChange={(e) => { if (e.target.value) doAction(() => api.routeTicket(serving.id, { newServiceId: e.target.value, clockMinutes: nowMinutes() })); }}>
+                    <option value="">Route to service…</option>
+                    {others.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                )}
+              </section>
+            );
+          })}
+
+          {activeServices.map((s) => {
+            const next = nextFor(s.id);
+            const enabled = canCall && hasWaiting(s.id);
+            return (
+              <button key={s.id} className="btn-accent btn-call-next" disabled={!enabled} aria-describedby={callNote ? "call-note" : undefined} onClick={() => callNext(s.id)}>
+                <span>{enabled && next ? <>Call next: <span className="mono">{next.ticket_number}</span></> : (roomSet && !busy && !hasWaiting(s.id)) ? "No tickets waiting" : "Call next"}</span>
+                {activeServices.length > 1 && <span className="sub">{s.name}</span>}
+              </button>
+            );
+          })}
+          {callNote && <div id="call-note" className={`note${!roomSet ? " note-warn" : ""}`}>{callNote}</div>}
+
+          <div className="card room-card">
+            <label htmlFor="room">Where are you right now?</label>
+            <input id="room" className={`input${roomSet ? "" : " input-warn"}`} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="col">
+          <section className="panel" aria-labelledby="waiting-h">
+            <div className="panel-head">
+              <h2 id="waiting-h">Waiting</h2>
+              <span className="count">{waitingList.length} in order of call</span>
+              <button className="btn-outline" style={{ marginLeft: "auto" }} onClick={refreshTickets}>Refresh</button>
+            </div>
+            {waitingList.length === 0 && <div className="empty">Nobody waiting.</div>}
+            <div role="list">
+              {waitingList.map((t, i) => (
+                <div key={t.id} className="wrow" role="listitem">
+                  <span className="pos mono">{i + 1}</span>
+                  <span className="tn mono">{t.ticket_number}</span>
+                  <span className="info">
+                    {showServiceCol ? svcName(t.service_id) : (t.type === "booked" ? "Booked" : "Walk-in")}
+                    <small>
+                      {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
+                      {t.type === "booked" && t.slot_time > nowMin ? " (not due yet)" : ""}
+                    </small>
+                    {t.type === "booked" && t.arrived_at && <span className="badge badge-green" style={{ marginTop: 4 }}>Checked in {formatClock(t.arrived_at)}</span>}
+                  </span>
+                  <button className="btn-call" disabled={!canCall} title={!roomSet ? "Set your room first" : busy ? "Close your ticket first" : undefined} aria-label={`Call ${t.ticket_number}`} onClick={() => callSpecific(t)}>Call</button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <button type="button" className="done-toggle" onClick={() => setShowSeen((v) => !v)} aria-expanded={showSeen} aria-controls="done-list">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><path d="M5 9l7 7 7-7" /></svg>
+              <span className="grow">Completed and closed today</span>
+              <span className="count">{doneList.length}</span>
+            </button>
+            {showSeen && (
+              <div id="done-list" className="done-wrap">
+                <table className="done-table">
+                  <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Served by</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 7 : 6} className="empty empty-cell">Nobody completed yet today.</td></tr>}
+                    {doneList.map((t) => (
+                      <tr key={t.id}>
+                        <td className="tn tn-cell mono">{t.ticket_number}</td>
+                        {showServiceCol && <td data-label="Service">{svcName(t.service_id)}</td>}
+                        <td data-label="Booked / joined">{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
+                        <td data-label="Called">{t.called_at ? formatClock(t.called_at) : "—"}</td>
+                        <td data-label="Finished">{t.closed_by_system ? <span className="badge badge-amber">System closed</span> : t.finished_at ? formatClock(t.finished_at) : t.status === "serving" ? "In progress" : "—"}</td>
+                        <td data-label="Served by">{t.called_by_name || "—"}</td>
+                        <td data-label="Status"><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-          </div>
-        );
-      })}
-
-      <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}><strong style={{ fontSize: 13 }}>Waiting — next to be called first</strong><button className="btn-outline" onClick={refreshTickets}>Refresh</button></div>
-        <table>
-          <thead><tr><th>#</th><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Type/time</th><th></th></tr></thead>
-          <tbody>
-            {waitingList.length === 0 && <tr><td colSpan={showServiceCol ? 5 : 4} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody waiting.</td></tr>}
-            {waitingList.map((t, i) => (
-              <tr key={t.id}>
-                <td className="muted">{i + 1}</td>
-                <td>{t.ticket_number}</td>
-                {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
-                <td>
-                  {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
-                  {t.type === "booked" && t.arrived_at && <span className="badge badge-green" style={{ marginLeft: 6 }}>Checked in {formatClock(t.arrived_at)}</span>}
-                  {t.type === "booked" && t.slot_time > nowMinutes() && <span className="muted" style={{ fontSize: 11 }}> (not due yet)</span>}
-                </td>
-                <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!canCall} title={!roomSet ? "Set your room first" : busy ? "Finish your current ticket first" : undefined} onClick={() => callSpecific(t)}>Call</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card stack">
-        <button type="button" className="row" style={{ justifyContent: "space-between", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }} onClick={() => setShowSeen((v) => !v)} aria-expanded={showSeen}>
-          <strong style={{ fontSize: 13 }}>Completed &amp; closed today ({doneList.length})</strong>
-          <span className="muted" style={{ fontSize: 12 }}>{showSeen ? "Hide ▲" : "Show ▼"}</span>
-        </button>
-        {showSeen && (
-          <table>
-            <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Served by</th><th>Status</th></tr></thead>
-            <tbody>
-              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 7 : 6} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody completed yet today.</td></tr>}
-              {doneList.map((t) => (
-                <tr key={t.id}>
-                  <td>{t.ticket_number}</td>
-                  {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
-                  <td>{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
-                  <td>{t.called_at ? formatClock(t.called_at) : "—"}</td>
-                  <td>{t.closed_by_system ? "System closed" : t.finished_at ? formatClock(t.finished_at) : t.status === "serving" ? "In progress" : "—"}</td>
-                  <td>{t.called_by_name || "—"}</td>
-                  <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+          </section>
+        </div>
+      </main>
+    </>
   );
 }

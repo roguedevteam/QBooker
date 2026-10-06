@@ -39,19 +39,18 @@ function CheckIcon({ size = 14 }) {
     </svg>
   );
 }
-function CopyButton({ value, label = "Copy" }) {
+function CopyButton({ value, label = "Copy", showText = false }) {
   const [copied, setCopied] = useState(false);
   if (!value) return null;
   return (
     <button
       type="button"
-      className="btn-outline"
+      className={showText ? "btn-outline" : "btn-outline icon-btn"}
       title={copied ? "Copied" : label}
       aria-label={copied ? "Copied" : label}
-      style={{ padding: "3px 6px", lineHeight: 0 }}
       onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
     >
-      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? <CheckIcon /> : <CopyIcon />}{showText && (copied ? "Copied" : "Copy")}
     </button>
   );
 }
@@ -66,6 +65,74 @@ function ArchiveIcon({ size = 14 }) {
     </svg>
   );
 }
+function ChevronRight({ size = 20 }) {
+  return (
+    <svg className="chev" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+  );
+}
+function BackIcon({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+  );
+}
+function DotsIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+  );
+}
+// Navigation glyphs, drawn so they render the same everywhere.
+const NAV_PATHS = {
+  dashboard: <path d="M4 11l8-7 8 7v9H4z" />,
+  locations: <><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></>,
+  staff: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 5a3.5 3.5 0 010 7M18 14c2 .6 3.5 2.4 3.5 6" /></>,
+  profile: <><rect x="4" y="3" width="16" height="18" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+  audit: <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>,
+  shop: <><path d="M4 8h16l-1.5 12h-13z" /><path d="M9 8V6a3 3 0 016 0v2" /></>,
+  more: <><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></>,
+  signout: <><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" /></>,
+};
+function NavIcon({ name }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">{NAV_PATHS[name]}</svg>
+  );
+}
+
+// A small "More" (three-dots) popover menu. items: [{ label, onClick, danger }]. Closes on
+// outside click, Escape, or choosing an item; items are 44px tall so they're easy to tap.
+function MoreMenu({ items, label = "More actions" }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const shown = items.filter(Boolean);
+  if (shown.length === 0) return null;
+  return (
+    <span className="menu-wrap" ref={ref}>
+      <button type="button" className="btn-outline icon-btn" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <DotsIcon />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {shown.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={it.danger ? "danger" : undefined} onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function isDatePastClient(dateStr) {
   return dateStr < todayIso();
 }
@@ -167,25 +234,30 @@ export default function App() {
 
   return (
     <div>
-      <div className="header row" style={{ justifyContent: "space-between" }}>
-        <div className="row" style={{ gap: 10 }}>
-          <Logo />
-          {tenant && <span className="muted" style={{ fontSize: 13 }}>— {tenant.business_name}</span>}
+      {tenant && screen === "admin" ? (
+        <div className="app-header is-admin">
+          <div className="grow">
+            <div className="eyebrow">Customer admin</div>
+            <div className="name">{tenant.business_name}</div>
+          </div>
+          {isSimulatedToday() && <span className="badge badge-amber">Simulated: {formatDateDisplay(todayIso())}</span>}
+          <span className="status">{tenant.status === "pending" ? "Payment pending" : "Active"}</span>
         </div>
-        <div className="row">
-          {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {formatDateDisplay(todayIso())}</span>}
-          {tenant && <span className="muted" style={{ fontSize: 12 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</span>}
-          {tenant ? (
-            <button className="btn-outline" onClick={doSignOut}>Sign out</button>
-          ) : (
-            <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "var(--brand)", fontSize: 13, fontWeight: 600 }}>New here? Sign up →</a>
-          )}
+      ) : (
+        <div className="header row" style={{ justifyContent: "space-between" }}>
+          <div className="row" style={{ gap: 10 }}>
+            <Logo />
+          </div>
+          <div className="row">
+            {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {formatDateDisplay(todayIso())}</span>}
+            <a href={import.meta.env.VITE_MARKETING_URL || "http://localhost:5175"} style={{ color: "var(--brand)", fontSize: 14, fontWeight: 600, minHeight: 44, display: "inline-flex", alignItems: "center" }}>New here? Sign up →</a>
+          </div>
         </div>
-      </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
+      )}
+      {error && <div className="container" role="alert"><div className="card row wrap" style={{ borderColor: "#B3261E", color: "#B3261E" }}><span className="grow">{error}</span><button className="btn-outline" onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "admin-login" && <AdminLogin onSignedIn={(t) => { setTenant(t); setScreen("admin"); }} setError={setError} />}
-      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} onTenantChange={setTenant} onAccountDeleted={doSignOut} setError={setError} />}
+      {screen === "admin" && tenant && <AdminDashboard tenant={tenant} onTenantChange={setTenant} onAccountDeleted={doSignOut} onSignOut={doSignOut} setError={setError} />}
     </div>
   );
 }
@@ -215,21 +287,29 @@ function AdminLogin({ onSignedIn, setError }) {
   }
 
   return (
-    <div className="narrow card stack">
-      <h3>Admin sign-in</h3>
-      {step === "email" && (
-        <>
-          <input className="input" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <button className="btn" onClick={sendCode}>Send login code</button>
-        </>
-      )}
-      {step === "otp" && (
-        <>
-          <div className="muted">We've emailed a code (demo: <strong>{demoOtp}</strong>)</div>
-          <input className="input" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
-          <button className="btn" onClick={verify}>Verify &amp; sign in</button>
-        </>
-      )}
+    <div className="narrow">
+      <div className="card stack">
+        <h1 style={{ fontSize: 22 }}>Admin sign-in</h1>
+        {step === "email" && (
+          <>
+            <label className="field">
+              <span className="field-label">Email address</span>
+              <input className="input" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <button className="btn" onClick={sendCode}>Send login code</button>
+          </>
+        )}
+        {step === "otp" && (
+          <>
+            <div className="muted">We've emailed a code (demo: <strong>{demoOtp}</strong>)</div>
+            <label className="field">
+              <span className="field-label">6-digit code</span>
+              <input className="input mono" autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
+            </label>
+            <button className="btn" onClick={verify}>Verify &amp; sign in</button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -243,11 +323,18 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) {
+const TAB_TITLES = { dashboard: "Home", locations: "Locations", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
+const SIDE_TABS = ["dashboard", "locations", "staff", "profile", "audit", "shop"];
+const PHONE_TABS = ["dashboard", "locations", "staff", "profile"];
+
+function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, setError }) {
   const [tab, setTab] = useState("dashboard");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [openLocId, setOpenLocId] = useState(undefined); // undefined = default (auto-open a sole location), null = list, id = that location
+  const [ticketFilter, setTicketFilter] = useState("all");
+  const [renewServiceId, setRenewServiceId] = useState(null);
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
-  const [locationOverrides, setLocationOverrides] = useState({}); // { [locId]: boolean } — explicit open/close, overrides the default
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -318,109 +405,222 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
     return () => clearInterval(id);
   }, []);
 
+  function goTab(t) {
+    setTab(t);
+    setMoreOpen(false);
+    if (t === "dashboard") refreshQueue();
+    if (t === "audit") refreshAudit();
+    if (t === "profile") refreshLicenses();
+    if (t === "locations" && tab === "locations") setOpenLocId(null); // tapping the active tab again returns to the list
+  }
+  useEffect(() => {
+    if (!moreOpen) return;
+    function onKey(e) { if (e.key === "Escape") setMoreOpen(false); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [moreOpen]);
+  // Licences ending today with nothing queued up behind them — a nudge to renew.
+  const endingToday = allLicenses.filter((l) => {
+    if (l.status !== "active" || l.end_date !== date) return false;
+    const svc = services.find((s) => s.id === l.service_id);
+    if (!svc || svc.archived) return false;
+    const tomorrow = addDaysIso(date, 1);
+    return !allLicenses.some((o) => o.id !== l.id && o.service_id === l.service_id && o.status === "scheduled" && o.start_date && o.start_date <= tomorrow);
+  }).filter((l, i, arr) => arr.findIndex((o) => o.service_id === l.service_id) === i);
+  function renewService(serviceId) {
+    const svc = services.find((s) => s.id === serviceId);
+    if (!svc) return;
+    setTab("locations");
+    setOpenLocId(svc.location_id);
+    setRenewServiceId(serviceId);
+  }
+  const filteredTickets = ticketFilter === "all" ? tickets : tickets.filter((t) => t.status === ticketFilter);
+  function ticketBadge(t) {
+    if (t.status === "completed") return { cls: "badge-grey", text: "Completed" };
+    if (t.status === "serving") return { cls: "badge-blue", text: "Serving" };
+    if (t.status === "waiting") return { cls: "badge-amber", text: "Waiting" };
+    if (t.status === "cancelled") return { cls: "badge-red", text: "Cancelled" };
+    if (t.status === "no_show") return { cls: "badge-red", text: "No-show" };
+    if (t.status === "booked") return t.arrived_at ? { cls: "badge-green", text: "Checked in" } : { cls: "badge-line", text: "Booked" };
+    return { cls: "badge-blue", text: t.status };
+  }
+  function moveSelect(t) {
+    return (
+      <select
+        aria-label={`Move ticket ${t.ticket_number} to another service`}
+        value=""
+        onChange={async (e) => { if (e.target.value) { await api.updateTicket(t.id, { serviceId: e.target.value }); refreshQueue(); } }}
+      >
+        <option value="">Move to…</option>
+        {services.filter((s) => s.id !== t.service_id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    );
+  }
+  async function deleteTicket(t) { await api.deleteTicket(t.id); refreshQueue(); }
+  const effectiveOpenLocId = openLocId !== undefined ? openLocId : (visibleLocations.length === 1 ? visibleLocations[0].id : null);
+  const openLoc = tab === "locations" && effectiveOpenLocId ? visibleLocations.find((l) => l.id === effectiveOpenLocId) || null : null;
+  const moreActive = tab === "audit" || tab === "shop";
+
   return (
-    <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <div className="wrap">
-          {["dashboard", "locations", "staff", "profile", "audit"].map((t) => (
-            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); if (t === "profile") refreshLicenses(); }}>{t === "profile" ? "account" : t}</button>
-          ))}
+    <div className="shell">
+      <aside className="sidebar" aria-label="Sidebar">
+        <div className="side-brand">
+          <div className="eyebrow">Customer admin</div>
+          <div className="name">{tenant.business_name}</div>
+          <div style={{ fontSize: 12, color: "#B9C7D3", marginTop: 4 }}>{tenant.status === "pending" ? "Payment pending" : "Active"}</div>
+          {isSimulatedToday() && <div className="badge badge-amber" style={{ marginTop: 8 }}>Simulated: {formatDateDisplay(todayIso())}</div>}
         </div>
-        {tab === "locations" && (
-          <div className="row">
-            {!addingLocation && <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
-          </div>
-        )}
-      </div>
+        <nav aria-label="Main">
+          {SIDE_TABS.map((t) => (
+            <button key={t} type="button" className={`side-link${tab === t ? " active" : ""}`} aria-current={tab === t ? "page" : undefined} onClick={() => goTab(t)}>
+              <NavIcon name={t} />{TAB_TITLES[t]}
+            </button>
+          ))}
+        </nav>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="side-link" onClick={onSignOut}><NavIcon name="signout" />Sign out</button>
+      </aside>
+
+      <main className="shell-main stack" style={{ gap: 16 }}>
+        <div className="page-head">
+          {openLoc ? (
+            <div className="subhead grow">
+              <button type="button" className="back-btn" aria-label="Back to locations" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); }}><BackIcon /></button>
+              <h1>{openLoc.name}</h1>
+            </div>
+          ) : (
+            <h1>{TAB_TITLES[tab]}</h1>
+          )}
+          {tab === "locations" && !openLoc && !addingLocation && (
+            <button className="btn" onClick={() => setAddingLocation(true)}>+ Add location</button>
+          )}
+        </div>
 
       {tab === "locations" && (
-        <div className="stack">
+        <div className="stack" style={{ gap: 16 }}>
           <PendingPaymentBanner tenant={tenant} />
 
-          {addingLocation && (
-            <div className="card row">
-              <input className="input" autoFocus placeholder="Location name" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
-              <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
-              <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
+          {addingLocation && !openLoc && (
+            <div className="card stack">
+              <label className="field">
+                <span className="field-label">Location name</span>
+                <input className="input" autoFocus value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
+              </label>
+              <div className="form-actions">
+                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
+                <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
+              </div>
             </div>
           )}
 
-          {visibleLocations.map((loc) => {
+          {!openLoc && visibleLocations.length === 0 && !addingLocation && (
+            <div className="card muted">No locations yet — add your first location to get started.</div>
+          )}
+
+          {!openLoc && visibleLocations.length > 0 && (
+            <div className="loc-grid">
+              {visibleLocations.map((loc) => {
+                const locServices = visibleServices.filter((s) => s.location_id === loc.id);
+                return (
+                  <div key={loc.id} className="loc-card">
+                    <button type="button" className="loc-open" onClick={() => setOpenLocId(loc.id)} aria-label={`Open ${loc.name}`}>
+                      <span className="grow">
+                        <span className="loc-name" style={{ display: "block" }}>{loc.name}</span>
+                        <span className="muted small" style={{ display: "block" }}>{locServices.length} service{locServices.length === 1 ? "" : "s"} · {locationLicenceText(locServices, allLicenses, date)}</span>
+                      </span>
+                      <ChevronRight />
+                    </button>
+                    {loc.code && (
+                      <div className="code-row">
+                        <span className="label">WhatsApp code</span>
+                        <span className="code-text">{loc.code}</span>
+                        <CopyButton value={loc.code} label={`Copy code for ${loc.name}`} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {openLoc && (() => {
+            const loc = openLoc;
             const locServices = visibleServices.filter((s) => s.location_id === loc.id);
-            const soleLocation = visibleLocations.length === 1;
-            // Defaults open for the only location you have, or a location with just one
-            // service — nothing to pick between, so there's no reason to make them click in.
-            // An explicit click always overrides that default, either way.
-            const defaultOpen = soleLocation || locServices.length === 1;
-            const override = locationOverrides[loc.id];
-            const isOpen = override !== undefined ? override : defaultOpen;
             const addingHere = addingServiceFor === loc.id;
             return (
-              <div key={loc.id} className="card stack">
-                <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-                  <div className="row" style={{ flexWrap: "wrap" }}>
-                    <input
-                      className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
-                      onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                    />
-                    <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <div className="row" style={{ flexWrap: "wrap" }}>
-                    {isOpen && (
-                      <>
-                        <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setLocationOverrides((prev) => ({ ...prev, [loc.id]: true })); }}>+ Add service</button>
-                        <button
-                          className="btn-outline row"
-                          style={{ gap: 4 }}
-                          title="Archive location"
-                          aria-label="Archive location"
-                          onClick={async () => {
-                            if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
-                              await api.archiveLocation(loc.id);
-                              refreshCore();
-                            }
-                          }}
-                        >
-                          <ArchiveIcon /> Archive
-                        </button>
-                      </>
-                    )}
-                    <button className="btn-outline" onClick={() => setLocationOverrides((prev) => ({ ...prev, [loc.id]: !isOpen }))} title={isOpen ? "Collapse" : "Expand"}>
-                      {isOpen ? "▾" : "▸"}
-                    </button>
-                  </div>
-                </div>
-
+              <div className="stack" style={{ gap: 16 }}>
                 {loc.code && (
-                  <div className="row" style={{ flexWrap: "wrap" }}>
-                    <span className="muted" style={{ fontSize: 12 }}>WhatsApp code</span>
-                    <code style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1, background: "#F7F7F4", padding: "3px 8px" }}>{loc.code}</code>
-                    <CopyButton value={loc.code} label="Copy code" />
+                  <div className="code-card">
+                    <div className="muted small">Customers message this code on WhatsApp</div>
+                    <div className="row">
+                      <span className="code-text">{loc.code}</span>
+                      <CopyButton value={loc.code} label="Copy code" showText />
+                    </div>
                   </div>
                 )}
+
+                <details className="details-card">
+                  <summary>Rename or archive this location</summary>
+                  <div className="inner">
+                    <label className="field">
+                      <span className="field-label">Location name</span>
+                      <input
+                        key={loc.id + loc.name}
+                        className="input" defaultValue={loc.name}
+                        onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                      />
+                    </label>
+                    <div>
+                      <button
+                        className="btn-outline"
+                        title="Archive location"
+                        aria-label="Archive location"
+                        onClick={async () => {
+                          if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
+                            await api.archiveLocation(loc.id);
+                            setOpenLocId(null);
+                            refreshCore();
+                          }
+                        }}
+                      >
+                        <ArchiveIcon /> Archive location
+                      </button>
+                    </div>
+                  </div>
+                </details>
+
+                <div className="page-head">
+                  <h2>Services</h2>
+                  {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
+                </div>
 
                 {addingHere && (
                   <ServiceWizard
                     locationId={loc.id}
+                    locationName={loc.name}
                     allServices={services}
                     setError={setError}
                     onCancel={() => setAddingServiceFor(null)}
                     onAdded={refreshCore}
-                    onDone={() => { setAddingServiceFor(null); refreshCore(); }}
+                    onDone={() => { setAddingServiceFor(null); refreshCore(); refreshLicenses(); }}
                     tenant={tenant}
                   />
                 )}
 
-                {isOpen && (
-                  <div className="stack" style={{ paddingLeft: 20, borderLeft: "2px solid #DEDDD6" }}>
-                    {locServices.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No services here yet — click "Add service" above.</div>}
-                    {locServices.map((s) => <ServiceEditor key={s.id} service={s} allServices={services} onChange={refreshCore} setError={setError} tenant={tenant} defaultExpanded={locServices.length === 1} />)}
-                  </div>
-                )}
+                {locServices.length === 0 && !addingHere && <div className="muted small">No services here yet — use "Add service" above.</div>}
+                {locServices.map((s) => (
+                  <ServiceEditor
+                    key={s.id} service={s} allServices={services} tenant={tenant} setError={setError}
+                    locationName={loc.name}
+                    onChange={() => { refreshCore(); refreshLicenses(); }}
+                    autoBuy={renewServiceId === s.id}
+                    onAutoBuyHandled={() => setRenewServiceId(null)}
+                  />
+                ))}
               </div>
             );
-          })}
+          })()}
         </div>
       )}
 
@@ -438,34 +638,58 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
       {tab === "dashboard" && (
-        <div className="stack">
+        <div className="stack" style={{ gap: 16 }}>
+          {endingToday.length > 0 && (
+            <div className="alert-strip" role="status">
+              {endingToday.map((l) => (
+                <div key={l.id} className="alert-row">
+                  <span><strong>{l.service_name}</strong> licence ends today</span>
+                  <button type="button" className="btn btn-accent" onClick={() => renewService(l.service_id)}>Renew</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {stats && (
+            <section className="stack" style={{ gap: 8 }} aria-label="Today at a glance">
+              <div className="stat-grid">
+                <div className="stat"><div className="stat-num">{stats.waiting}</div><div className="stat-label">Waiting</div></div>
+                <div className="stat"><div className="stat-num blue">{stats.serving}</div><div className="stat-label">Serving</div></div>
+                <div className="stat"><div className="stat-num">{stats.booked}</div><div className="stat-label">Booked</div></div>
+                <div className="stat"><div className="stat-num">{stats.completed}</div><div className="stat-label">Completed</div></div>
+              </div>
+              <div className="muted small">No-show {stats.no_show} · Cancelled {stats.cancelled} · {visibleLocations.length} location{visibleLocations.length === 1 ? "" : "s"} · {visibleServices.length} active service{visibleServices.length === 1 ? "" : "s"}</div>
+            </section>
+          )}
+
           {setupPercent < 100 && (
             <div className="card stack" style={{ gap: 10 }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Finish setting up your account</div>
-                <span className="muted" style={{ fontSize: 12 }}>{setupPercent}% complete</span>
+                <h2>Finish setting up your account</h2>
+                <span className="muted small">{setupPercent}% complete</span>
               </div>
-              <div style={{ height: 6, borderRadius: 3, background: "#EAE9E3", overflow: "hidden" }}>
+              <div role="progressbar" aria-label="Account setup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={setupPercent} style={{ height: 6, borderRadius: 3, background: "#EAE9E3", overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${setupPercent}%`, background: "var(--brand)", borderRadius: 3 }} />
               </div>
-              <div className="stack" style={{ gap: 6 }}>
+              <div className="stack" style={{ gap: 8 }}>
                 {setupTasks.filter((t) => !t.done).map((t) => {
                   const isPayment = t.key === "payment";
                   return (
                     <div
-                      key={t.key} className="row"
+                      key={t.key} className="row wrap"
                       style={{
-                        justifyContent: "space-between",
-                        ...(isPayment ? { background: "#FBE9E7", borderRadius: 6, padding: "6px 10px", margin: "-6px -10px" } : null),
+                        justifyContent: "space-between", gap: 8,
+                        ...(isPayment ? { background: "#FBE9E7", padding: "8px 10px" } : null),
                       }}
                     >
-                      <span style={{ fontSize: 13, color: isPayment ? "#B3261E" : undefined, fontWeight: isPayment ? 600 : undefined }}>{t.label}</span>
+                      <span className="grow" style={{ fontSize: 14, minWidth: 180, color: isPayment ? "#B3261E" : undefined, fontWeight: isPayment ? 600 : undefined }}>{t.label}</span>
                       <div className="row">
                         <button className="btn-outline" onClick={t.go} style={isPayment ? { borderColor: "#B3261E", color: "#B3261E" } : undefined}>{t.cta}</button>
                         <button
-                          className="btn-outline"
+                          className="btn-outline icon-btn"
                           title="Dismiss — won't be shown again"
-                          style={{ border: "none", padding: "0 4px", background: "transparent" }}
+                          aria-label={`Dismiss: ${t.label}`}
+                          style={{ border: "none", background: "transparent" }}
                           onClick={() => dismissSetupTask(t.key)}
                         >✕</button>
                       </div>
@@ -475,55 +699,71 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
               </div>
             </div>
           )}
-          <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn-outline" onClick={refreshQueue}>Refresh</button></div>
-          <div className="wrap">
-            <div className="card">{visibleLocations.length}<div className="muted" style={{ fontSize: 11 }}>Location{visibleLocations.length === 1 ? "" : "s"}</div></div>
-            <div className="card">{services.filter((s) => !s.archived).length}<div className="muted" style={{ fontSize: 11 }}>Active service{services.length === 1 ? "" : "s"}</div></div>
-          </div>
-          {stats && (
-            <div className="wrap">
-              <div className="card">{stats.waiting}<div className="muted" style={{ fontSize: 11 }}>Waiting</div></div>
-              <div className="card">{stats.booked}<div className="muted" style={{ fontSize: 11 }}>Booked</div></div>
-              <div className="card">{stats.serving}<div className="muted" style={{ fontSize: 11 }}>Serving</div></div>
-              <div className="card">{stats.completed}<div className="muted" style={{ fontSize: 11 }}>Completed</div></div>
-              <div className="card">{stats.no_show}<div className="muted" style={{ fontSize: 11 }}>No-show</div></div>
-              <div className="card">{stats.cancelled}<div className="muted" style={{ fontSize: 11 }}>Cancelled</div></div>
+
+          <section className="stack" style={{ gap: 8 }} aria-label="Today's tickets">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2>Today's tickets</h2>
+              <button className="btn-outline" onClick={refreshQueue}>Refresh</button>
             </div>
-          )}
-          <div className="card">
-            <table>
-              <thead><tr><th>Ticket</th><th>Service</th><th>Type/time</th><th>Status</th><th>Actions</th></tr></thead>
-              <tbody>
-                {tickets.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 16 }}>No tickets today.</td></tr>}
-                {tickets.map((t) => (
-                  <tr key={t.id}>
-                    <td>{t.ticket_number}</td>
-                    <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>
-                    <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
-                    <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status === "no_show" ? "no-show" : t.status}{t.arrived_at && t.status === "booked" ? " · checked in" : ""}</span></td>
-                    <td className="row">
-                      <select onChange={async (e) => { if (e.target.value) { await api.updateTicket(t.id, { serviceId: e.target.value }); refreshQueue(); } }}>
-                        <option value="">Move to…</option>
-                        {services.filter((s) => s.id !== t.service_id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                      <button className="btn-outline" onClick={async () => { await api.deleteTicket(t.id); refreshQueue(); }}>Delete</button>
-                    </td>
-                  </tr>
+
+            <div className="show-narrow stack">
+              <div className="chips" role="group" aria-label="Filter tickets">
+                {[["all", "All"], ["waiting", "Waiting"], ["serving", "Serving"], ["booked", "Booked"], ["completed", "Done"]].map(([k, label]) => (
+                  <button key={k} type="button" className={`chip${ticketFilter === k ? " on" : ""}`} aria-pressed={ticketFilter === k} onClick={() => setTicketFilter(k)}>
+                    {label} {k === "all" ? tickets.length : tickets.filter((t) => t.status === k).length}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+              {tickets.length === 0 && <div className="list-card muted" style={{ textAlign: "center" }}>No tickets today.</div>}
+              {filteredTickets.map((t) => (
+                <div key={t.id} className="t-card">
+                  <div className="t-top">
+                    <div className="t-num">{t.ticket_number}</div>
+                    <span className={`badge ${ticketBadge(t).cls}`}>{ticketBadge(t).text}</span>
+                  </div>
+                  <div className="t-svc">{services.find((s) => s.id === t.service_id)?.name || "—"} <span className="muted" style={{ fontWeight: 400 }}>· {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : "Walk-in"}</span></div>
+                  <div className="t-actions">
+                    {moveSelect(t)}
+                    <button type="button" className="btn-outline danger" onClick={() => deleteTicket(t)}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="show-wide card" style={{ padding: 0, overflowX: "auto" }}>
+              <table>
+                <thead><tr><th>Ticket</th><th>Service</th><th>Type/time</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {tickets.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 16 }}>No tickets today.</td></tr>}
+                  {tickets.map((t) => (
+                    <tr key={t.id}>
+                      <td className="cell-mono">{t.ticket_number}</td>
+                      <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>
+                      <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
+                      <td><span className={`badge ${ticketBadge(t).cls}`}>{ticketBadge(t).text}</span></td>
+                      <td>
+                        <div className="row">
+                          {moveSelect(t)}
+                          <button type="button" className="btn-outline danger" onClick={() => deleteTicket(t)}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       )}
 
       {tab === "audit" && (
-        <div className="stack">
+        <div className="stack" style={{ gap: 16 }}>
           {archivedLocations.length > 0 && (
             <div className="card stack">
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Archived locations ({archivedLocations.length})</div>
+              <h2>Archived locations ({archivedLocations.length})</h2>
               {archivedLocations.map((loc) => (
-                <div key={loc.id} className="row" style={{ justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 13 }}>{loc.name}</span>
+                <div key={loc.id} className="list-row">
+                  <span className="grow" style={{ fontSize: 15 }}>{loc.name}</span>
                   <button className="btn-outline" onClick={async () => { try { await api.unarchiveLocation(loc.id); refreshCore(); } catch (err) { setError(err.message); } }}>Unarchive</button>
                 </div>
               ))}
@@ -531,12 +771,12 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
           )}
           {archivedServices.length > 0 && (
             <div className="card stack">
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Archived services ({archivedServices.length})</div>
+              <h2>Archived services ({archivedServices.length})</h2>
               {archivedServices.map((s) => {
                 const loc = locations.find((l) => l.id === s.location_id);
                 return (
-                  <div key={s.id} className="row" style={{ justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13 }}>{s.name} <span className="muted">— {loc?.name || "—"}</span></span>
+                  <div key={s.id} className="list-row">
+                    <span className="grow" style={{ fontSize: 15 }}>{s.name} <span className="muted">— {loc?.name || "—"}</span></span>
                     <button
                       className="btn-outline"
                       onClick={async () => {
@@ -556,11 +796,35 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
               })}
             </div>
           )}
-          <div className="card stack">
+          <div className="card stack" style={{ gap: 0 }}>
+            <h2 style={{ marginBottom: 10 }}>Activity</h2>
             {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
-            {auditLog.map((a) => <div key={a.id} className="muted" style={{ fontSize: 12 }}>{new Date(a.created_at).toLocaleString()} — {a.message}</div>)}
+            {auditLog.map((a) => <div key={a.id} className="log-row"><time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString()}</time><span>{a.message}</span></div>)}
           </div>
         </div>
+      )}
+      </main>
+
+      <nav className="bottom-nav" aria-label="Main">
+        {PHONE_TABS.map((t) => (
+          <button key={t} type="button" className={tab === t ? "active" : undefined} aria-current={tab === t ? "page" : undefined} onClick={() => goTab(t)}>
+            <NavIcon name={t} />{TAB_TITLES[t]}
+          </button>
+        ))}
+        <button type="button" className={moreActive ? "active" : undefined} aria-haspopup="dialog" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}>
+          <NavIcon name="more" />More
+        </button>
+      </nav>
+      {moreOpen && (
+        <>
+          <div className="sheet-backdrop phone-only" onClick={() => setMoreOpen(false)} />
+          <div className="sheet" role="dialog" aria-modal="true" aria-label="More">
+            <div className="sheet-title">More</div>
+            <button type="button" className={tab === "audit" ? "active" : undefined} autoFocus onClick={() => goTab("audit")}><NavIcon name="audit" />Audit log</button>
+            <button type="button" className={tab === "shop" ? "active" : undefined} onClick={() => goTab("shop")}><NavIcon name="shop" />Shop</button>
+            <button type="button" onClick={() => { setMoreOpen(false); onSignOut(); }}><NavIcon name="signout" />Sign out</button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -612,34 +876,80 @@ function StaffTab({ staffAppUrl, setError }) {
     try { await api.deleteStaff(m.id); await load(); } catch (err) { setError(err.message); }
   }
 
+  const staffFormValid = (f) => f.firstName.trim() && f.lastName.trim() && f.email.trim();
+  function startEdit(m) { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }
+  function editFields() {
+    return (
+      <div className="form-grid">
+        <label className="field"><span className="field-label">First name</span>
+          <input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></label>
+        <label className="field"><span className="field-label">Last name</span>
+          <input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></label>
+        <label className="field span2"><span className="field-label">Email address</span>
+          <input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></label>
+      </div>
+    );
+  }
+
   return (
-    <div className="stack">
+    <div className="stack" style={{ gap: 16 }}>
       <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-          <div className="stack" style={{ gap: 2 }}>
+        <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div className="stack grow" style={{ gap: 2, minWidth: 220 }}>
             <strong>Staff</strong>
-            <span className="muted" style={{ fontSize: 12 }}>
+            <span className="muted small">
               Add everyone who needs to call customers forward. They sign in to the staff portal with their email address and a code sent to it.
-              {staffAppUrl && <> Staff portal: <a href={staffAppUrl} target="_blank" rel="noreferrer">{staffAppUrl}</a></>}
+              {staffAppUrl && <> Staff portal: <a href={staffAppUrl} target="_blank" rel="noreferrer" style={{ overflowWrap: "anywhere" }}>{staffAppUrl}</a></>}
             </span>
           </div>
           {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add staff member</button>}
         </div>
         {adding && (
-          <div className="wrap" style={{ alignItems: "flex-end" }}>
-            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>First name</span>
-              <input className="input" style={{ width: 150 }} value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></label>
-            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>Last name</span>
-              <input className="input" style={{ width: 150 }} value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></label>
-            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>Email address</span>
-              <input className="input" type="email" style={{ width: 240 }} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-            <button className="btn" disabled={busy || !form.firstName.trim() || !form.lastName.trim() || !form.email.trim()} onClick={add}>{busy ? "Adding…" : "Add"}</button>
-            <button className="btn-outline" onClick={() => setAdding(false)}>Cancel</button>
+          <div className="stack">
+            <div className="form-grid">
+              <label className="field"><span className="field-label">First name</span>
+                <input className="input" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></label>
+              <label className="field"><span className="field-label">Last name</span>
+                <input className="input" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></label>
+              <label className="field span2"><span className="field-label">Email address</span>
+                <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+            </div>
+            <div className="form-actions">
+              <button className="btn" disabled={busy || !staffFormValid(form)} onClick={add}>{busy ? "Adding…" : "Add"}</button>
+              <button className="btn-outline" onClick={() => setAdding(false)}>Cancel</button>
+            </div>
           </div>
         )}
       </div>
 
-      <div className="card">
+      {/* Phones: one card per person */}
+      <div className="show-narrow stack">
+        {staff === null && <div className="list-card muted" style={{ textAlign: "center" }}>Loading…</div>}
+        {staff && staff.length === 0 && <div className="list-card muted" style={{ textAlign: "center" }}>No staff yet — add your first staff member above.</div>}
+        {staff && staff.map((m) => editId === m.id ? (
+          <div key={m.id} className="list-card">
+            {editFields()}
+            <div className="form-actions">
+              <button className="btn" disabled={busy || !staffFormValid(edit)} onClick={() => save(m.id)}>Save</button>
+              <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div key={m.id} className="list-card">
+            <div>
+              <div className="loc-name">{m.first_name} {m.last_name}</div>
+              <div className="muted" style={{ fontSize: 14, overflowWrap: "anywhere" }}>{m.email}</div>
+            </div>
+            <div className="t-actions">
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => startEdit(m)} aria-label={`Edit ${m.first_name} ${m.last_name}`}>Edit</button>
+              <button className="btn-outline danger" style={{ flex: 1 }} onClick={() => remove(m)} aria-label={`Delete ${m.first_name} ${m.last_name}`}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Wide screens: table */}
+      <div className="show-wide card" style={{ padding: 0, overflowX: "auto" }}>
         <table>
           <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th></th></tr></thead>
           <tbody>
@@ -647,20 +957,24 @@ function StaffTab({ staffAppUrl, setError }) {
             {staff && staff.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff yet — add your first staff member above.</td></tr>}
             {staff && staff.map((m) => editId === m.id ? (
               <tr key={m.id}>
-                <td><input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
-                <td><input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
-                <td><input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
-                <td className="row" style={{ justifyContent: "flex-end" }}>
-                  <button className="btn" disabled={busy || !edit.firstName.trim() || !edit.lastName.trim() || !edit.email.trim()} onClick={() => save(m.id)}>Save</button>
-                  <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+                <td><input className="input" aria-label="First name" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
+                <td><input className="input" aria-label="Last name" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
+                <td><input className="input" aria-label="Email address" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
+                <td>
+                  <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <button className="btn" disabled={busy || !staffFormValid(edit)} onClick={() => save(m.id)}>Save</button>
+                    <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+                  </div>
                 </td>
               </tr>
             ) : (
               <tr key={m.id}>
                 <td>{m.first_name}</td><td>{m.last_name}</td><td>{m.email}</td>
-                <td className="row" style={{ justifyContent: "flex-end" }}>
-                  <button className="btn-outline" onClick={() => { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }}>Edit</button>
-                  <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => remove(m)}>Delete</button>
+                <td>
+                  <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <button className="btn-outline" onClick={() => startEdit(m)} aria-label={`Edit ${m.first_name} ${m.last_name}`}>Edit</button>
+                    <button className="btn-outline danger" onClick={() => remove(m)} aria-label={`Delete ${m.first_name} ${m.last_name}`}>Delete</button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -775,94 +1089,89 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
   }
 
   return (
-    <div className="stack">
+    <div className="stack" style={{ gap: 16 }}>
       <div className="card stack">
-        <label className="stack" style={{ gap: 2 }}>
-          <span className="muted" style={{ fontSize: 11 }}>Business name</span>
-          <input
-            className="input" style={{ maxWidth: 360 }}
-            value={businessName} onChange={(e) => setBusinessName(e.target.value)}
-          />
-        </label>
-
-        <div className="wrap">
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>First name</span>
-            <input className="input" style={{ width: 160 }} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+        <h2>Your details</h2>
+        <div className="form-grid">
+          <label className="field span2">
+            <span className="field-label">Business name</span>
+            <input className="input" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Last name</span>
-            <input className="input" style={{ width: 160 }} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          <label className="field">
+            <span className="field-label">First name</span>
+            <input className="input" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Email address</span>
-            <input className="input" style={{ width: 240 }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label className="field">
+            <span className="field-label">Last name</span>
+            <input className="input" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Website</span>
-            <input className="input" style={{ width: 240 }} placeholder="https://yourbusiness.example" value={website} onChange={(e) => setWebsite(e.target.value)} />
+          <label className="field">
+            <span className="field-label">Email address</span>
+            <input className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Website</span>
+            <input className="input" type="url" inputMode="url" placeholder="https://yourbusiness.example" value={website} onChange={(e) => setWebsite(e.target.value)} />
           </label>
         </div>
 
-        <div className="stack" style={{ gap: 8 }}>
-          <span className="muted" style={{ fontSize: 11 }}>Business address</span>
-          <div className="wrap">
-            <label className="stack" style={{ gap: 2 }}>
-              <span className="muted" style={{ fontSize: 11 }}>Address line 1</span>
-              <input className="input" style={{ width: 220 }} value={line1} onChange={(e) => setLine1(e.target.value)} />
-            </label>
-            <label className="stack" style={{ gap: 2 }}>
-              <span className="muted" style={{ fontSize: 11 }}>Address line 2</span>
-              <input className="input" style={{ width: 220 }} value={line2} onChange={(e) => setLine2(e.target.value)} />
-            </label>
-            <label className="stack" style={{ gap: 2 }}>
-              <span className="muted" style={{ fontSize: 11 }}>City</span>
-              <input className="input" style={{ width: 160 }} value={city} onChange={(e) => setCity(e.target.value)} />
-            </label>
-            <label className="stack" style={{ gap: 2 }}>
-              <span className="muted" style={{ fontSize: 11 }}>Post / zip code</span>
-              <input className="input" style={{ width: 120 }} value={postcode} onChange={(e) => setPostcode(e.target.value)} />
-            </label>
-          </div>
+        <h2 style={{ marginTop: 4 }}>Business address</h2>
+        <div className="form-grid">
+          <label className="field">
+            <span className="field-label">Address line 1</span>
+            <input className="input" autoComplete="address-line1" value={line1} onChange={(e) => setLine1(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Address line 2</span>
+            <input className="input" autoComplete="address-line2" value={line2} onChange={(e) => setLine2(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">City</span>
+            <input className="input" autoComplete="address-level2" value={city} onChange={(e) => setCity(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Post / zip code</span>
+            <input className="input" autoComplete="postal-code" value={postcode} onChange={(e) => setPostcode(e.target.value)} />
+          </label>
         </div>
 
-        <div className="row">
+        <div className="form-actions">
           <button className="btn" disabled={!dirty} onClick={save}>Save</button>
-          {saved && <span className="muted" style={{ fontSize: 12 }}>Saved.</span>}
+          {saved && <span className="muted small" role="status">Saved.</span>}
         </div>
       </div>
 
       {accountUnpaid && (
         <div className="card stack" style={{ borderColor: "var(--accent)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Payment required</div>
-          <div className="muted" style={{ fontSize: 12 }}>
+          <h2>Payment required</h2>
+          <div className="muted small">
             Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
           </div>
           {!payMethod && (
-            <div className="row">
+            <div className="form-actions">
               <button className="btn" onClick={() => setPayMethod("card")}>Pay by card</button>
               <button className="btn-outline" onClick={() => setPayMethod("invoice")}>Pay by invoice</button>
             </div>
           )}
           {payMethod === "card" && (
-            <div className="row">
+            <div className="form-actions">
               <button className="btn" disabled={paying} onClick={payByCard}>{paying ? "Processing…" : "Confirm card payment"}</button>
               <button className="btn-outline" onClick={() => setPayMethod(null)}>Cancel</button>
             </div>
           )}
           {payMethod === "invoice" && (
             <div className="stack">
-              <div className="wrap">
-                <label className="stack" style={{ gap: 2 }}>
-                  <span className="muted" style={{ fontSize: 11 }}>Billing email</span>
-                  <input className="input" style={{ width: 220 }} value={payInvoiceEmail} onChange={(e) => setPayInvoiceEmail(e.target.value)} />
+              <div className="form-grid">
+                <label className="field">
+                  <span className="field-label">Billing email</span>
+                  <input className="input" type="email" value={payInvoiceEmail} onChange={(e) => setPayInvoiceEmail(e.target.value)} />
                 </label>
-                <label className="stack" style={{ gap: 2 }}>
-                  <span className="muted" style={{ fontSize: 11 }}>PO / reference number</span>
-                  <input className="input" style={{ width: 200 }} value={payInvoicePO} onChange={(e) => setPayInvoicePO(e.target.value)} />
+                <label className="field">
+                  <span className="field-label">PO / reference number</span>
+                  <input className="input" value={payInvoicePO} onChange={(e) => setPayInvoicePO(e.target.value)} />
                 </label>
               </div>
-              <div className="row">
+              <div className="form-actions">
                 <button className="btn" disabled={paying || !payInvoicePO.trim()} onClick={payByInvoice}>{paying ? "Submitting…" : "Submit for invoicing"}</button>
                 <button className="btn-outline" onClick={() => setPayMethod(null)}>Cancel</button>
               </div>
@@ -871,59 +1180,67 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         </div>
       )}
 
-      <div className="card stack" style={{ background: "#FBEEDD" }}>
-        <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{staffAppUrl}</code></div>
-        <div className="muted" style={{ fontSize: 12 }}>
+      <div className="card stack" style={{ background: "var(--accent-weak)" }}>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Staff Kiosk link</span>
+          <code style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere" }}>{staffAppUrl}</code>
+        </div>
+        <div className="muted small">
           Staff sign in with their own email address and a code sent to it. Add them in the Staff tab.
         </div>
-        <div className="row" style={{ flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13 }}>Customer link:</span>
-          <code style={{ fontSize: 12, background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{customerLink}</code>
-          <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Customer link</span>
+          <div className="row wrap">
+            <code className="grow" style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere", minWidth: 200 }}>{customerLink}</code>
+            <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+          </div>
         </div>
-        <div className="muted" style={{ fontSize: 12 }}>This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
+        <div className="muted small">This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
       </div>
 
       <div className="card stack">
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Licenses ({visibleLicenses.length})</div>
-        {visibleLicenses.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No licenses yet.</div>}
-        {visibleLicenses.map((lic, i) => {
-          const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
-          return (
-            <div
-              key={lic.id} className="row"
-              style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}
-            >
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                <span className={`badge badge-${meta.color}`}>{meta.label}</span>
-                <strong style={{ fontSize: 13 }}>{lic.service_name}</strong>
-                <span style={{ fontSize: 13 }}>{lic.plan_label}</span>
-                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
-                <span className="muted" style={{ fontSize: 12 }}>{Number(lic.price) > 0 ? priceText(lic.price) : "Free"}</span>
-                {lic.paid === false && lic.payment_method === "later" && <span className="badge badge-red">Unpaid — pay later</span>}
+        <h2>Licenses ({visibleLicenses.length})</h2>
+        {visibleLicenses.length === 0 && <div className="muted small">No licenses yet.</div>}
+        <div>
+          {visibleLicenses.map((lic) => {
+            const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+            const unpaidLater = lic.paid === false && lic.payment_method === "later";
+            const canRefund = (lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && !unpaidLater;
+            return (
+              <div key={lic.id} className="lic-card">
+                <div className="lic-main">
+                  <span className={`badge badge-${meta.color}`}>{meta.label}</span>
+                  <strong style={{ fontSize: 15 }}>{lic.service_name}</strong>
+                  <span>{lic.plan_label}</span>
+                  {unpaidLater && <span className="badge badge-red">Unpaid — pay later</span>}
+                </div>
+                <div className="muted small">
+                  {lic.start_date && <>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)} · </>}
+                  {Number(lic.price) > 0 ? priceText(lic.price) : "Free"}
+                </div>
+                <div className="lic-actions">
+                  {unpaidLater && (
+                    <>
+                      <button className="btn" onClick={() => payLater(lic, "card")}>Pay by card</button>
+                      <button className="btn-outline" onClick={() => payLater(lic, "invoice")}>Pay by invoice</button>
+                    </>
+                  )}
+                  {canRefund && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
+                  <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
+                </div>
               </div>
-              <div className="row">
-                {lic.paid === false && lic.payment_method === "later" && (
-                  <>
-                    <button className="btn" onClick={() => payLater(lic, "card")}>Pay by card</button>
-                    <button className="btn-outline" onClick={() => payLater(lic, "invoice")}>Pay by invoice</button>
-                  </>
-                )}
-                {(lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && !(lic.paid === false && lic.payment_method === "later") && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
-                <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
-      <div className="card stack" style={{ borderColor: "var(--error, #B3261E)" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--error, #B3261E)" }}>Delete account</div>
-        <div className="muted" style={{ fontSize: 12 }}>
+      <div className="card stack" style={{ borderColor: "var(--error)" }}>
+        <h2 style={{ color: "var(--error)" }}>Delete account</h2>
+        <div className="muted small">
           This will permanently delete all of your data — every location, service, license and booking history. This can't be undone.
         </div>
-        <div className="row">
-          <button className="btn-outline" style={{ color: "var(--error, #B3261E)", borderColor: "var(--error, #B3261E)" }} onClick={deleteAccount}>Delete account</button>
+        <div>
+          <button className="btn-outline danger" onClick={deleteAccount}>Delete account</button>
         </div>
       </div>
     </div>
@@ -974,11 +1291,11 @@ function ShopTab({ tenant, locations }) {
 
   return (
     <div className="stack">
-      <div className="muted" style={{ fontSize: 12 }}>
+      <div className="muted small">
         A look at what's available — nothing here is purchased automatically yet, "Get a quote" opens an email to us directly.
       </div>
 
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Products</div>
+      <h2>Products</h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         {products.map((p) => (
           <div key={p.name} className="card stack">
@@ -986,13 +1303,13 @@ function ShopTab({ tenant, locations }) {
               <strong style={{ fontSize: 14 }}>{p.name}</strong>
               <span className={`badge ${p.price === "Free" ? "badge-green" : "badge-blue"}`}>{p.price}</span>
             </div>
-            <div className="muted" style={{ fontSize: 12 }}>{p.desc}</div>
+            <div className="muted small">{p.desc}</div>
             <div><button className="btn-outline" onClick={p.action.onClick}>{p.action.label}</button></div>
           </div>
         ))}
       </div>
 
-      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>Services</div>
+      <h2 style={{ marginTop: 8 }}>Services</h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         {services.map((s) => (
           <div key={s.name} className="card stack">
@@ -1000,7 +1317,7 @@ function ShopTab({ tenant, locations }) {
               <strong style={{ fontSize: 14 }}>{s.name}</strong>
               <span className="badge badge-blue">{s.price}</span>
             </div>
-            <div className="muted" style={{ fontSize: 12 }}>{s.desc}</div>
+            <div className="muted small">{s.desc}</div>
             <div><button className="btn-outline" onClick={s.action.onClick}>{s.action.label}</button></div>
           </div>
         ))}
@@ -1055,6 +1372,26 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
   if (w) w.onload = () => w.print();
 }
 
+function shortDate(dateStr) {
+  if (!dateStr) return "";
+  return new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+// One-line licence summary for a location card, built from the licences already loaded.
+function locationLicenceText(locServices, allLicenses, today) {
+  if (locServices.length === 0) return "no services yet";
+  const live = (l) => l.status !== "refunded" && l.status !== "expired";
+  const activeBySvc = locServices.map((s) => allLicenses.find((l) => l.service_id === s.id && l.status === "active")).filter(Boolean);
+  const endingToday = activeBySvc.filter((l) => l.end_date === today).length;
+  if (endingToday > 0) return `${endingToday} licence${endingToday === 1 ? "" : "s"} ending today`;
+  if (activeBySvc.length === locServices.length) {
+    const earliest = activeBySvc.map((l) => l.end_date).sort()[0];
+    return `licensed to ${shortDate(earliest)}`;
+  }
+  if (activeBySvc.length > 0) return `${activeBySvc.length} of ${locServices.length} licensed`;
+  const pending = allLicenses.filter((l) => locServices.some((s) => s.id === l.service_id) && live(l)).length;
+  return pending > 0 ? "licence not yet scheduled" : "no licence yet";
+}
+
 // A compact, always-visible summary of a service's license health — shown in the
 // collapsed header row so you don't have to expand every service to check coverage.
 function licenseSummary(licenses) {
@@ -1075,8 +1412,9 @@ function licenseSummary(licenses) {
   return { text: "No license", color: "red" };
 }
 
-function ServiceEditor({ service, allServices, onChange, setError, tenant, defaultExpanded }) {
-  const [expanded, setExpanded] = useState(!!defaultExpanded);
+function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, autoBuy, onAutoBuyHandled }) {
+  const [panel, setPanel] = useState(null); // null | "hours" | "licences"
+  const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
   const [licenses, setLicenses] = useState([]);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
@@ -1088,6 +1426,25 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, defau
 
   const summary = licenseSummary(licenses);
   const hasActiveLicense = licenses.some((l) => l.status === "active");
+  function openPanel(name) {
+    if (name === "licences") setLicMounted(true);
+    setPanel((cur) => (cur === name ? null : name));
+  }
+  function startBuy() {
+    setLicMounted(true);
+    setPanel("licences");
+    setBuyTrigger((t) => t + 1);
+  }
+  useEffect(() => { if (autoBuy) { startBuy(); onAutoBuyHandled?.(); } }, [autoBuy]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The licence that matters right now: the live one, otherwise the next one coming up.
+  const currentLic = licenses.find((l) => l.status === "active") || licenses.filter((l) => l.status === "scheduled").sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))[0];
+  const modeText = service.mode === "queue" ? "Queue (walk-ins)" : service.mode === "appointment" ? `Appointments · ${service.slot_minutes} min slots` : `Queue and appointments · ${service.slot_minutes} min slots`;
+  function payText(l) {
+    if (l.paid === false) return l.payment_method === "invoice" ? "Invoice, awaiting payment" : "Unpaid";
+    if (l.payment_method === "card") return "Paid by card";
+    if (l.payment_method === "invoice") return "Invoiced";
+    return "";
+  }
 
   // Fake for now — there's no real WhatsApp Business number wired up yet, so the QR just
   // points at the same stand-in customer link the Setup tab shows, with the service tagged
@@ -1131,56 +1488,70 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, defau
   }
 
   return (
-    <div className="card stack" style={{ gap: 8, ...(service.archived ? { opacity: 0.6 } : null) }}>
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-        <div className="row" style={{ flexWrap: "wrap" }}>
-          <strong>{service.name}</strong>
-          <span className="badge badge-blue" style={{ textTransform: "capitalize" }}>{service.mode}</span>
-          {service.mode !== "queue" && <span className="muted" style={{ fontSize: 12 }}>{service.slot_minutes} min slots</span>}
-          {service.archived && <span className="badge badge-amber">Archived</span>}
-          <span className={`badge badge-${summary.color}`}>{summary.text}</span>
+    <div className="svc-card" style={service.archived ? { opacity: 0.6 } : undefined}>
+      <div className="row" style={{ alignItems: "flex-start" }}>
+        <div className="grow">
+          <div className="loc-name">{service.name}</div>
+          <div className="muted small">{modeText}</div>
         </div>
-        <div className="row">
-          <select
-            className="btn-outline"
-            defaultValue=""
-            onChange={async (e) => {
-              const action = e.target.value;
-              e.target.value = "";
-              if (action === "buy") { setExpanded(true); setBuyTrigger((t) => t + 1); }
-              else if (action === "qr") printServiceQR();
-              else if (action === "archive" && confirm(`Archive "${service.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its license history is kept.`)) {
-                await api.updateService(service.id, { archived: true });
-                onChange();
-              }
-            }}
-          >
-            <option value="" disabled>⋯</option>
-            <option value="buy">Buy a license</option>
-            <option value="qr">Print QR customer display</option>
-            <option value="archive">Archive</option>
-          </select>
-          <button className="btn-outline" onClick={() => setExpanded((v) => !v)} title={expanded ? "Collapse" : "Expand"}>
-            {expanded ? "▾" : "▸"}
-          </button>
+        <div className="row wrap" style={{ justifyContent: "flex-end", flex: "none", maxWidth: "55%" }}>
+          {service.archived && <span className="badge badge-amber">Archived</span>}
+          {service.queue_paused && <span className="badge badge-red">Paused</span>}
+          <span className={`badge badge-${summary.color}`}>{summary.text}</span>
         </div>
       </div>
 
+      {currentLic && (
+        <div className="muted" style={{ fontSize: 14, lineHeight: "20px" }}>
+          {currentLic.plan_label} licence{currentLic.start_date ? ` · ${shortDate(currentLic.start_date)} to ${shortDate(currentLic.end_date)}` : ""}
+          {(Number(currentLic.price) > 0 || payText(currentLic)) && <br />}
+          {Number(currentLic.price) > 0 && priceText(currentLic.price)}
+          {Number(currentLic.price) > 0 && payText(currentLic) && " · "}
+          {payText(currentLic)}
+        </div>
+      )}
+
       {service.mode === "queue" && hasActiveLicense && (
-        <div className="row">
+        <div className="row wrap">
           <button className="btn-outline" onClick={async () => { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); }}>
             {service.queue_paused ? "Resume" : "Pause (busy)"}
           </button>
-          <span className="muted" style={{ fontSize: 12 }}>A live override on top of the scheduled hours below — pause anytime without touching your calendar.</span>
+          <span className="muted small grow" style={{ minWidth: 200 }}>A live override on top of the scheduled hours — pause anytime without touching your calendar.</span>
         </div>
       )}
-      {expanded && (
-        <div className="stack" style={{ gap: 10, paddingTop: 2, borderTop: "1px solid var(--line)" }}>
+
+      <div className="svc-actions">
+        <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>
+        <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>
+        <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
+        <MoreMenu
+          label={`More actions for ${service.name}`}
+          items={[
+            { label: "Print QR customer display", onClick: printServiceQR },
+            {
+              label: "Archive", danger: true,
+              onClick: async () => {
+                if (confirm(`Archive "${service.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its license history is kept.`)) {
+                  await api.updateService(service.id, { archived: true });
+                  onChange();
+                }
+              },
+            },
+          ]}
+        />
+      </div>
+
+      {licMounted && (
+        <div className="svc-panel" hidden={panel !== "licences"}>
           <ServiceLicensesPanel
-            service={service} allServices={allServices || []} setError={setError}
+            service={service} allServices={allServices || []} setError={setError} locationName={locationName}
             onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
             tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false}
           />
+        </div>
+      )}
+      {panel === "hours" && (
+        <div className="svc-panel">
           <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} />
         </div>
       )}
@@ -1192,7 +1563,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, defau
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, hideHeader = false, onBought }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, hideHeader = false, onBought, locationName }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -1253,145 +1624,188 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const visible = licenses.filter((l) => l.status !== "refunded");
   const otherServices = (allServices || []).filter((s) => s.id !== service.id && !s.archived);
 
+  const planLabel = planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1);
+  const price = selectedPrice();
+  const PLAN_ROWS = [
+    { id: "day", name: "Day", desc: "1 day" },
+    { id: "week", name: "Week", desc: "7 days" },
+    { id: "month", name: "Month", desc: "30 days" },
+    { id: "custom", name: "Custom days", desc: "Pick the number of days" },
+  ];
+  const PAY_ROWS = [
+    { id: "card", title: "Card", desc: "Pay by card — access is immediate. Card payments are handled securely by Stripe, so QBooker never stores your card details." },
+    { id: "invoice", title: "Invoice", desc: "Added to your next invoice — access is immediate, billed per your invoice terms." },
+    { id: "later", title: "Pay later", desc: "Get the license now and pay afterwards. It stays marked unpaid until you pay by card or choose invoice from your Account tab." },
+  ];
+
   return (
     <div className="stack" style={{ gap: 8 }}>
       {!hideHeader && (
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <strong style={{ fontSize: 13 }}>Licenses</strong>
-          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a license</button>}
+          <strong style={{ fontSize: 14 }}>Licences</strong>
+          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a licence</button>}
         </div>
       )}
 
-      {buying && pricing && buyStep === "plan" && (
-        <div className="card stack" style={{ background: "#FBEEDD" }}>
-          <div className="stack" style={{ gap: 2 }}>
-            <strong style={{ fontSize: 13 }}>Select license type</strong>
+      {buying && pricing && (
+        <div className="buy-flow" role="region" aria-label="Buy a licence">
+          <div className="buy-head">
+            <button
+              type="button" className="back-btn"
+              aria-label={buyStep === "plan" ? "Cancel buying a licence" : "Back to plan"}
+              onClick={() => (buyStep === "plan" ? setBuying(false) : setBuyStep("plan"))}
+            ><BackIcon /></button>
+            <div className="title">Buy a licence</div>
           </div>
-          <div className="plan-grid">
-            {["day", "week", "month", "custom"].map((id) => {
-              const onSale = id !== "custom" && pricing.sale?.active && pricing.sale[id] != null;
-              const price = id === "custom" ? null : (onSale ? pricing.sale[id] : pricing[id]);
-              return (
-                <div key={id} className={`plan-option${planId === id ? " active" : ""}`} onClick={() => setPlanId(id)}>
-                  <span className="plan-option-label">{id === "custom" ? "Custom" : id.charAt(0).toUpperCase() + id.slice(1)}</span>
-                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc VAT)</small></span>
+          <div className="buy-progress">
+            <div className="bars" aria-hidden="true">
+              <span className="on" /><span className="on" /><span className={buyStep === "payment" ? "on" : ""} />
+            </div>
+            <div className="labels">
+              <span>Service</span>
+              <span className={buyStep === "plan" ? "cur" : ""}>Plan</span>
+              <span className={buyStep === "payment" ? "cur" : ""}>Payment</span>
+            </div>
+            <div className="sr-only" role="status">Step {buyStep === "plan" ? 2 : 3} of 3: {buyStep === "plan" ? "Plan" : "Payment"}</div>
+          </div>
+
+          <div className="buy-body">
+            {buyStep === "plan" && (
+              <>
+                <div>
+                  <h2>Choose a plan</h2>
+                  <div className="muted" style={{ fontSize: 14, marginTop: 2 }}>{service.name}{locationName ? ` at ${locationName}` : ""}</div>
                 </div>
-              );
-            })}
-          </div>
-          {planId === "custom" && (
-            <div className="row">
-              <span className="muted">Days:</span>
-              <input className="input" type="number" min={1} style={{ width: 70 }} value={customDays} onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))} />
-            </div>
-          )}
-          <div className="row">
-            <button className="btn" onClick={() => (selectedPrice() > 0 ? setBuyStep("payment") : buy())}>
-              {selectedPrice() > 0 ? "Continue" : "Buy — free"}
-            </button>
-            <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
+                <div className="stack" style={{ gap: 12 }} role="radiogroup" aria-label="Licence plan">
+                  {PLAN_ROWS.map((row) => {
+                    const onSale = row.id !== "custom" && pricing.sale?.active && pricing.sale[row.id] != null;
+                    const p = row.id === "custom" ? pricing.customDailyRate : (onSale ? pricing.sale[row.id] : pricing[row.id]);
+                    return (
+                      <button key={row.id} type="button" role="radio" aria-checked={planId === row.id} className="plan-row" onClick={() => setPlanId(row.id)}>
+                        <span className="plan-dot" aria-hidden="true" />
+                        <span className="plan-text"><span className="plan-name">{row.name}</span><span className="plan-desc">{row.desc}</span></span>
+                        <span className="plan-price">
+                          <b>{Number(p) > 0 ? `${exMoney(p)}${row.id === "custom" ? "/day" : ""}` : "Free"}</b>
+                          {Number(p) > 0 && <span>({exMoney(incVat(p))} inc VAT)</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {planId === "custom" && (
+                  <label className="field" style={{ maxWidth: 200 }}>
+                    <span className="field-label">Number of days</span>
+                    <input className="input" type="number" inputMode="numeric" min={1} value={customDays} onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))} />
+                  </label>
+                )}
+              </>
+            )}
 
-      {buying && pricing && buyStep === "payment" && (
-        <div className="card stack" style={{ background: "#FBEEDD" }}>
-          <div className="stack" style={{ gap: 2 }}>
-            <strong style={{ fontSize: 13 }}>How this is paid</strong>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {(planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1))} license — {priceText(selectedPrice())}
-            </span>
-          </div>
-          <div className="stack" style={{ gap: 8 }}>
-            <div className={`payment-option${buyPay === "card" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("card")}>
-              <span className="payment-option-title">Card</span>
-              <span className="payment-option-desc">Pay by card — access is immediate. Card payments are handled securely by Stripe, so QBooker never stores your card details.</span>
-            </div>
-            <div className={`payment-option${buyPay === "invoice" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("invoice")}>
-              <span className="payment-option-title">Invoice</span>
-              <span className="payment-option-desc">Added to your next invoice — access is immediate, billed per your invoice terms.</span>
-            </div>
-            <div className={`payment-option${buyPay === "later" ? " active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setBuyPay("later")}>
-              <span className="payment-option-title">Pay later</span>
-              <span className="payment-option-desc">Get the license now and pay afterwards. It stays marked unpaid until you pay by card or choose invoice from your Account tab.</span>
-            </div>
-            {buyPay === "invoice" && (
-              <div className="wrap">
-                <label className="stack" style={{ gap: 2 }}>
-                  <span className="muted" style={{ fontSize: 11 }}>Billing email</span>
-                  <input className="input" style={{ width: 220 }} value={buyEmail} onChange={(e) => setBuyEmail(e.target.value)} />
-                </label>
-                <label className="stack" style={{ gap: 2 }}>
-                  <span className="muted" style={{ fontSize: 11 }}>PO / reference number</span>
-                  <input className="input" style={{ width: 200 }} value={buyPO} onChange={(e) => setBuyPO(e.target.value)} />
-                </label>
-              </div>
+            {buyStep === "payment" && (
+              <>
+                <div>
+                  <h2>How will you pay?</h2>
+                  <div className="muted" style={{ fontSize: 14, marginTop: 2 }}>{planLabel} licence{planId === "custom" ? ` (${customDays} day${Number(customDays) === 1 ? "" : "s"})` : ""} — {priceText(price)}</div>
+                </div>
+                <div className="stack" style={{ gap: 12 }} role="radiogroup" aria-label="Payment method">
+                  {PAY_ROWS.map((row) => (
+                    <button key={row.id} type="button" role="radio" aria-checked={buyPay === row.id} className="payment-option" onClick={() => setBuyPay(row.id)}>
+                      <span className="payment-option-title">{row.title}</span>
+                      <span className="payment-option-desc">{row.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                {buyPay === "invoice" && (
+                  <div className="form-grid">
+                    <label className="field">
+                      <span className="field-label">Billing email</span>
+                      <input className="input" type="email" value={buyEmail} onChange={(e) => setBuyEmail(e.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">PO / reference number</span>
+                      <input className="input" value={buyPO} onChange={(e) => setBuyPO(e.target.value)} />
+                    </label>
+                  </div>
+                )}
+              </>
             )}
           </div>
-          <div className="row">
-            <button className="btn" disabled={buyPay === "invoice" && !buyPO.trim()} onClick={buy}>Confirm &amp; buy</button>
-            <button className="btn-outline" onClick={() => setBuyStep("plan")}>Back</button>
-            <button className="btn-outline" onClick={() => setBuying(false)}>Cancel</button>
+
+          <div className="buy-bar">
+            <div className="total">
+              <div className="k">Total</div>
+              <div className="v">{price > 0 ? <>{exMoney(price)} <small>({exMoney(incVat(price))} inc VAT)</small></> : "Free"}</div>
+            </div>
+            {buyStep === "plan" ? (
+              <>
+                <button type="button" className="btn-outline hide-phone" onClick={() => setBuying(false)}>Cancel</button>
+                <button type="button" className="btn btn-accent" onClick={() => (price > 0 ? setBuyStep("payment") : buy())}>
+                  {price > 0 ? "Continue" : "Buy — free"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn-outline hide-phone" onClick={() => setBuyStep("plan")}>Back</button>
+                <button type="button" className="btn btn-accent" disabled={buyPay === "invoice" && !buyPO.trim()} onClick={buy}>Confirm &amp; buy</button>
+              </>
+            )}
           </div>
         </div>
       )}
 
-      {visible.length === 0 && !buying && <div className="muted" style={{ fontSize: 13 }}>No licenses yet — buy one to make this service bookable.</div>}
+      {visible.length === 0 && !buying && <div className="muted small">No licences yet — buy one to make this service bookable.</div>}
 
-      {visible.map((lic, i) => {
-        const meta = LICENSE_STATUS_META[lic.status];
-        return (
-          <div key={lic.id} className="stack" style={{ gap: 6, paddingTop: i === 0 ? 0 : 8, borderTop: i === 0 ? "none" : "1px solid var(--line)" }}>
-            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-              <div className="row" style={{ flexWrap: "wrap" }}>
+      <div>
+        {visible.map((lic) => {
+          const meta = LICENSE_STATUS_META[lic.status];
+          const showMenu = lic.status === "scheduled" || movingId === lic.id;
+          return (
+            <div key={lic.id} className="lic-card">
+              <div className="lic-main">
                 <span className={`badge badge-${meta.color}`}>{meta.label}</span>
-                <strong style={{ fontSize: 13 }}>{lic.plan_label}</strong>
+                <strong style={{ fontSize: 15 }}>{lic.plan_label}</strong>
                 {lic.paid === false && lic.status !== "refunded" && <span className="badge badge-amber">Invoice — awaiting payment</span>}
-                {lic.start_date && <span className="muted" style={{ fontSize: 12 }}>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</span>}
               </div>
-              <div className="row" style={{ flexWrap: "wrap" }}>
+              {lic.start_date && <div className="muted small">{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</div>}
+              <div className="lic-actions">
                 {lic.status === "available" && schedulingId !== lic.id && (
                   <button className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
                     Assign dates
                   </button>
                 )}
-                {lic.status !== "scheduled" && movingId !== lic.id ? null : movingId === lic.id ? (
-                  <select defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
+                {showMenu && (movingId === lic.id ? (
+                  <select aria-label="Move licence to another service" defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
                     <option value="" disabled>Move to…</option>
                     {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 ) : (
-                  <select
-                    className="btn-outline"
-                    defaultValue=""
-                    onChange={(e) => {
-                      const action = e.target.value;
-                      e.target.value = "";
-                      if (action === "move") setMovingId(lic.id);
-                      else if (action === "changeDates") { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }
-                      else if (action === "unschedule") unschedule(lic);
-                    }}
-                  >
-                    <option value="" disabled>Actions</option>
-                    {lic.status === "scheduled" && <option value="changeDates">Change dates</option>}
-                    {lic.status === "scheduled" && <option value="unschedule">Unschedule</option>}
-                    {lic.status === "available" && otherServices.length > 0 && <option value="move">Move License</option>}
-                  </select>
-                )}
+                  <MoreMenu
+                    label="Licence actions"
+                    items={[
+                      lic.status === "scheduled" && { label: "Change dates", onClick: () => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); } },
+                      lic.status === "scheduled" && { label: "Unschedule", onClick: () => unschedule(lic) },
+                      lic.status === "available" && otherServices.length > 0 && { label: "Move License", onClick: () => setMovingId(lic.id) },
+                    ]}
+                  />
+                ))}
               </div>
+              {schedulingId === lic.id && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <label className="field" style={{ maxWidth: 220 }}>
+                    <span className="field-label">Start date</span>
+                    <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  </label>
+                  <span className="muted small">Ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
+                  <div className="form-actions">
+                    <button className="btn" onClick={() => schedule(lic)}>Confirm</button>
+                    <button className="btn-outline" onClick={() => setSchedulingId(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
             </div>
-            {schedulingId === lic.id && (
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                <span className="muted" style={{ fontSize: 12 }}>Start date:</span>
-                <input className="input" type="date" style={{ maxWidth: 160 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                <span className="muted" style={{ fontSize: 12 }}>→ ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
-                <button className="btn" onClick={() => schedule(lic)}>Confirm</button>
-                <button className="btn-outline" onClick={() => setSchedulingId(null)}>Cancel</button>
-              </div>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1617,15 +2031,15 @@ function ServiceCalendar({ service, setError, refreshToken }) {
 
   return (
     <div className="stack">
-      <div className="row" style={{ alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-        <div className="card" style={{ minWidth: 220 }}>
+      <div className="cal-layout">
+        <div className="cal-card">
           <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-            <button className="btn-outline" disabled={overallStart && calendarMonth <= firstOfMonth(overallStart)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
-            <strong style={{ fontSize: 13 }}>{monthLabel(calendarMonth)}</strong>
-            <button className="btn-outline" disabled={overallEnd && calendarMonth >= firstOfMonth(overallEnd)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
+            <button className="btn-outline icon-btn" aria-label="Previous month" disabled={overallStart && calendarMonth <= firstOfMonth(overallStart)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
+            <strong style={{ fontSize: 14 }}>{monthLabel(calendarMonth)}</strong>
+            <button className="btn-outline icon-btn" aria-label="Next month" disabled={overallEnd && calendarMonth >= firstOfMonth(overallEnd)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
           </div>
           <table>
-            <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i} style={{ padding: 2, fontSize: 10 }}>{d}</th>)}</tr></thead>
+            <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i}>{d}</th>)}</tr></thead>
             <tbody>
               {calendarWeeks.map((week, wi) => (
                 <tr key={wi}>
@@ -1637,17 +2051,15 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                     const isSelected = d === selectedDate;
                     const isToday = d === todayIso();
                     return (
-                      <td key={di} style={{ padding: 2 }}>
+                      <td key={di}>
                         <button
+                          type="button"
+                          className={`cal-day${isSelected ? " sel" : count > 0 ? " has" : ""}${isToday ? " today" : ""}`}
                           onClick={() => inWindow && setSelectedDate(d)}
                           disabled={!inWindow}
+                          aria-pressed={isSelected}
+                          aria-label={`${formatDateDisplay(d)}${isToday ? ", today" : ""}${!inWindow ? ", not covered by a licence" : ""}`}
                           title={!inWindow ? "Not covered by a license for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
-                          style={{
-                            width: 26, height: 24, fontSize: 11, borderRadius: 4, border: isToday ? "1.5px solid #1B1D1F" : "1px solid #DEDDD6",
-                            background: isSelected ? "#1D5C8A" : count > 0 ? "#E6EEF3" : "#fff",
-                            color: isSelected ? "#fff" : !inWindow ? "#DEDDD6" : "#1B1D1F",
-                            opacity: inWindow ? 1 : 0.4,
-                          }}
                         >
                           {Number(d.slice(8, 10))}
                         </button>
@@ -1660,49 +2072,54 @@ function ServiceCalendar({ service, setError, refreshToken }) {
           </table>
         </div>
 
-        <div className="stack" style={{ flex: 1, minWidth: 260 }}>
+        <div className="stack grow">
           {selectedDate && (
             <>
-              {(saveStatus === "saving" || saveStatus === "saved" || saveStatus === "error") && (
-                <div className="row" style={{ justifyContent: "flex-end" }}>
-                  {saveStatus === "saving" && <span className="muted" style={{ fontSize: 12 }}>Saving…</span>}
-                  {saveStatus === "saved" && <span style={{ fontSize: 12, color: "#2F6F4E" }}>✓ Saved</span>}
-                  {saveStatus === "error" && <span style={{ fontSize: 12, color: "#B3261E" }}>Save failed</span>}
-                </div>
-              )}
-              <div className="wrap" style={{ userSelect: "none" }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong style={{ fontSize: 14 }}>Hours for {formatDateDisplay(selectedDate)}</strong>
+                <span role="status" aria-live="polite">
+                  {saveStatus === "saving" && <span className="muted small">Saving…</span>}
+                  {saveStatus === "saved" && <span className="small" style={{ color: "#2F6F4E" }}>✓ Saved</span>}
+                  {saveStatus === "error" && <span className="small" style={{ color: "#B3261E" }}>Save failed</span>}
+                </span>
+              </div>
+              <div className="hour-grid">
                 {GRID_HOURS.map((h) => {
                   const open = draftHours.includes(h);
                   const editable = isBlockEditable(h);
                   return (
-                    <span
+                    <button
                       key={h}
+                      type="button"
                       onMouseDown={() => beginPaint(h)}
                       onMouseEnter={() => continuePaint(h)}
-                      className="badge"
+                      onClick={(e) => { if (e.detail === 0 && editable) applyHour(h, !open); }} // keyboard activation only; pointer input is handled on mousedown so dragging can paint a range
+                      className={`hour-chip${open ? " open" : ""}`}
+                      aria-pressed={open}
+                      disabled={!editable}
                       title={!editable && selectedIsToday ? "Already passed" : undefined}
-                      style={{ cursor: editable ? "pointer" : "default", background: open ? "#1D5C8A" : "#F7F7F4", color: open ? "#fff" : "#1B1D1F", opacity: editable ? 1 : 0.5 }}
                     >
                       {formatTime(h)}
-                    </span>
+                    </button>
                   );
                 })}
               </div>
 
               {!selectedIsPast && (
-                <div className="row" style={{ gap: 6 }}>
-                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>This day:</span>
-                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={fillNineToFive}>Set 9–5</button>
-                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={clearDay}>Clear day</button>
+                <div className="wrap">
+                  <span className="muted small" style={{ minWidth: 68 }}>This day:</span>
+                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
+                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
                 </div>
               )}
 
-              <div className="row" style={{ gap: 6 }}>
-                <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Staff:</span>
+              <div className="staff-inputs">
+                <label className="muted small" htmlFor={`staff-${service.id}`} style={{ minWidth: 68 }}>Staff:</label>
                 <input
+                  id={`staff-${service.id}`}
                   className="input"
-                  style={{ width: 60 }}
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   disabled={selectedIsPast}
                   value={staffCount}
@@ -1714,11 +2131,12 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                 />
                 {service.mode === "hybrid" && (
                   <>
-                    <span className="muted" style={{ fontSize: 12 }}>On bookings:</span>
+                    <label className="muted small" htmlFor={`book-${service.id}`}>On bookings:</label>
                     <input
+                      id={`book-${service.id}`}
                       className="input"
-                      style={{ width: 60 }}
                       type="number"
+                      inputMode="numeric"
                       min={0}
                       disabled={selectedIsPast}
                       value={bookingStaffCount}
@@ -1728,11 +2146,12 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                         saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
                       }}
                     />
-                    <span className="muted" style={{ fontSize: 12 }}>On walk-ins:</span>
+                    <label className="muted small" htmlFor={`walk-${service.id}`}>On walk-ins:</label>
                     <input
+                      id={`walk-${service.id}`}
                       className="input"
-                      style={{ width: 60 }}
                       type="number"
+                      inputMode="numeric"
                       min={0}
                       disabled={selectedIsPast}
                       value={walkInStaffCount}
@@ -1747,11 +2166,11 @@ function ServiceCalendar({ service, setError, refreshToken }) {
               </div>
 
               {!selectedIsPast && (
-                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                  <span className="muted" style={{ fontSize: 12, minWidth: 68 }}>Copy to:</span>
-                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToWeek}>Rest of week</button>
-                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToMonth}>Rest of month</button>
-                  <button className="btn-outline" style={{ fontWeight: 400 }} onClick={copyToWholePeriod}>All licensed dates</button>
+                <div className="wrap">
+                  <span className="muted small" style={{ minWidth: 68 }}>Copy to:</span>
+                  <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
+                  <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
+                  <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
                 </div>
               )}
 
@@ -1769,7 +2188,7 @@ const SERVICE_MODE_INFO = [
   { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
 ];
 
-function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, setError, tenant }) {
+function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded, onCancel, setError, tenant }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("hybrid");
@@ -1804,30 +2223,33 @@ function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, set
 
   if (step === 1) {
     return (
-      <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 1 of 3</div>
-        <input className="input" autoFocus placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
-        <div className="stack">
+      <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
+        <h3>New service <span className="muted" style={{ fontSize: 13, fontWeight: 500 }}>— step 1 of 3</span></h3>
+        <label className="field">
+          <span className="field-label">Service name</span>
+          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="stack" role="radiogroup" aria-label="Service type">
           {SERVICE_MODE_INFO.map((m) => (
-            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "#1B1D1F" : undefined }}>
-              <input type="radio" name="mode" checked={mode === m.id} onChange={() => setMode(m.id)} style={{ marginTop: 3 }} />
+            <label key={m.id} className="card row" style={{ cursor: "pointer", alignItems: "flex-start", minHeight: 64, background: mode === m.id ? "#fff" : "transparent", borderColor: mode === m.id ? "var(--ink)" : undefined }}>
+              <input type="radio" name="mode" checked={mode === m.id} onChange={() => setMode(m.id)} style={{ marginTop: 4, width: 20, height: 20, flex: "none" }} />
               <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</div>
-                <div className="muted" style={{ fontSize: 12 }}>{m.text}</div>
+                <div style={{ fontWeight: 600, fontSize: 15 }}>{m.label}</div>
+                <div className="muted small">{m.text}</div>
               </div>
             </label>
           ))}
         </div>
         {needsSlotLength && (
-          <div className="row">
-            <span className="muted">Slot length:</span>
+          <label className="field" style={{ maxWidth: 220 }}>
+            <span className="field-label">Slot length</span>
             <select value={slotMinutes} onChange={(e) => setSlotMinutes(Number(e.target.value))}>
               {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
             </select>
-          </div>
+          </label>
         )}
-        <div className="muted" style={{ fontSize: 11 }}>The name, type, slot length, and location can't be changed after this step — delete and recreate the service if you need to change them later.</div>
-        <div className="row">
+        <div className="muted small">The name, type, slot length, and location can't be changed after this step — delete and recreate the service if you need to change them later.</div>
+        <div className="form-actions">
           <button className="btn" disabled={!name.trim() || creating} onClick={next}>{creating ? "Creating…" : "Next: buy a license →"}</button>
           <button className="btn-outline" onClick={onCancel}>Cancel</button>
         </div>
@@ -1837,11 +2259,11 @@ function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, set
 
   if (step === 2) {
     return (
-      <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>New service — step 2 of 2: buy a license for "{createdService.name}"</div>
-        <div className="muted" style={{ fontSize: 12 }}>This license is bound to this service. Assign it to calendar dates any time from the service's own panel.</div>
+      <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
+        <h3>New service <span className="muted" style={{ fontSize: 13, fontWeight: 500 }}>— step 2 of 2: buy a license for "{createdService.name}"</span></h3>
+        <div className="muted small">This license is bound to this service. Assign it to calendar dates any time from the service's own panel.</div>
         <ServiceLicensesPanel
-          service={createdService} allServices={allServices || []} setError={setError}
+          service={createdService} locationName={locationName} allServices={allServices || []} setError={setError}
           onChanged={() => {}} tenant={tenant} buyTrigger={1} hideHeader
           onBought={() => setStep(3)}
         />
@@ -1850,10 +2272,10 @@ function ServiceWizard({ locationId, allServices, onDone, onAdded, onCancel, set
   }
 
   return (
-    <div className="card stack" style={{ background: "#FBEEDD", border: "1px solid #1B1D1F" }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>"{createdService.name}" is ready</div>
-      <div className="muted" style={{ fontSize: 12 }}>License bought — assign it to calendar dates any time from the service's own panel.</div>
-      <div className="row">
+    <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
+      <h3>"{createdService.name}" is ready</h3>
+      <div className="muted small">License bought — assign it to calendar dates any time from the service's own panel.</div>
+      <div className="form-actions">
         <button className="btn-outline" onClick={addAnother}>+ Add another service</button>
         <button className="btn" onClick={() => onDone(createdService)}>Done</button>
       </div>
