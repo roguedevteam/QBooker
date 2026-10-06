@@ -42,6 +42,11 @@ export const api = {
   deleteMyAccount: () => request("/api/tenant/me", { method: "DELETE" }),
   payNow: (payload) => request("/api/tenant/pay-now", { method: "POST", body: payload }),
 
+  getStaff: () => request("/api/tenant/staff"),
+  addStaff: (body) => request("/api/tenant/staff", { method: "POST", body }),
+  updateStaff: (id, body) => request(`/api/tenant/staff/${id}`, { method: "PATCH", body }),
+  deleteStaff: (id) => request(`/api/tenant/staff/${id}`, { method: "DELETE" }),
+
   getLocations: () => request("/api/tenant/locations"),
   addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),

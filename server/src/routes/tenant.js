@@ -16,6 +16,7 @@ import {
 } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
+import { domainAcceptsMail } from "../lib/emailCheck.js";
 
 const router = Router();
 
@@ -30,16 +31,79 @@ async function loadTenant(req, res, next) {
     return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
   }
   req.tenant = result.rows[0];
+  // A staff session must belong to a staff member who still exists — deleting someone from the
+  // staff list ends their session immediately instead of waiting for the token to expire.
+  if (req.auth.role === "staff") {
+    const staff = req.auth.staffId
+      ? (await query(`select * from staff_members where id=$1 and tenant_id=$2`, [req.auth.staffId, req.auth.tenantId])).rows[0]
+      : null;
+    if (!staff) return res.status(401).json({ error: "Session expired or invalid — please sign in again." });
+    req.staff = staff;
+  }
   next();
 }
 router.use(asyncHandler(loadTenant));
+
+function staffName(req) {
+  return req.staff ? `${req.staff.first_name} ${req.staff.last_name}` : null;
+}
 
 function adminOnly(req, res, next) {
   if (req.auth.role !== "tenant_admin") return res.status(403).json({ error: "Admin only." });
   next();
 }
 
-router.get("/me", (req, res) => res.json({ tenant: sanitizeTenant(req.tenant), staffLocationId: req.auth.role === "staff" ? req.auth.locationId : null }));
+router.get("/me", (req, res) => res.json({
+  tenant: sanitizeTenant(req.tenant),
+  staff: req.staff ? { id: req.staff.id, firstName: req.staff.first_name, lastName: req.staff.last_name, email: req.staff.email } : null,
+}));
+
+// --- Staff users (customer admin manages who can sign in to the staff portal) ----------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+async function validateStaffBody(req, res, { requireAll }) {
+  const first = req.body.firstName?.trim(), last = req.body.lastName?.trim(), email = req.body.email?.trim();
+  if (requireAll && (!first || !last || !email)) { res.status(400).json({ error: "First name, last name and email are all required." }); return null; }
+  if (email !== undefined) {
+    if (!EMAIL_RE.test(email)) { res.status(400).json({ error: "Enter a valid email address." }); return null; }
+    if (!(await domainAcceptsMail(email))) { res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." }); return null; }
+  }
+  return { first, last, email };
+}
+router.get("/staff", adminOnly, asyncHandler(async (req, res) => {
+  const r = await query(`select id, first_name, last_name, email, created_at from staff_members where tenant_id=$1 order by lower(first_name), lower(last_name)`, [req.tenant.id]);
+  res.json({ staff: r.rows });
+}));
+router.post("/staff", adminOnly, asyncHandler(async (req, res) => {
+  const v = await validateStaffBody(req, res, { requireAll: true });
+  if (!v) return;
+  const dup = await query(`select 1 from staff_members where lower(email)=lower($1)`, [v.email]);
+  if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
+  const r = await query(`insert into staff_members (tenant_id, first_name, last_name, email) values ($1,$2,$3,$4) returning id, first_name, last_name, email, created_at`, [req.tenant.id, v.first, v.last, v.email]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Staff user added: ${v.first} ${v.last}`]);
+  res.json({ staff: r.rows[0] });
+}));
+router.patch("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
+  const v = await validateStaffBody(req, res, { requireAll: false });
+  if (!v) return;
+  if (v.email) {
+    const dup = await query(`select 1 from staff_members where lower(email)=lower($1) and id<>$2`, [v.email, req.params.id]);
+    if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
+  }
+  const r = await query(
+    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email)
+     where id=$4 and tenant_id=$5 returning id, first_name, last_name, email, created_at`,
+    [v.first || null, v.last || null, v.email || null, req.params.id, req.tenant.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Staff user updated: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
+  res.json({ staff: r.rows[0] });
+}));
+router.delete("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
+  const r = await query(`delete from staff_members where id=$1 and tenant_id=$2 returning first_name, last_name`, [req.params.id, req.tenant.id]);
+  if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Staff user removed: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
+  res.json({ ok: true });
+}));
 
 // Self-service profile edit — business name, contact name, email, company address and
 // website (website moved here from being per-location — it's a business-wide thing now).
@@ -549,7 +613,7 @@ router.get("/tickets", asyncHandler(async (req, res) => {
   res.json({ tickets: result.rows });
 }));
 
-router.patch("/tickets/:id", asyncHandler(async (req, res) => {
+router.patch("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
   const { status, serviceId, locationId, slotTime, type, hourBlock } = req.body;
   const result = await query(
     `update tickets set
@@ -565,7 +629,7 @@ router.patch("/tickets/:id", asyncHandler(async (req, res) => {
   res.json({ ticket: result.rows[0] });
 }));
 
-router.delete("/tickets/:id", asyncHandler(async (req, res) => {
+router.delete("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
   await query(`delete from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   res.json({ ok: true });
 }));
@@ -580,7 +644,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   // staff covering the same service calling "next" at the same moment can't both land on the
   // same ticket — the loser just sees the next one in line instead.
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$7
+    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$7, called_by_staff_id=$8, called_by_name=$9
      where id = (
        select id from tickets
        where service_id=$1 and tenant_id=$2 and visit_date=$3
@@ -590,7 +654,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
        for update skip locked
      )
      returning *`,
-    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked, roomLabel.trim()]
+    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked, roomLabel.trim(), req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
   const ticket = result.rows[0];
@@ -609,8 +673,8 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$3 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
-    [req.params.id, req.tenant.id, roomLabel.trim()]
+    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    [req.params.id, req.tenant.id, roomLabel.trim(), req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
   const ticket = result.rows[0];
@@ -628,13 +692,13 @@ router.post("/tickets/:id/take-over", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) first." });
   const result = await query(
-    `update tickets set called_room=$3 where id=$1 and tenant_id=$2 and status='seen' and called_at is not null and finished_at is null returning *`,
-    [req.params.id, req.tenant.id, roomLabel.trim()]
+    `update tickets set called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status='seen' and called_at is not null and finished_at is null returning *`,
+    [req.params.id, req.tenant.id, roomLabel.trim(), req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket isn't in progress any more." });
   const t = result.rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${t.ticket_number} taken over by ${roomLabel.trim()}`]);
+    [req.tenant.id, `Ticket ${t.ticket_number} taken over by ${staffName(req) || roomLabel.trim()} (${roomLabel.trim()})`]);
   res.json({ ticket: t });
 }));
 

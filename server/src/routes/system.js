@@ -26,6 +26,29 @@ router.get("/tenants", asyncHandler(async (req, res) => {
   res.json({ tenants: result.rows });
 }));
 
+router.patch("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
+  const first = req.body.firstName?.trim(), last = req.body.lastName?.trim(), email = req.body.email?.trim();
+  if (email !== undefined) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+    const dup = await query(`select 1 from staff_members where lower(email)=lower($1) and id<>$2`, [email, req.params.staffId]);
+    if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
+  }
+  const r = await query(
+    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email)
+     where id=$4 and tenant_id=$5 returning id, first_name, last_name, email, created_at`,
+    [first || null, last || null, email || null, req.params.staffId, req.params.id]
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.params.id, `Staff user updated by platform admin: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
+  res.json({ staff: r.rows[0] });
+}));
+router.delete("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
+  const r = await query(`delete from staff_members where id=$1 and tenant_id=$2 returning first_name, last_name`, [req.params.staffId, req.params.id]);
+  if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.params.id, `Staff user removed by platform admin: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
+  res.json({ ok: true });
+}));
+
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   const { businessName, firstName, lastName, email, companyAddress, locationCount, status } = req.body;
   const result = await query(
@@ -89,7 +112,8 @@ router.get("/tenants/:id/detail", asyncHandler(async (req, res) => {
   }
   licenses.sort((a, b) => new Date(b.purchased_at) - new Date(a.purchased_at));
 
-  res.json({ tenant, locations, services, licenses });
+  const staff = (await query(`select id, first_name, last_name, email, created_at from staff_members where tenant_id=$1 order by lower(first_name), lower(last_name)`, [req.params.id])).rows;
+  res.json({ tenant, locations, services, licenses, staff });
 }));
 
 router.patch("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {

@@ -27,8 +27,8 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
 export const api = {
   getClock: () => request("/api/public/clock", { auth: false }),
 
-  requestStaffOtp: (accessCode) => request("/api/auth/staff/request-otp", { method: "POST", body: { accessCode }, auth: false }),
-  verifyStaffOtp: (accessCode, code) => request("/api/auth/staff/verify-otp", { method: "POST", body: { accessCode, code }, auth: false }),
+  requestStaffOtp: (email) => request("/api/auth/staff/request-otp", { method: "POST", body: { email }, auth: false }),
+  verifyStaffOtp: (email, code) => request("/api/auth/staff/verify-otp", { method: "POST", body: { email, code }, auth: false }),
 
   me: () => request("/api/tenant/me"),
   getLocations: () => request("/api/tenant/locations"),

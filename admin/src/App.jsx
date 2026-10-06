@@ -382,6 +382,51 @@ function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
   );
 }
 
+// Staff users on this customer's account — platform admin can correct or remove them.
+function StaffUsers({ tenantId, staff, onChanged, setError }) {
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState({ firstName: "", lastName: "", email: "" });
+  async function save(id) {
+    try { await api.updateTenantStaff(tenantId, id, edit); setEditId(null); onChanged(); } catch (err) { setError(err.message); }
+  }
+  async function remove(m) {
+    if (!confirm(`Remove ${m.first_name} ${m.last_name} from this account? They'll be signed out of the staff portal.`)) return;
+    try { await api.deleteTenantStaff(tenantId, m.id); onChanged(); } catch (err) { setError(err.message); }
+  }
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>Staff users ({staff.length})</div>
+      <div className="card">
+        <table>
+          <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th></th></tr></thead>
+          <tbody>
+            {staff.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff users on this account.</td></tr>}
+            {staff.map((m) => editId === m.id ? (
+              <tr key={m.id}>
+                <td><input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
+                <td><input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
+                <td><input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
+                <td className="row">
+                  <button className="btn" disabled={!edit.firstName.trim() || !edit.lastName.trim() || !edit.email.trim()} onClick={() => save(m.id)}>Save</button>
+                  <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={m.id}>
+                <td>{m.first_name}</td><td>{m.last_name}</td><td>{m.email}</td>
+                <td className="row">
+                  <button className="btn-outline" onClick={() => { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }}>Edit</button>
+                  <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => remove(m)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState("");
@@ -442,7 +487,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
   useEffect(() => { load(); }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!detail) return <div className="card muted">Loading…</div>;
-  const { tenant, locations, services, licenses } = detail;
+  const { tenant, locations, services, licenses, staff = [] } = detail;
   const servicesByLocation = (locId) => services.filter((s) => s.location_id === locId);
   const licensesByService = (svcId) => licenses.filter((l) => l.service_id === svcId);
 
@@ -516,6 +561,8 @@ function CustomerDetail({ tenantId, onBack, setError }) {
           </button>
         </div>
       </div>
+
+      <StaffUsers tenantId={tenant.id} staff={staff} onChanged={load} setError={setError} />
 
       <div className="stack" style={{ gap: 2 }}>
         <div style={{ fontWeight: 600, fontSize: 14 }}>Locations, services &amp; licenses</div>

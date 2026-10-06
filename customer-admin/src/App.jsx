@@ -321,7 +321,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
     <div className="container stack">
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <div className="wrap">
-          {["dashboard", "locations", "profile", "audit"].map((t) => (
+          {["dashboard", "locations", "staff", "profile", "audit"].map((t) => (
             <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => { setTab(t); if (t === "dashboard") refreshQueue(); if (t === "audit") refreshAudit(); if (t === "profile") refreshLicenses(); }}>{t === "profile" ? "account" : t}</button>
           ))}
         </div>
@@ -363,8 +363,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                       onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
                       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
                     />
-                    <code style={{ fontSize: 12, letterSpacing: 1, background: "#F7F7F4", padding: "2px 8px", borderRadius: 4 }}>{loc.staff_access_code || "—"}</code>
-                    <CopyButton value={loc.staff_access_code} />
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="row">
@@ -427,6 +425,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
 
       {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
           until "shop" is added back to the tab list above. */}
+      {tab === "staff" && <StaffTab staffAppUrl={STAFF_APP_URL} setError={setError} />}
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
       {tab === "dashboard" && (
@@ -571,6 +570,95 @@ function splitAddress(combined) {
 }
 function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+// Named staff users. Each person signs in to the staff portal with their email plus a code sent to
+// it, and every ticket they call is recorded against their name.
+function StaffTab({ staffAppUrl, setError }) {
+  const [staff, setStaff] = useState(null);
+  const [form, setForm] = useState({ firstName: "", lastName: "", email: "" });
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState({ firstName: "", lastName: "", email: "" });
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try { const r = await api.getStaff(); setStaff(r.staff); } catch (err) { setError(err.message); }
+  }
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function add() {
+    setBusy(true);
+    try { await api.addStaff(form); setForm({ firstName: "", lastName: "", email: "" }); setAdding(false); await load(); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  async function save(id) {
+    setBusy(true);
+    try { await api.updateStaff(id, edit); setEditId(null); await load(); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  async function remove(m) {
+    if (!confirm(`Remove ${m.first_name} ${m.last_name}? They'll be signed out and won't be able to sign in to the staff portal.`)) return;
+    try { await api.deleteStaff(m.id); await load(); } catch (err) { setError(err.message); }
+  }
+
+  return (
+    <div className="stack">
+      <div className="card stack">
+        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div className="stack" style={{ gap: 2 }}>
+            <strong>Staff</strong>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Add everyone who needs to call customers forward. They sign in to the staff portal with their email address and a code sent to it.
+              {staffAppUrl && <> Staff portal: <a href={staffAppUrl} target="_blank" rel="noreferrer">{staffAppUrl}</a></>}
+            </span>
+          </div>
+          {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add staff member</button>}
+        </div>
+        {adding && (
+          <div className="wrap" style={{ alignItems: "flex-end" }}>
+            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>First name</span>
+              <input className="input" style={{ width: 150 }} value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></label>
+            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>Last name</span>
+              <input className="input" style={{ width: 150 }} value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></label>
+            <label className="stack" style={{ gap: 2 }}><span className="muted" style={{ fontSize: 11 }}>Email address</span>
+              <input className="input" type="email" style={{ width: 240 }} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+            <button className="btn" disabled={busy || !form.firstName.trim() || !form.lastName.trim() || !form.email.trim()} onClick={add}>{busy ? "Adding…" : "Add"}</button>
+            <button className="btn-outline" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <table>
+          <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th></th></tr></thead>
+          <tbody>
+            {staff === null && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>Loading…</td></tr>}
+            {staff && staff.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff yet — add your first staff member above.</td></tr>}
+            {staff && staff.map((m) => editId === m.id ? (
+              <tr key={m.id}>
+                <td><input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
+                <td><input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
+                <td><input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
+                <td className="row" style={{ justifyContent: "flex-end" }}>
+                  <button className="btn" disabled={busy || !edit.firstName.trim() || !edit.lastName.trim() || !edit.email.trim()} onClick={() => save(m.id)}>Save</button>
+                  <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={m.id}>
+                <td>{m.first_name}</td><td>{m.last_name}</td><td>{m.email}</td>
+                <td className="row" style={{ justifyContent: "flex-end" }}>
+                  <button className="btn-outline" onClick={() => { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }}>Edit</button>
+                  <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => remove(m)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLicensesChanged, setError, staffAppUrl, customerLink }) {
@@ -776,7 +864,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
       <div className="card stack" style={{ background: "#FBEEDD" }}>
         <div style={{ fontSize: 13 }}>Staff Kiosk link: <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4 }}>{staffAppUrl}</code></div>
         <div className="muted" style={{ fontSize: 12 }}>
-          Each location has its own sign-in code (open it in the Locations tab) — share that location's code with the staff working there.
+          Staff sign in with their own email address and a code sent to it. Add them in the Staff tab.
         </div>
         <div className="row" style={{ flexWrap: "wrap" }}>
           <span style={{ fontSize: 13 }}>Customer link:</span>

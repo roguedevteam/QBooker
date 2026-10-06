@@ -177,41 +177,48 @@ router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
   res.json({ token, tenant: sanitizeTenant(tenant) });
 }));
 
-// --- Staff OTP login ---------------------------------------------------------
+// --- Staff login: email + emailed code (staff are named users on the customer's staff list) ---
+const MAX_OTP_ATTEMPTS = 5;
 router.post("/staff/request-otp", asyncHandler(async (req, res) => {
-  const { accessCode } = req.body;
-  const locResult = await query(`select * from locations where staff_access_code = $1`, [accessCode]);
-  if (locResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any location." });
-  const location = locResult.rows[0];
-  const tenantCheck = await query(`select status from tenants where id=$1`, [location.tenant_id]);
-  if (tenantCheck.rows[0]?.status === "disabled") {
-    return res.status(403).json({ error: "This account has been disabled — contact your manager." });
+  const email = (req.body.email || "").trim();
+  const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
+  if (staff) {
+    const tenant = (await query(`select status from tenants where id=$1`, [staff.tenant_id])).rows[0];
+    if (tenant?.status === "disabled") {
+      return res.status(403).json({ error: "This account has been disabled — contact your manager." });
+    }
+    const code = genOtp();
+    await query(`insert into staff_otp (tenant_id, staff_id, code, expires_at) values ($1,$2,$3, now() + interval '10 minutes')`, [staff.tenant_id, staff.id, code]);
+    const body = `Your QBooker staff sign-in code is ${code}.`;
+    await logSimulatedMessage({ tenantId: staff.tenant_id, channel: "email", toReference: staff.email, body });
+    // Demo only: real email delivery isn't wired up yet, so the code is returned for testing.
+    return res.json({ ok: true, demoOtp: code });
   }
-  const code = genOtp();
-  await query(`insert into staff_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [location.tenant_id, code]);
-  const body = `Your QBooker staff sign-in code is ${code}.`;
-  await logSimulatedMessage({ tenantId: location.tenant_id, channel: "email", toReference: "staff", body });
-  res.json({ demoOtp: code });
+  // Same response whether or not the address is registered, so it can't be used to find out who is.
+  res.json({ ok: true });
 }));
 
 router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
-  const { accessCode, code } = req.body;
-  const locResult = await query(`select * from locations where staff_access_code = $1`, [accessCode]);
-  if (locResult.rows.length === 0) return res.status(404).json({ error: "That access code doesn't match any location." });
-  const location = locResult.rows[0];
-  const tenantResult = await query(`select * from tenants where id = $1`, [location.tenant_id]);
-  const tenant = tenantResult.rows[0];
+  const email = (req.body.email || "").trim();
+  const code = (req.body.code || "").trim();
+  const bad = () => res.status(401).json({ error: "Incorrect or expired code." });
+  const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
+  if (!staff) return bad();
+  const tenant = (await query(`select * from tenants where id=$1`, [staff.tenant_id])).rows[0];
   if (tenant.status === "disabled") {
     return res.status(403).json({ error: "This account has been disabled — contact your manager." });
   }
-  const otpResult = await query(
-    `select * from staff_otp where tenant_id=$1 and code=$2 and consumed=false and expires_at > now() order by created_at desc limit 1`,
-    [tenant.id, code]
-  );
-  if (otpResult.rows.length === 0) return res.status(401).json({ error: "Incorrect or expired code." });
-  await query(`update staff_otp set consumed=true where id=$1`, [otpResult.rows[0].id]);
-  const token = signSession({ role: "staff", tenantId: tenant.id, locationId: location.id }, "10h");
-  res.json({ token, tenant: sanitizeTenant(tenant), location: { id: location.id, name: location.name } });
+  const latest = (await query(
+    `select * from staff_otp where staff_id=$1 and consumed=false and expires_at > now() order by created_at desc limit 1`, [staff.id]
+  )).rows[0];
+  if (!latest || latest.attempts >= MAX_OTP_ATTEMPTS) return res.status(401).json({ error: "Incorrect or expired code — request a new one." });
+  if (latest.code !== code) {
+    await query(`update staff_otp set attempts = attempts + 1 where id=$1`, [latest.id]);
+    return bad();
+  }
+  await query(`update staff_otp set consumed=true where id=$1`, [latest.id]);
+  const token = signSession({ role: "staff", tenantId: tenant.id, staffId: staff.id }, "10h");
+  res.json({ token, tenant: sanitizeTenant(tenant), staff: { id: staff.id, firstName: staff.first_name, lastName: staff.last_name } });
 }));
 
 // --- System admin login (real password, not simulated) -----------------------

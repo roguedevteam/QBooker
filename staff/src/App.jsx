@@ -33,6 +33,7 @@ function Logo({ size = 24, dark = false }) {
 
 export default function App() {
   const [tenant, setTenant] = useState(null);
+  const [staff, setStaff] = useState(null); // { id, firstName, lastName }
   const [locationId, setLocationId] = useState(null);
   const [error, setError] = useState("");
   const [restoring, setRestoring] = useState(true);
@@ -44,7 +45,7 @@ export default function App() {
         try {
           const r = await api.me();
           setTenant(r.tenant);
-          setLocationId(r.staffLocationId || null);
+          setStaff(r.staff);
         } catch {
           setToken(null);
         }
@@ -67,46 +68,76 @@ export default function App() {
       </div>
       {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
-      {!tenant && <StaffLogin onSignedIn={(t, locId) => { setTenant(t); setLocationId(locId); }} setError={setError} />}
-      {tenant && <StaffKiosk tenant={tenant} locationId={locationId} setError={setError} onSignOut={() => { setToken(null); setTenant(null); setLocationId(null); }} />}
+      {!tenant && <StaffLogin onSignedIn={(t, st) => { setTenant(t); setStaff(st); }} setError={setError} />}
+      {tenant && !locationId && <LocationPicker staff={staff} onPick={setLocationId} onSignOut={() => { setToken(null); setTenant(null); setStaff(null); }} setError={setError} />}
+      {tenant && locationId && <StaffKiosk tenant={tenant} staff={staff} locationId={locationId} setError={setError} onSignOut={() => { setToken(null); setTenant(null); setStaff(null); setLocationId(null); }} />}
     </div>
   );
 }
 
 function StaffLogin({ onSignedIn, setError }) {
-  const [step, setStep] = useState("code");
-  const [accessCode, setAccessCode] = useState("");
+  const [step, setStep] = useState("email");
+  const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [demoOtp, setDemoOtp] = useState(null);
 
   async function sendCode() {
     setError("");
-    try { const r = await api.requestStaffOtp(accessCode); setDemoOtp(r.demoOtp); setStep("otp"); } catch (err) { setError(err.message); }
+    try { const r = await api.requestStaffOtp(email); setDemoOtp(r.demoOtp || null); setStep("otp"); } catch (err) { setError(err.message); }
   }
   async function verify() {
     setError("");
     try {
-      const r = await api.verifyStaffOtp(accessCode, otp);
+      const r = await api.verifyStaffOtp(email, otp);
       setToken(r.token);
-      onSignedIn(r.tenant, r.location?.id || null);
+      onSignedIn(r.tenant, r.staff);
     } catch (err) { setError(err.message); }
   }
 
   return (
     <div className="narrow card stack">
       <h3>Staff sign-in</h3>
-      <p className="muted" style={{ fontSize: 12 }}>Use the sign-in code for your location — shown to your manager in the Locations tab.</p>
-      {step === "code" && <><input className="input" placeholder="Access code" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} /><button className="btn" onClick={sendCode}>Continue</button></>}
+      <p className="muted" style={{ fontSize: 12 }}>Sign in with the email address your manager added you with. We'll send you a code.</p>
+      {step === "email" && <>
+        <input className="input" type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && email.trim()) sendCode(); }} />
+        <button className="btn" disabled={!email.trim()} onClick={sendCode}>Send code</button>
+      </>}
       {step === "otp" && <>
-        <div className="muted">Demo code: <strong>{demoOtp}</strong></div>
-        <input className="input" placeholder="6-digit code" value={otp} onChange={(e) => setOtp(e.target.value)} />
-        <button className="btn" onClick={verify}>Verify</button>
+        <div className="muted" style={{ fontSize: 13 }}>If that email is registered, a code has been sent to it.</div>
+        {demoOtp && <div className="muted">Demo code: <strong>{demoOtp}</strong></div>}
+        <input className="input" placeholder="6-digit code" value={otp} onChange={(e) => setOtp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && otp.trim()) verify(); }} />
+        <div className="row">
+          <button className="btn" disabled={!otp.trim()} onClick={verify}>Verify</button>
+          <button className="btn-outline" onClick={() => { setStep("email"); setOtp(""); }}>Use a different email</button>
+        </div>
       </>}
     </div>
   );
 }
 
-function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
+// After signing in, staff choose which location they're working at today (one location is picked automatically).
+function LocationPicker({ staff, onPick, onSignOut, setError }) {
+  const [locations, setLocations] = useState(null);
+  useEffect(() => {
+    api.getLocations().then((r) => {
+      const active = r.locations.filter((l) => !l.archived);
+      setLocations(active);
+      if (active.length === 1) onPick(active[0].id);
+    }).catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!locations) return <div className="container muted" style={{ textAlign: "center", paddingTop: 40 }}>Loading…</div>;
+  return (
+    <div className="narrow card stack">
+      <h3>Hi {staff?.firstName} — where are you working today?</h3>
+      {locations.length === 0 && <div className="muted">No locations have been set up yet — ask your manager.</div>}
+      {locations.map((l) => <button key={l.id} className="btn-outline" onClick={() => onPick(l.id)}>{l.name}</button>)}
+      <button className="btn-outline" onClick={onSignOut}>Sign out</button>
+    </div>
+  );
+}
+
+function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [serviceIds, setServiceIds] = useState([]);
@@ -202,9 +233,8 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   // routed), staff can't call anyone else.
   // Who is being served is kept on the server (ticket.called_room), not in this browser, so a
   // staff member whose browser closed picks straight back up by entering the same room name.
-  const norm = (x) => (x || "").trim().toLowerCase();
   const inProgress = tickets.filter((t) => t.status === "seen" && t.called_at && !t.finished_at && locServices.some((x) => x.id === t.service_id));
-  const mine = roomSet ? inProgress.filter((t) => norm(t.called_room) === norm(room)) : [];
+  const mine = inProgress.filter((t) => t.called_by_staff_id === staff?.id);
   const elsewhere = inProgress.filter((t) => !mine.includes(t));
   const nowServing = Object.fromEntries(mine.map((t) => [t.service_id, t]));
   const busy = mine.length > 0;
@@ -226,7 +256,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}{staff ? ` · ${staff.firstName} ${staff.lastName}` : ""}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
         <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
@@ -237,11 +267,11 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
         <div className="card stack" style={{ borderColor: "var(--accent)" }}>
           <strong style={{ fontSize: 13 }}>In progress with another room</strong>
           <div className="muted" style={{ fontSize: 12 }}>
-            If one of these is yours (you closed the page or came back later), enter the same room name above and it will reappear here as yours. If the person has left, take it over to finish or release it.
+            These are being served by someone else. If they've left or closed the page, you can take a ticket over to finish or release it.
           </div>
           {elsewhere.map((t) => (
             <div key={t.id} className="row" style={{ justifyContent: "space-between" }}>
-              <span><strong>{t.ticket_number}</strong> · {services.find((x) => x.id === t.service_id)?.name} · {t.called_room || "no room"} · called {formatClock(t.called_at)}</span>
+              <span><strong>{t.ticket_number}</strong> · {services.find((x) => x.id === t.service_id)?.name} · {t.called_by_name || "unknown"}{t.called_room ? ` (${t.called_room})` : ""} · called {formatClock(t.called_at)}</span>
               <button className="btn-outline" disabled={!roomSet || busy || calling} onClick={() => takeOver(t)}>Take over</button>
             </div>
           ))}
@@ -308,9 +338,9 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
         </button>
         {showSeen && (
           <table>
-            <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Status</th></tr></thead>
+            <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Served by</th><th>Status</th></tr></thead>
             <tbody>
-              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 6 : 5} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody seen yet today.</td></tr>}
+              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 7 : 6} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody seen yet today.</td></tr>}
               {doneList.map((t) => (
                 <tr key={t.id}>
                   <td>{t.ticket_number}</td>
@@ -318,6 +348,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
                   <td>{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
                   <td>{t.called_at ? formatClock(t.called_at) : "—"}</td>
                   <td>{t.finished_at ? formatClock(t.finished_at) : t.status === "seen" ? "In progress" : "—"}</td>
+                  <td>{t.called_by_name || "—"}</td>
                   <td><span className={`badge badge-${t.status === "seen" ? "green" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
                 </tr>
               ))}
