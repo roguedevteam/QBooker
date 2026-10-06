@@ -150,7 +150,23 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
       const r = await api.callNext(serviceId, { date, clockMinutes: nowMinutes(), roomLabel: room });
       setNowServing((prev) => ({ ...prev, [serviceId]: r.ticket }));
       refreshTickets();
-    } catch (err) { setError(err.message); }
+    } catch (err) {
+      // Someone else got there first (or the queue just emptied) — not an error worth shouting about.
+      if (err.message === "Nobody left to call.") refreshTickets(); else setError(err.message);
+    }
+  }
+  // Call a specific ticket out of turn from the list below.
+  async function callSpecific(t) {
+    try {
+      const r = await api.callTicket(t.id, { roomLabel: room });
+      setNowServing((prev) => ({ ...prev, [t.service_id]: r.ticket }));
+      refreshTickets();
+    } catch (err) { setError(err.message); refreshTickets(); }
+  }
+  // Is there anyone the "Call next" button could actually call right now? Mirrors the server's rule.
+  function hasWaiting(serviceId) {
+    const mins = nowMinutes();
+    return tickets.some((t) => t.service_id === serviceId && ((t.type === "walk_in" && t.status === "waiting") || (t.type === "booked" && t.status === "booked" && t.slot_time <= mins)));
   }
   async function doAction(fn, serviceId) {
     try { await fn(); setNowServing((prev) => { const next = { ...prev }; delete next[serviceId]; return next; }); refreshTickets(); } catch (err) { setError(err.message); }
@@ -175,7 +191,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
             <div>{s.name}</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1B1D1F" }}>{serving?.ticket_number || "—"}</div>
             {serving && <div style={{ fontSize: 13 }}>{room.trim() ? `📍 ${room.trim()}` : "Now serving"}</div>}
-            <button className="btn" onClick={() => callNext(s.id)}>Call next ticket</button>
+            <button className="btn" disabled={!hasWaiting(s.id)} onClick={() => callNext(s.id)}>{hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
             {serving && (
               <div className="stack">
                 <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
@@ -202,15 +218,16 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}><strong style={{ fontSize: 13 }}>Today's tickets &amp; appointments</strong><button className="btn-outline" onClick={refreshTickets}>Refresh</button></div>
         <table>
-          <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Type/time</th><th>Status</th></tr></thead>
+          <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Type/time</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {myTickets.length === 0 && <tr><td colSpan={showServiceCol ? 4 : 3} className="muted" style={{ textAlign: "center", padding: 12 }}>Nothing yet today.</td></tr>}
+            {myTickets.length === 0 && <tr><td colSpan={showServiceCol ? 5 : 4} className="muted" style={{ textAlign: "center", padding: 12 }}>Nothing yet today.</td></tr>}
             {myTickets.map((t) => (
               <tr key={t.id}>
                 <td>{t.ticket_number}</td>
                 {showServiceCol && <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>}
                 <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
                 <td><span className={`badge badge-${t.status === "seen" ? "green" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status}</span></td>
+                <td style={{ textAlign: "right" }}>{(t.status === "waiting" || t.status === "booked") && <button className="btn-outline" onClick={() => callSpecific(t)}>Call</button>}</td>
               </tr>
             ))}
           </tbody>

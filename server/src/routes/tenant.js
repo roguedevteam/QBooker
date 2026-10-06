@@ -598,6 +598,25 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   res.json({ ticket: { ...ticket, status: "seen" }, message: body });
 }));
 
+// Call one specific ticket out of turn (e.g. someone urgent, or a booked patient who's arrived
+// early). Same atomic claim as call-next: only a ticket that's still waiting/booked can be taken,
+// so two staff clicking the same row can't both call it.
+router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
+  const { roomLabel } = req.body;
+  const result = await query(
+    `update tickets set status='seen' where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    [req.params.id, req.tenant.id]
+  );
+  if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
+  const ticket = result.rows[0];
+  const roomText = roomLabel?.trim() ? `Please come to ${roomLabel.trim()}.` : "No location has been given yet — please check with a member of staff.";
+  const body = `It's your turn! ${roomText}`;
+  await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `Ticket ${ticket.ticket_number} called forward out of turn — WhatsApp ping sent: "${roomText}"`]);
+  res.json({ ticket, message: body });
+}));
+
 router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
