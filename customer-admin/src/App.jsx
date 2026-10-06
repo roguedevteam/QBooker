@@ -491,7 +491,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     <td>{t.ticket_number}</td>
                     <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>
                     <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
-                    <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status === "no_show" ? "no-show" : t.status}{t.arrived_at && t.status === "booked" ? " · arrived" : ""}</span></td>
+                    <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status === "no_show" ? "no-show" : t.status}{t.arrived_at && t.status === "booked" ? " · checked in" : ""}</span></td>
                     <td className="row">
                       <select onChange={async (e) => { if (e.target.value) { await api.updateTicket(t.id, { serviceId: e.target.value }); refreshQueue(); } }}>
                         <option value="">Move to…</option>

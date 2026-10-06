@@ -301,7 +301,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
                 {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
                 <td>
                   {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
-                  {t.type === "booked" && t.arrived_at && <span className="badge badge-green" style={{ marginLeft: 6 }}>Arrived {formatClock(t.arrived_at)}</span>}
+                  {t.type === "booked" && t.arrived_at && <span className="badge badge-green" style={{ marginLeft: 6 }}>Checked in {formatClock(t.arrived_at)}</span>}
                   {t.type === "booked" && t.slot_time > nowMinutes() && <span className="muted" style={{ fontSize: 11 }}> (not due yet)</span>}
                 </td>
                 <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!canCall} title={!roomSet ? "Set your room first" : busy ? "Finish your current ticket first" : undefined} onClick={() => callSpecific(t)}>Call</button></td>
