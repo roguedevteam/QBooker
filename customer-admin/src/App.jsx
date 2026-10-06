@@ -475,7 +475,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
             <div className="wrap">
               <div className="card">{stats.waiting}<div className="muted" style={{ fontSize: 11 }}>Waiting</div></div>
               <div className="card">{stats.booked}<div className="muted" style={{ fontSize: 11 }}>Booked</div></div>
-              <div className="card">{stats.seen}<div className="muted" style={{ fontSize: 11 }}>Seen today</div></div>
+              <div className="card">{stats.serving}<div className="muted" style={{ fontSize: 11 }}>Serving</div></div>
+              <div className="card">{stats.completed}<div className="muted" style={{ fontSize: 11 }}>Completed</div></div>
               <div className="card">{stats.no_show}<div className="muted" style={{ fontSize: 11 }}>No-show</div></div>
               <div className="card">{stats.cancelled}<div className="muted" style={{ fontSize: 11 }}>Cancelled</div></div>
             </div>
@@ -490,7 +491,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     <td>{t.ticket_number}</td>
                     <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>
                     <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
-                    <td><span className={`badge badge-${t.status === "seen" ? "green" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status}</span></td>
+                    <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status === "no_show" ? "no-show" : t.status}{t.arrived_at && t.status === "booked" ? " · arrived" : ""}</span></td>
                     <td className="row">
                       <select onChange={async (e) => { if (e.target.value) { await api.updateTicket(t.id, { serviceId: e.target.value }); refreshQueue(); } }}>
                         <option value="">Move to…</option>

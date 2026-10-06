@@ -7,9 +7,9 @@ import { getToday } from "./clock.js";
 export async function closeStaleTickets() {
   const result = await query(
     `update tickets
-       set finished_at = ((visit_date + 1)::timestamp at time zone 'Europe/London') - interval '1 second',
+       set status = 'completed', finished_at = ((visit_date + 1)::timestamp at time zone 'Europe/London') - interval '1 second',
            closed_by_system = true
-     where status = 'seen' and called_at is not null and finished_at is null and visit_date < $1
+     where status = 'serving' and called_at is not null and finished_at is null and visit_date < $1
      returning tenant_id, ticket_number, visit_date`,
     [getToday()]
   );

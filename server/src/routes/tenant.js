@@ -646,7 +646,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   // staff covering the same service calling "next" at the same moment can't both land on the
   // same ticket — the loser just sees the next one in line instead.
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$7, called_by_staff_id=$8, called_by_name=$9
+    `update tickets set status='serving', called_at=now(), finished_at=null, called_room=$7, called_by_staff_id=$8, called_by_name=$9
      where id = (
        select id from tickets
        where service_id=$1 and tenant_id=$2 and visit_date=$3
@@ -665,7 +665,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward — WhatsApp ping sent: "${roomText}"`]);
-  res.json({ ticket: { ...ticket, status: "seen" }, message: body });
+  res.json({ ticket: { ...ticket, status: "serving" }, message: body });
 }));
 
 // Call one specific ticket out of turn (e.g. someone urgent, or a booked patient who's arrived
@@ -675,7 +675,7 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    `update tickets set status='serving', called_at=now(), finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
     [req.params.id, req.tenant.id, roomLabel.trim(), req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
@@ -773,7 +773,7 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
   const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
   const ticket = ticketResult.rows[0];
-  await query(`update tickets set finished_at=coalesce(finished_at, now()) where id=$1`, [ticket.id]);
+  await query(`update tickets set status='completed', finished_at=coalesce(finished_at, now()) where id=$1`, [ticket.id]);
   const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${service?.name || "service"}`]);
@@ -860,7 +860,7 @@ router.get("/dashboard/stats", asyncHandler(async (req, res) => {
     `select status, count(*) from tickets where tenant_id=$1 and visit_date=$2 group by status`,
     [req.tenant.id, date || new Date().toISOString().slice(0, 10)]
   );
-  const stats = { waiting: 0, booked: 0, seen: 0, no_show: 0, cancelled: 0 };
+  const stats = { waiting: 0, booked: 0, serving: 0, completed: 0, no_show: 0, cancelled: 0 };
   result.rows.forEach((r) => { stats[r.status] = Number(r.count); });
   res.json({ stats });
 }));

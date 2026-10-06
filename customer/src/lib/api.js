@@ -22,5 +22,6 @@ export const api = {
   createTicket: (tenantId, serviceId, payload) =>
     request(`/api/public/tenant/${tenantId}/services/${serviceId}/tickets`, { method: "POST", body: payload }),
   getTicketStatus: (tenantId, ticketId) => request(`/api/public/tenant/${tenantId}/tickets/${ticketId}/status`),
+  checkIn: (tenantId, ticketId) => request(`/api/public/tenant/${tenantId}/tickets/${ticketId}/check-in`, { method: "POST" }),
   cancelTicket: (tenantId, ticketId) => request(`/api/public/tenant/${tenantId}/tickets/${ticketId}/cancel`, { method: "POST" }),
 };

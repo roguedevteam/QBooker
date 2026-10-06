@@ -228,7 +228,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   // routed), staff can't call anyone else.
   // Who is being served is kept on the server (ticket.called_room), not in this browser, so a
   // staff member whose browser closed picks straight back up by entering the same room name.
-  const inProgress = tickets.filter((t) => t.status === "seen" && t.called_at && !t.finished_at && locServices.some((x) => x.id === t.service_id));
+  const inProgress = tickets.filter((t) => t.status === "serving" && locServices.some((x) => x.id === t.service_id));
   const mine = inProgress.filter((t) => t.called_by_staff_id === staff?.id);
   const nowServing = Object.fromEntries(mine.map((t) => [t.service_id, t]));
   const busy = mine.length > 0;
@@ -301,6 +301,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
                 {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
                 <td>
                   {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
+                  {t.type === "booked" && t.arrived_at && <span className="badge badge-green" style={{ marginLeft: 6 }}>Arrived {formatClock(t.arrived_at)}</span>}
                   {t.type === "booked" && t.slot_time > nowMinutes() && <span className="muted" style={{ fontSize: 11 }}> (not due yet)</span>}
                 </td>
                 <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!canCall} title={!roomSet ? "Set your room first" : busy ? "Finish your current ticket first" : undefined} onClick={() => callSpecific(t)}>Call</button></td>
@@ -312,23 +313,23 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
 
       <div className="card stack">
         <button type="button" className="row" style={{ justifyContent: "space-between", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }} onClick={() => setShowSeen((v) => !v)} aria-expanded={showSeen}>
-          <strong style={{ fontSize: 13 }}>Seen &amp; closed today ({doneList.length})</strong>
+          <strong style={{ fontSize: 13 }}>Completed &amp; closed today ({doneList.length})</strong>
           <span className="muted" style={{ fontSize: 12 }}>{showSeen ? "Hide ▲" : "Show ▼"}</span>
         </button>
         {showSeen && (
           <table>
             <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Served by</th><th>Status</th></tr></thead>
             <tbody>
-              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 7 : 6} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody seen yet today.</td></tr>}
+              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 7 : 6} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody completed yet today.</td></tr>}
               {doneList.map((t) => (
                 <tr key={t.id}>
                   <td>{t.ticket_number}</td>
                   {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
                   <td>{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
                   <td>{t.called_at ? formatClock(t.called_at) : "—"}</td>
-                  <td>{t.closed_by_system ? "System closed" : t.finished_at ? formatClock(t.finished_at) : t.status === "seen" ? "In progress" : "—"}</td>
+                  <td>{t.closed_by_system ? "System closed" : t.finished_at ? formatClock(t.finished_at) : t.status === "serving" ? "In progress" : "—"}</td>
                   <td>{t.called_by_name || "—"}</td>
-                  <td><span className={`badge badge-${t.status === "seen" ? "green" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
+                  <td><span className={`badge badge-${t.status === "completed" ? "green" : t.status === "serving" ? "amber" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
                 </tr>
               ))}
             </tbody>

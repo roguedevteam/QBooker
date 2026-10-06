@@ -53,6 +53,8 @@ function CustomerWhatsApp({ tenantId }) {
   const [ticketStatus, setTicketStatus] = useState(null);
   const [queueInfo, setQueueInfo] = useState(null); // { position, estimatedMinutes } — walk-ins only
   const [cancelling, setCancelling] = useState(false);
+  const [arrived, setArrived] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
   const lastStatusRef = useRef(null);
   const reminderSentRef = useRef(false);
 
@@ -75,12 +77,14 @@ function CustomerWhatsApp({ tenantId }) {
   useEffect(() => {
     if (!watchedTicket) return;
     reminderSentRef.current = false;
+    setArrived(false);
     const id = setInterval(async () => {
       try {
         const r = await api.getTicketStatus(tenantId, watchedTicket.id);
         setTicketStatus(r.status);
         setQueueInfo(r.queue || null);
-        if (r.status === "seen" && lastStatusRef.current !== "seen") {
+        setArrived(!!r.arrived);
+        if ((r.status === "serving" || r.status === "completed") && lastStatusRef.current !== "serving" && lastStatusRef.current !== "completed") {
           bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`, [{ label: "Simulate a new customer", action: "restart" }]);
         }
         lastStatusRef.current = r.status;
@@ -99,6 +103,20 @@ function CustomerWhatsApp({ tenantId }) {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedTicket, tenantId]);
+
+  async function checkInNow() {
+    if (!watchedTicket) return;
+    setCheckingIn(true);
+    try {
+      await api.checkIn(tenantId, watchedTicket.id);
+      setArrived(true);
+      bot("✅ You're checked in. Please take a seat — we'll call you at your appointment time, or sooner if we can.", [{ label: "Simulate a new customer", action: "restart" }]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCheckingIn(false);
+    }
+  }
 
   async function cancelMyTicket() {
     if (!watchedTicket) return;
@@ -276,9 +294,14 @@ function CustomerWhatsApp({ tenantId }) {
               )}
               {watchedTicket.type === "booked" && <>Booked for {formatTime(watchedTicket.slotTime)} today</>}
             </div>
-            <button className="btn-outline" style={{ color: "var(--error)" }} disabled={cancelling} onClick={cancelMyTicket}>
-              {cancelling ? "Cancelling…" : "Cancel"}
-            </button>
+            <div className="row" style={{ gap: 8 }}>
+              {watchedTicket.type === "booked" && (arrived
+                ? <span className="badge badge-green">✓ Checked in</span>
+                : <button className="btn" disabled={checkingIn} onClick={checkInNow}>{checkingIn ? "Checking in…" : "Check in"}</button>)}
+              <button className="btn-outline" style={{ color: "var(--error)" }} disabled={cancelling} onClick={cancelMyTicket}>
+                {cancelling ? "Cancelling…" : "Cancel"}
+              </button>
+            </div>
           </div>
         )}
       </div>

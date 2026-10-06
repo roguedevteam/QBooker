@@ -111,7 +111,7 @@ router.get("/:tenantId/tickets/:ticketId/status", asyncHandler(async (req, res) 
   const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
   if (!ticket) return res.status(404).json({ error: "Ticket not found." });
   let message = null;
-  if (ticket.status === "seen") {
+  if (ticket.status === "serving" || ticket.status === "completed") {
     const m = (await query(
       `select body from simulated_messages where tenant_id=$1 and to_reference=$2 and channel='whatsapp' order by created_at desc limit 1`,
       [req.tenant.id, ticket.ticket_number]
@@ -119,12 +119,12 @@ router.get("/:tenantId/tickets/:ticketId/status", asyncHandler(async (req, res) 
     message = m?.body || null;
   }
   const queue = await getQueueInfo(ticket);
-  res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message, queue });
+  res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message, queue, arrived: !!ticket.arrived_at });
 }));
 
 // Self-service cancel — lets a customer back out of a queue or booking themselves instead of
 // having to contact the business. Only touches their own ticket, and only while it's still
-// pending (no undoing a cancel on something already seen/cancelled/no-show).
+// pending (no undoing a cancel on something already called/cancelled/no-show).
 router.post("/:tenantId/tickets/:ticketId/cancel", asyncHandler(async (req, res) => {
   const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
   if (!ticket) return res.status(404).json({ error: "Ticket not found." });
@@ -135,6 +135,21 @@ router.post("/:tenantId/tickets/:ticketId/cancel", asyncHandler(async (req, res)
   const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} cancelled by customer for ${service?.name || "service"}`]);
+  res.json({ ticket: result.rows[0] });
+}));
+
+// Check-in for a booked appointment — tells staff the customer is here. It doesn't change when
+// they're called (that's still the slot time, or staff can call them early from the waiting list).
+router.post("/:tenantId/tickets/:ticketId/check-in", asyncHandler(async (req, res) => {
+  const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  if (ticket.type !== "booked" || ticket.status !== "booked") {
+    return res.status(409).json({ error: "This booking can't be checked in." });
+  }
+  const result = await query(`update tickets set arrived_at=coalesce(arrived_at, now()) where id=$1 returning *`, [ticket.id]);
+  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `Ticket ${ticket.ticket_number} checked in for ${service?.name || "service"}`]);
   res.json({ ticket: result.rows[0] });
 }));
 
