@@ -580,7 +580,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   // staff covering the same service calling "next" at the same moment can't both land on the
   // same ticket — the loser just sees the next one in line instead.
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null
+    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$7
      where id = (
        select id from tickets
        where service_id=$1 and tenant_id=$2 and visit_date=$3
@@ -590,7 +590,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
        for update skip locked
      )
      returning *`,
-    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked]
+    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked, roomLabel.trim()]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
   const ticket = result.rows[0];
@@ -609,8 +609,8 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
   if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
   const result = await query(
-    `update tickets set status='seen', called_at=now(), finished_at=null where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
-    [req.params.id, req.tenant.id]
+    `update tickets set status='seen', called_at=now(), finished_at=null, called_room=$3 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    [req.params.id, req.tenant.id, roomLabel.trim()]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
   const ticket = result.rows[0];
@@ -620,6 +620,22 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward out of turn — WhatsApp ping sent: "${roomText}"`]);
   res.json({ ticket, message: body });
+}));
+
+// Take over a ticket that's being served from another room — e.g. that staff member closed their
+// browser or went off shift. Only for tickets still in progress (called, not finished).
+router.post("/tickets/:id/take-over", asyncHandler(async (req, res) => {
+  const { roomLabel } = req.body;
+  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) first." });
+  const result = await query(
+    `update tickets set called_room=$3 where id=$1 and tenant_id=$2 and status='seen' and called_at is not null and finished_at is null returning *`,
+    [req.params.id, req.tenant.id, roomLabel.trim()]
+  );
+  if (result.rows.length === 0) return res.status(409).json({ error: "That ticket isn't in progress any more." });
+  const t = result.rows[0];
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [req.tenant.id, `Ticket ${t.ticket_number} taken over by ${roomLabel.trim()}`]);
+  res.json({ ticket: t });
 }));
 
 router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {

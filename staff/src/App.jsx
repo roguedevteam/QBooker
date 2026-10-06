@@ -114,15 +114,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   const [showSeen, setShowSeen] = useState(false);
   const [started, setStarted] = useState(false);
   const [room, setRoom] = useState("");
-  // serviceId -> ticket this staff member is currently serving. Kept in sessionStorage so a page
-  // refresh doesn't make the kiosk forget who's in the room (which would let them call someone else).
-  const servingKey = `qf_staff_serving_${locationId}_${todayIso()}`;
-  const [nowServing, setNowServing] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem(servingKey)) || {}; } catch { return {}; }
-  });
-  useEffect(() => {
-    try { sessionStorage.setItem(servingKey, JSON.stringify(nowServing)); } catch { /* storage unavailable */ }
-  }, [nowServing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [calling, setCalling] = useState(false); // a call/close request is in flight
   const [tickets, setTickets] = useState([]);
   const date = todayIso();
 
@@ -172,21 +164,26 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
 
   async function callNext(serviceId) {
     try {
-      const r = await api.callNext(serviceId, { date, clockMinutes: nowMinutes(), roomLabel: room, workType: workTypeFor(serviceId) });
-      setNowServing((prev) => ({ ...prev, [serviceId]: r.ticket }));
-      refreshTickets();
+      setCalling(true);
+      await api.callNext(serviceId, { date, clockMinutes: nowMinutes(), roomLabel: room, workType: workTypeFor(serviceId) });
+      await refreshTickets();
     } catch (err) {
       // Someone else got there first (or the queue just emptied) — not an error worth shouting about.
-      if (err.message === "Nobody left to call.") refreshTickets(); else setError(err.message);
-    }
+      if (err.message === "Nobody left to call.") await refreshTickets(); else setError(err.message);
+    } finally { setCalling(false); }
   }
   // Call a specific ticket out of turn from the list below.
   async function callSpecific(t) {
     try {
-      const r = await api.callTicket(t.id, { roomLabel: room });
-      setNowServing((prev) => ({ ...prev, [t.service_id]: r.ticket }));
-      refreshTickets();
-    } catch (err) { setError(err.message); refreshTickets(); }
+      setCalling(true);
+      await api.callTicket(t.id, { roomLabel: room });
+      await refreshTickets();
+    } catch (err) { setError(err.message); await refreshTickets(); } finally { setCalling(false); }
+  }
+  // Pick up a ticket another room started serving (their browser closed, they left, etc.).
+  async function takeOver(t) {
+    try { setCalling(true); await api.takeOverTicket(t.id, { roomLabel: room }); await refreshTickets(); }
+    catch (err) { setError(err.message); await refreshTickets(); } finally { setCalling(false); }
   }
   // Is there anyone the "Call next" button could actually call right now? Mirrors the server's rule.
   function workTypeFor(serviceId) {
@@ -203,10 +200,17 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   const roomSet = !!room.trim();
   // One person at a time: until the current ticket is closed (or returned, cancelled, no-show,
   // routed), staff can't call anyone else.
-  const busy = Object.keys(nowServing).length > 0;
-  const canCall = roomSet && !busy;
-  async function doAction(fn, serviceId) {
-    try { await fn(); setNowServing((prev) => { const next = { ...prev }; delete next[serviceId]; return next; }); refreshTickets(); } catch (err) { setError(err.message); }
+  // Who is being served is kept on the server (ticket.called_room), not in this browser, so a
+  // staff member whose browser closed picks straight back up by entering the same room name.
+  const norm = (x) => (x || "").trim().toLowerCase();
+  const inProgress = tickets.filter((t) => t.status === "seen" && t.called_at && !t.finished_at && locServices.some((x) => x.id === t.service_id));
+  const mine = roomSet ? inProgress.filter((t) => norm(t.called_room) === norm(room)) : [];
+  const elsewhere = inProgress.filter((t) => !mine.includes(t));
+  const nowServing = Object.fromEntries(mine.map((t) => [t.service_id, t]));
+  const busy = mine.length > 0;
+  const canCall = roomSet && !busy && !calling;
+  async function doAction(fn) {
+    try { setCalling(true); await fn(); await refreshTickets(); } catch (err) { setError(err.message); } finally { setCalling(false); }
   }
 
   const myTickets = tickets.filter((t) => serviceIds.includes(t.service_id));
@@ -222,14 +226,29 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={() => { try { sessionStorage.removeItem(servingKey); } catch { /* ignore */ } onSignOut(); }}>Sign out</button></div>
+      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
         <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
       </div>
       {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Set your room name to start calling tickets.</div>}
 
-      {locServices.filter((s) => serviceIds.includes(s.id)).map((s) => {
+      {elsewhere.length > 0 && (
+        <div className="card stack" style={{ borderColor: "var(--accent)" }}>
+          <strong style={{ fontSize: 13 }}>In progress with another room</strong>
+          <div className="muted" style={{ fontSize: 12 }}>
+            If one of these is yours (you closed the page or came back later), enter the same room name above and it will reappear here as yours. If the person has left, take it over to finish or release it.
+          </div>
+          {elsewhere.map((t) => (
+            <div key={t.id} className="row" style={{ justifyContent: "space-between" }}>
+              <span><strong>{t.ticket_number}</strong> · {services.find((x) => x.id === t.service_id)?.name} · {t.called_room || "no room"} · called {formatClock(t.called_at)}</span>
+              <button className="btn-outline" disabled={!roomSet || busy || calling} onClick={() => takeOver(t)}>Take over</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {locServices.filter((s) => serviceIds.includes(s.id) || nowServing[s.id]).map((s) => {
         const serving = nowServing[s.id];
         return (
           <div key={s.id} className="card stack">
@@ -239,16 +258,16 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
             <button className="btn" disabled={!canCall || !hasWaiting(s.id)} onClick={() => callNext(s.id)}>{!roomSet ? "Set your room to call tickets" : busy ? "Finish your current ticket first" : hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
             {serving && (
               <div className="stack">
-                <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
+                <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id))}>Close ticket — finished serving</button>
                 <div className="row">
-                  <button className="btn-outline" style={{ flex: 1 }} onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }), s.id)}>Return to queue</button>
-                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.noShowTicket(serving.id), s.id)}>No-show</button>
-                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id), s.id)}>Cancel ticket</button>
+                  <button className="btn-outline" style={{ flex: 1 }} onClick={() => doAction(() => api.returnToQueue(serving.id, { clockMinutes: nowMinutes() }))}>Return to queue</button>
+                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.noShowTicket(serving.id))}>No-show</button>
+                  <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id))}>Cancel ticket</button>
                 </div>
                 <div className="row">
                   <button className="btn-outline" style={{ flex: 1 }} disabled={!roomSet} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>
                   {locServices.filter((x) => x.id !== s.id).length > 0 && (
-                    <select style={{ flex: 1 }} defaultValue="" onChange={(e) => { if (e.target.value) doAction(() => api.routeTicket(serving.id, { newServiceId: e.target.value, clockMinutes: nowMinutes() }), s.id); }}>
+                    <select style={{ flex: 1 }} defaultValue="" onChange={(e) => { if (e.target.value) doAction(() => api.routeTicket(serving.id, { newServiceId: e.target.value, clockMinutes: nowMinutes() })); }}>
                       <option value="">Route to service…</option>
                       {locServices.filter((x) => x.id !== s.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                     </select>
