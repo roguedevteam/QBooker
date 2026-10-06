@@ -114,7 +114,15 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   const [showSeen, setShowSeen] = useState(false);
   const [started, setStarted] = useState(false);
   const [room, setRoom] = useState("");
-  const [nowServing, setNowServing] = useState({}); // serviceId -> ticket object
+  // serviceId -> ticket this staff member is currently serving. Kept in sessionStorage so a page
+  // refresh doesn't make the kiosk forget who's in the room (which would let them call someone else).
+  const servingKey = `qf_staff_serving_${locationId}_${todayIso()}`;
+  const [nowServing, setNowServing] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(servingKey)) || {}; } catch { return {}; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(servingKey, JSON.stringify(nowServing)); } catch { /* storage unavailable */ }
+  }, [nowServing]); // eslint-disable-line react-hooks/exhaustive-deps
   const [tickets, setTickets] = useState([]);
   const date = todayIso();
 
@@ -193,6 +201,10 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
     return tickets.some((t) => t.service_id === serviceId && ((wt !== "appointments" && t.type === "walk_in" && t.status === "waiting") || (wt !== "queue" && t.type === "booked" && t.status === "booked" && t.slot_time <= mins)));
   }
   const roomSet = !!room.trim();
+  // One person at a time: until the current ticket is closed (or returned, cancelled, no-show,
+  // routed), staff can't call anyone else.
+  const busy = Object.keys(nowServing).length > 0;
+  const canCall = roomSet && !busy;
   async function doAction(fn, serviceId) {
     try { await fn(); setNowServing((prev) => { const next = { ...prev }; delete next[serviceId]; return next; }); refreshTickets(); } catch (err) { setError(err.message); }
   }
@@ -210,7 +222,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
 
   return (
     <div className="container stack">
-      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+      <div className="row" style={{ justifyContent: "space-between" }}><span className="muted">{locations.find((l) => l.id === locationId)?.name}</span><button className="btn-outline" onClick={() => { try { sessionStorage.removeItem(servingKey); } catch { /* ignore */ } onSignOut(); }}>Sign out</button></div>
       <div className="card row" style={{ background: room.trim() ? "#FBEEDD" : "#FBE9E7" }}>
         <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
@@ -224,7 +236,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
             <div>{s.name}</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1B1D1F" }}>{serving?.ticket_number || "—"}</div>
             {serving && <div style={{ fontSize: 13 }}>{room.trim() ? `📍 ${room.trim()}` : "Now serving"}</div>}
-            <button className="btn" disabled={!roomSet || !hasWaiting(s.id)} onClick={() => callNext(s.id)}>{!roomSet ? "Set your room to call tickets" : hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
+            <button className="btn" disabled={!canCall || !hasWaiting(s.id)} onClick={() => callNext(s.id)}>{!roomSet ? "Set your room to call tickets" : busy ? "Finish your current ticket first" : hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
             {serving && (
               <div className="stack">
                 <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
@@ -263,7 +275,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
                   {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
                   {t.type === "booked" && t.slot_time > nowMinutes() && <span className="muted" style={{ fontSize: 11 }}> (not due yet)</span>}
                 </td>
-                <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!roomSet} title={roomSet ? undefined : "Set your room first"} onClick={() => callSpecific(t)}>Call</button></td>
+                <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!canCall} title={!roomSet ? "Set your room first" : busy ? "Finish your current ticket first" : undefined} onClick={() => callSpecific(t)}>Call</button></td>
               </tr>
             ))}
           </tbody>
