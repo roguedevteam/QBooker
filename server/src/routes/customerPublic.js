@@ -100,7 +100,7 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   );
   const bookedCountByTime = {};
   bookedResult.rows.forEach((r) => { bookedCountByTime[r.slot_time] = Number(r.count); });
-  const bookableSlots = getUpcomingBookableSlots(cfg, bookedCountByTime, Number(clockMinutes), 3);
+  const bookableSlots = getUpcomingBookableSlots(cfg, bookedCountByTime, Number(clockMinutes), 200);
 
   res.json({ open: true, walkIn, bookableSlots });
 }));
