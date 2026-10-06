@@ -176,13 +176,21 @@ function CustomerWhatsApp({ tenantId }) {
         const opts = [];
         if (r.walkIn?.available) opts.push({ label: "Join the queue now", action: "join", payload: svc.id });
         const slots = r.bookableSlots || [];
-        slots.slice(0, 3).forEach((t) => opts.push({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: svc.id, slotTime: t } }));
-        if (slots.length > 3) opts.push({ label: `See other times (${slots.length - 3} more)`, action: "times", payload: { serviceId: svc.id, slots: slots.slice(3) } });
+        // Walk-ins join now; planners see a 2-hour window starting 2 hours from now. Other times are one tap away.
+        const winStart = nowMinutes() + 120;
+        let shown = slots.filter((t) => t >= winStart && t < winStart + 120);
+        if (shown.length === 0) shown = slots.filter((t) => t >= winStart).slice(0, 3);
+        if (shown.length === 0 && !r.walkIn?.available) shown = slots.slice(0, 3);
+        const maxShown = r.walkIn?.available ? 7 : 8;
+        shown = shown.slice(0, maxShown);
+        shown.forEach((t) => opts.push({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: svc.id, slotTime: t } }));
+        const rest = slots.filter((t) => !shown.includes(t));
+        if (rest.length > 0) opts.push({ label: "Choose another time", action: "times", payload: { serviceId: svc.id, slots: rest } });
         if (opts.length === 0) bot(`${svc.name} is fully booked for the rest of today.`, [{ label: "Choose another service", action: "greet" }]);
         else bot("Here's what's available:", opts);
       } catch (err) { setError(err.message); }
     } else if (action === "times") {
-      user("See other times");
+      user("Choose another time");
       const { serviceId, slots } = payload;
       const size = 60;
       const groupsBy = (sz) => { const m = new Map(); slots.forEach((t) => { const k = Math.floor(t / sz); m.set(k, [...(m.get(k) || []), t]); }); return m; };
