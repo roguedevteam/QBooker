@@ -356,8 +356,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
             const addingHere = addingServiceFor === loc.id;
             return (
               <div key={loc.id} className="card stack">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <div className="row">
+                <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <div className="row" style={{ flexWrap: "wrap" }}>
                     <input
                       className="input" style={{ maxWidth: 180, fontWeight: 600 }} defaultValue={loc.name}
                       onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
@@ -365,7 +365,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     />
                     <span className="muted" style={{ fontSize: 12 }}>{locServices.length} service{locServices.length === 1 ? "" : "s"}</span>
                   </div>
-                  <div className="row">
+                  <div className="row" style={{ flexWrap: "wrap" }}>
                     {isOpen && (
                       <>
                         <button className="btn-outline" onClick={() => { setAddingServiceFor(loc.id); setLocationOverrides((prev) => ({ ...prev, [loc.id]: true })); }}>+ Add service</button>
@@ -390,6 +390,14 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, setError }) 
                     </button>
                   </div>
                 </div>
+
+                {loc.code && (
+                  <div className="row" style={{ flexWrap: "wrap" }}>
+                    <span className="muted" style={{ fontSize: 12 }}>WhatsApp code</span>
+                    <code style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1, background: "#F7F7F4", padding: "3px 8px" }}>{loc.code}</code>
+                    <CopyButton value={loc.code} label="Copy code" />
+                  </div>
+                )}
 
                 {addingHere && (
                   <ServiceWizard
