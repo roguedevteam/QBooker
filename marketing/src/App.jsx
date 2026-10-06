@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useId, cloneElement } from "react";
 import { priceText, exMoney, incVat } from "./lib/vat.js";
 import { api } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
@@ -47,24 +47,33 @@ export default function App() {
 
   useEffect(() => { refreshClock().then(() => setReady(true)); }, []);
 
-  if (!ready) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
+  if (!ready) return <div className="container muted" role="status" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
 
   const inCheckout = screen === "signup" || screen === "success";
 
   return (
     <div>
       {inCheckout && (
-        <div className="header row" style={{ justifyContent: "space-between" }}>
-          <a href="#top" onClick={() => setScreen("landing")} style={{ textDecoration: "none" }}>
-            <Logo />
-          </a>
-          <div className="row">
-            {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {todayIso()}</span>}
-            <a href={ADMIN_APP_URL} style={{ color: "var(--muted)", fontSize: 13, fontWeight: 600 }}>Already have an account? Sign in →</a>
+        <>
+          <header className="su-header">
+            <div className="su-header-in">
+              <a href="#top" onClick={() => setScreen("landing")} className="su-logo-link" aria-label="QBooker home">
+                <Logo />
+              </a>
+              <a href={ADMIN_APP_URL} className="su-signin"><span className="su-long">Already have an account? </span>Sign in →</a>
+            </div>
+          </header>
+          {isSimulatedToday() && <div className="su-sim" role="status">Simulated date: {todayIso()}</div>}
+        </>
+      )}
+      {error && (
+        <div className="su-wrap" style={{ paddingBottom: 0 }}>
+          <div className="su-alert" role="alert">
+            <span>{error}</span>
+            <button type="button" className="su-btn su-btn-outline" onClick={() => setError("")}>Dismiss</button>
           </div>
         </div>
       )}
-      {error && <div className="container"><div className="card" style={{ borderColor: "#B3261E", color: "#B3261E" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
 
       {screen === "landing" && (
         <Landing
@@ -77,6 +86,7 @@ export default function App() {
     </div>
   );
 }
+
 
 const SCENARIOS = [
   { name: "Blood clinics", text: "A morning of walk-in blood tests without a waiting room full of paper tickets." },
@@ -490,26 +500,38 @@ function FaqItem({ q, a }) {
 }
 
 function Success({ result }) {
-  if (result.alreadyExists) {
-    return (
-      <div className="narrow card stack" style={{ marginTop: 60 }}>
-        <h3>Welcome back 👋</h3>
-        <p>An account for <strong>{result.businessName}</strong> already exists with that email — we've sent a fresh sign-in code instead of creating a new one.</p>
-        <div className="card">Demo sign-in code (simulated email): <strong>{result.demoOtp}</strong></div>
-        <a href={ADMIN_APP_URL}><button className="btn">Go to admin sign-in →</button></a>
-      </div>
-    );
-  }
+  const headingRef = useRef(null);
+  useEffect(() => { headingRef.current?.focus({ preventScroll: true }); }, []);
+  const existing = result.alreadyExists;
   return (
-    <div className="narrow card stack" style={{ marginTop: 60 }}>
-      <h3>You're set up ✅</h3>
-      <p>Account created for <strong>{result.tenant.business_name}</strong>.</p>
-      <div className="card">Demo sign-in code (simulated email): <strong>{result.demoOtp}</strong></div>
-      <p className="muted" style={{ fontSize: 13 }}>
-        Head to the admin portal and sign in with <strong>{result.tenant.email}</strong> and the code above.
-      </p>
-      <a href={ADMIN_APP_URL}><button className="btn">Go to admin sign-in →</button></a>
-    </div>
+    <main id="main" className="su-wrap su-wrap-narrow">
+      <div className="su-card su-success">
+        <div className="su-success-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 22 22"><path d="M4 11.5l4.5 4.5L18 6.5" stroke="#fff" strokeWidth="2.5" fill="none" /></svg>
+        </div>
+        {existing ? (
+          <>
+            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>Welcome back</h1>
+            <p className="su-p">An account for <strong>{result.businessName}</strong> already exists with that email — we've sent a fresh sign-in code instead of creating a new one.</p>
+          </>
+        ) : (
+          <>
+            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>You're set up</h1>
+            <p className="su-p">Account created for <strong>{result.tenant.business_name}</strong>.</p>
+          </>
+        )}
+        <div className="su-code" role="group" aria-label="Demo sign-in code">
+          <span className="su-code-label">Demo sign-in code (simulated email)</span>
+          <span className="su-code-value mono">{result.demoOtp}</span>
+        </div>
+        {!existing && (
+          <p className="su-hint">
+            Head to the admin portal and sign in with <strong>{result.tenant.email}</strong> and the code above.
+          </p>
+        )}
+        <a href={ADMIN_APP_URL} className="su-btn su-btn-primary su-btn-block">Go to admin sign-in →</a>
+      </div>
+    </main>
   );
 }
 
@@ -519,89 +541,91 @@ const STEP_LABELS_FREE = ["Your details", "Locations", "Services"];
 function StepHeader({ step, labels }) {
   const stepLabels = labels || STEP_LABELS;
   return (
-    <div className="stepper">
-      {stepLabels.map((label, i) => {
-        const n = i + 1;
-        const active = n === step;
-        const done = n < step;
-        return (
-          <span key={label} className="row" style={{ gap: 6 }}>
-            <span className="row" style={{ gap: 6 }}>
-              <span
-                className="dot"
-                style={{
-                  background: active || done ? "var(--accent)" : "var(--line)",
-                  color: active || done ? "#fff" : "var(--muted)",
-                }}
-              >
-                {done ? "✓" : n}
-              </span>
-              <span className="step-label muted" style={{ color: active ? "var(--accent)" : undefined, fontWeight: active ? 600 : 400 }}>{label}</span>
-            </span>
-            {n < stepLabels.length && <span className="seg" style={{ background: done ? "var(--accent)" : "var(--line)" }} />}
-          </span>
-        );
-      })}
-    </div>
+    <nav aria-label="Sign-up progress">
+      <p className="su-progress-text">Step {step} of {stepLabels.length}</p>
+      <ol className="su-progress">
+        {stepLabels.map((label, i) => {
+          const num = i + 1;
+          const state = num === step ? "active" : num < step ? "done" : "todo";
+          return (
+            <li key={label} className={state} aria-current={state === "active" ? "step" : undefined}>
+              <span className="su-progress-n" aria-hidden="true">{state === "done" ? "✓" : num}</span>
+              <span>{label}{state === "done" && <span className="sr-only"> (completed)</span>}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 
-function Field({ label, hint, children }) {
+// A real <label> wired to the control (children is a single input/select), plus hint and
+// error text linked through aria-describedby. Errors are announced via role="alert".
+function Field({ label, hint, error, children }) {
+  const id = useId();
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errId = error ? `${id}-err` : undefined;
+  const describedBy = [hintId, errId].filter(Boolean).join(" ") || undefined;
   return (
-    <div className="field">
-      <label>{label}</label>
-      {children}
-      {hint && <div className="field-hint">{hint}</div>}
+    <div className="su-field">
+      <label className="su-label" htmlFor={id}>{label}</label>
+      {cloneElement(children, { id, "aria-describedby": describedBy, "aria-invalid": error ? "true" : undefined })}
+      {hint && <div className="su-hint" id={hintId}>{hint}</div>}
+      {error && <div className="su-error" id={errId} role="alert">{error}</div>}
     </div>
   );
 }
 
 function PaymentOption({ active, onClick, title, desc }) {
   return (
-    <label className={active ? "pay-option active" : "pay-option"} onClick={onClick}>
-      <input type="radio" checked={active} onChange={onClick} />
+    <label className={active ? "su-pay active" : "su-pay"}>
+      <input type="radio" name="payment-method" checked={active} onChange={onClick} />
       <span>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
-        <div className="muted" style={{ fontSize: 12 }}>{desc}</div>
+        <span className="su-pay-title">{title}</span>
+        <span className="su-pay-desc">{desc}</span>
       </span>
     </label>
   );
 }
 
-function ServiceRow({ svc, index, locationNames, pricing, onChange, onRemove, removable }) {
+function XIcon() {
+  return <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="2" fill="none" /></svg>;
+}
+
+function ServiceRow({ svc, index, locationNames, pricing, nameError, onChange, onRemove, removable }) {
   return (
-    <div className="card stack" style={{ gap: 10 }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="muted" style={{ fontSize: 12, fontWeight: 600 }}>Service {index + 1}</span>
+    <div className="su-service">
+      <div className="su-service-head">
+        <h3 className="su-h3">Service {index + 1}</h3>
         {removable && (
-          <button type="button" className="loc-remove" style={{ width: "auto", padding: "2px 8px" }} onClick={onRemove} aria-label={`Remove service ${index + 1}`}>✕</button>
+          <button type="button" className="su-link su-link-danger" onClick={onRemove} aria-label={`Remove service ${index + 1}`}>Remove</button>
         )}
       </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        <Field label="Service name">
-          <input className="input" placeholder="e.g. Blood Test" value={svc.name} onChange={(e) => onChange({ ...svc, name: e.target.value })} />
+      <div className="su-grid two">
+        <Field label="Service name" error={nameError}>
+          <input className="su-input" placeholder="e.g. Blood Test" autoComplete="off" value={svc.name} onChange={(e) => onChange({ ...svc, name: e.target.value })} />
         </Field>
         <Field label="Location">
-          <select className="input" value={svc.locationIndex} onChange={(e) => onChange({ ...svc, locationIndex: Number(e.target.value) })}>
+          <select className="su-input" value={svc.locationIndex} onChange={(e) => onChange({ ...svc, locationIndex: Number(e.target.value) })}>
             {locationNames.map((n, i) => <option key={i} value={i}>{n.trim() || `Location ${i + 1}`}</option>)}
           </select>
         </Field>
-      </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="su-span">
         <Field label="How does this work?">
-          <select className="input" value={svc.mode} onChange={(e) => onChange({ ...svc, mode: e.target.value })}>
+          <select className="su-input" value={svc.mode} onChange={(e) => onChange({ ...svc, mode: e.target.value })}>
             {SERVICE_MODE_META.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </Field>
+        </div>
         {svc.mode !== "queue" && (
           <Field label="Slot length">
-            <select className="input" value={svc.slotMinutes} onChange={(e) => onChange({ ...svc, slotMinutes: Number(e.target.value) })}>
+            <select className="su-input" value={svc.slotMinutes} onChange={(e) => onChange({ ...svc, slotMinutes: Number(e.target.value) })}>
               {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
             </select>
           </Field>
         )}
       </div>
-      <div className="muted" style={{ fontSize: 11 }}>Can't be changed after signup — delete and recreate the service in your admin dashboard if you need to change it later.</div>
+      <p className="su-hint">Can't be changed after signup — delete and recreate the service in your admin dashboard if you need to change it later.</p>
     </div>
   );
 }
@@ -632,9 +656,29 @@ function Signup({ onDone, setError, onBackToLanding }) {
 
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [submitting, setSubmitting] = useState(false);
+  // Validation messages only appear once the person has tried to continue.
+  const [attempted, setAttempted] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const headingRef = useRef(null);
+  const submitErrorRef = useRef(null);
+  const firstRender = useRef(true);
+
+  const prefersReducedMotion = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
-  useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [step]);
+  useEffect(() => {
+    setAttempted(false);
+    window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    // Move focus to the new step's heading so screen readers announce the change.
+    if (firstRender.current) { firstRender.current = false; return; }
+    headingRef.current?.focus({ preventScroll: true });
+  }, [step]);
+  useEffect(() => {
+    if (submitError) {
+      submitErrorRef.current?.focus({ preventScroll: true });
+      submitErrorRef.current?.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    }
+  }, [submitError]);
 
   function addLocation() {
     setLocationNames((prev) => (prev.length >= MAX_LOCATIONS ? prev : [...prev, ""]));
@@ -688,6 +732,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
   async function submit() {
     setSubmitting(true);
     setError("");
+    setSubmitError("");
     try {
       // Nothing to charge — every service's license came out free (e.g. a sale or £0
       // pricing), so there's no payment method to collect; bill as "card" with no
@@ -702,165 +747,187 @@ function Signup({ onDone, setError, onBackToLanding }) {
       const result = await api.signup(payload);
       onDone(result);
     } catch (err) {
-      setError(err.message);
+      // Shown inline next to the actions (the page-level banner can be off-screen on phones).
+      setSubmitError(err.message);
     } finally {
       setSubmitting(false);
     }
   }
 
+  function focusFirstInvalid() {
+    setTimeout(() => { document.querySelector('#su-form [aria-invalid="true"]')?.focus(); }, 0);
+  }
+
+  function onFormSubmit(e) {
+    e.preventDefault();
+    if (submitting) return;
+    const valid = [step1Valid, step2Valid, step3Valid, step4Valid][step - 1];
+    if (!valid) {
+      setAttempted(true);
+      if (step === 3) {
+        const firstBad = services.findIndex((s) => !isServiceValid(s));
+        if (firstBad >= 0) setActiveService(firstBad);
+      }
+      focusFirstInvalid();
+      return;
+    }
+    if (step < lastStep) next();
+    else submit();
+  }
+
+  const missing = (v) => (attempted && !String(v).trim());
+  const badServices = attempted ? services.map((s, i) => (isServiceValid(s) ? -1 : i)).filter((i) => i >= 0) : [];
+  const primaryLabel = step < lastStep ? "Continue" : submitting ? "Processing…" : "Create account";
+
   return (
-    <div className="narrow stack" style={{ paddingTop: 32, paddingBottom: 48 }}>
-      <div className="stack" style={{ gap: 4, textAlign: "center" }}>
-        <h2 style={{ margin: 0 }}>Set up your account</h2>
-        <button
-          type="button"
-          onClick={onBackToLanding}
-          className="muted"
-          style={{ background: "transparent", border: "none", fontSize: 12, padding: 0, cursor: "pointer", textDecoration: "underline" }}
-        >
-          ← Back to overview
-        </button>
+    <main id="main" className="su-wrap">
+      <div className="su-intro">
+        <button type="button" onClick={onBackToLanding} className="su-link">← Back to overview</button>
+        <h1 className="su-h1">Set up your account</h1>
       </div>
       <StepHeader step={step} labels={stepLabels} />
 
-      <div className="card stack" style={{ padding: 24 }}>
+      <form id="su-form" className="su-card" onSubmit={onFormSubmit} noValidate>
         {step === 1 && (
-          <div className="stack">
-            <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Your details</div>
-              <div className="muted" style={{ fontSize: 12 }}>Who's setting this account up, and how we'll reach you.</div>
+          <div className="su-stack">
+            <div>
+              <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Your details</h2>
+              <p className="su-hint">Who's setting this account up, and how we'll reach you. All fields are required.</p>
             </div>
-            <Field label="Business name">
-              <input className="input" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
+            <Field label="Business name" error={missing(businessName) ? "Enter your business name." : null}>
+              <input className="su-input" autoComplete="organization" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
             </Field>
-            <div className="row" style={{ gap: 8 }}>
-              <Field label="First name"><input className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} /></Field>
-              <Field label="Last name"><input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} /></Field>
+            <div className="su-grid two">
+              <Field label="First name" error={missing(firstName) ? "Enter your first name." : null}>
+                <input className="su-input" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+              </Field>
+              <Field label="Last name" error={missing(lastName) ? "Enter your last name." : null}>
+                <input className="su-input" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+              </Field>
             </div>
-            <Field label="Email address" hint="This is what you'll sign in with — we'll send a one-time code here each time, no password to remember.">
-              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Field
+              label="Email address"
+              hint="This is what you'll sign in with — we'll send a one-time code here each time, no password to remember."
+              error={missing(email) ? "Enter your email address." : null}
+            >
+              <input className="su-input" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
-            <div className="muted" style={{ fontSize: 12 }}>
-              You can add your business address later from the Profile tab once you're set up.
-            </div>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-              <button className="btn" disabled={!step1Valid} onClick={next}>Continue</button>
-            </div>
+            <p className="su-hint">You can add your business address later from the Profile tab once you're set up.</p>
           </div>
         )}
 
         {step === 2 && (
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="stack" style={{ gap: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Add your locations</div>
-              <div className="muted" style={{ fontSize: 12 }}>
+          <div className="su-stack">
+            <div>
+              <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Add your locations</h2>
+              <p className="su-hint">
                 Locations are free and unlimited — they're just how customers and staff get routed to the right place.
                 Name each one now; each name must be unique. You'll pick services and licenses next.
-              </div>
+              </p>
             </div>
-            <div className="stack" style={{ gap: 8 }}>
-              {locationNames.map((name, i) => (
-                <div key={i} className="loc-row">
-                  <span className="loc-index">{i + 1}</span>
-                  <input
-                    className="input"
-                    aria-label={`Location ${i + 1} name`}
-                    placeholder={`Location ${i + 1} name`}
-                    value={name}
-                    onChange={(e) => updateLocationName(i, e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="loc-remove"
-                    onClick={() => removeLocation(i)}
-                    disabled={locationNames.length <= 1}
-                    aria-label={`Remove location ${i + 1}`}
-                    title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="loc-add" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add another location</button>
+            <div className="su-stack" style={{ gap: 14 }}>
+              {locationNames.map((name, i) => {
+                const empty = attempted && !name.trim();
+                const dupe = hasDuplicateNames && normalizedNames.filter((n) => n === normalizedNames[i]).length > 1;
+                const inputId = `su-loc-${i}`;
+                return (
+                  <div key={i} className="su-loc">
+                    <label className="su-label" htmlFor={inputId}>Location {i + 1} name</label>
+                    <div className="su-loc-line">
+                      <input
+                        id={inputId}
+                        className="su-input"
+                        autoComplete="off"
+                        placeholder="e.g. Riverside Clinic"
+                        aria-invalid={empty || dupe ? "true" : undefined}
+                        aria-describedby={empty || dupe ? "su-loc-error" : undefined}
+                        value={name}
+                        onChange={(e) => updateLocationName(i, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="su-loc-rm"
+                        onClick={() => removeLocation(i)}
+                        disabled={locationNames.length <= 1}
+                        aria-label={`Remove location ${i + 1}`}
+                        title={locationNames.length <= 1 ? "At least one location is required" : "Remove this location"}
+                      >
+                        <XIcon />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              <button type="button" className="su-add" onClick={addLocation} disabled={locationNames.length >= MAX_LOCATIONS}>+ Add another location</button>
             </div>
-            {hasDuplicateNames && (
-              <div style={{ fontSize: 12, color: "var(--error)", fontWeight: 500 }}>
-                Each location needs its own name — two locations currently share the same name.
+            {(hasDuplicateNames || (attempted && !namesFilled)) && (
+              <div className="su-error" id="su-loc-error" role="alert">
+                {hasDuplicateNames
+                  ? "Each location needs its own name — two locations currently share the same name."
+                  : "Give every location a name before continuing."}
               </div>
             )}
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <button className="btn-outline" onClick={back}>Back</button>
-              <button className="btn" disabled={!step2Valid} onClick={next}>Continue</button>
-            </div>
           </div>
         )}
 
         {step === 3 && (
-          <div className="stack" style={{ gap: 16 }}>
-            <div className="stack" style={{ gap: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Add your services</div>
-              <div className="muted" style={{ fontSize: 12 }}>
+          <div className="su-stack" style={{ gap: 16 }}>
+            <div>
+              <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Add your services</h2>
+              <p className="su-hint">
                 Each service belongs to one location. Your 2 free days go on the first service you add, and you choose
                 which two days from its calendar once you're in, so nothing is wasted while you're still setting up.
-              </div>
+              </p>
             </div>
-            <div className="stack" style={{ gap: 12 }}>
+            <div className="su-stack" style={{ gap: 12 }}>
+              <p className="su-count">Service {activeService + 1} of {services.length}</p>
               {services.length > 1 && (
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <button type="button" className="btn-outline" disabled={activeService === 0} onClick={() => setActiveService((i) => Math.max(0, i - 1))}>← Previous</button>
-                  <div className="row" style={{ gap: 6 }}>
-                    {services.map((s, i) => (
+                <div className="su-chips" role="group" aria-label="Choose a service to edit">
+                  {services.map((s, i) => {
+                    const bad = badServices.includes(i);
+                    return (
                       <button
                         type="button"
                         key={i}
+                        className={`su-chip${i === activeService ? " on" : ""}${bad ? " bad" : ""}`}
+                        aria-pressed={i === activeService}
                         onClick={() => setActiveService(i)}
-                        title={`Service ${i + 1}${s.name.trim() ? `: ${s.name.trim()}` : ""}`}
-                        style={{
-                          width: 9, height: 9, padding: 0, borderRadius: "50%", cursor: "pointer",
-                          border: i === activeService ? "2px solid var(--accent)" : "none",
-                          background: isServiceValid(s) ? "var(--accent)" : "var(--line)",
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <button type="button" className="btn-outline" disabled={activeService === services.length - 1} onClick={() => setActiveService((i) => Math.min(services.length - 1, i + 1))}>Next →</button>
+                        aria-label={`Service ${i + 1}${s.name.trim() ? `: ${s.name.trim()}` : ""}${isServiceValid(s) ? "" : ", needs a name"}`}
+                      >
+                        {i + 1}{isServiceValid(s) ? <span aria-hidden="true"> ✓</span> : null}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-              <div className="muted" style={{ fontSize: 12, textAlign: "center" }}>Service {activeService + 1} of {services.length}</div>
               <ServiceRow
                 key={activeService}
                 svc={services[activeService]}
                 index={activeService}
                 locationNames={locationNames}
                 pricing={pricing}
+                nameError={missing(services[activeService].name) ? "Enter a name for this service." : null}
                 onChange={(next) => updateService(activeService, next)}
                 onRemove={() => removeService(activeService)}
                 removable={services.length > 1}
               />
-              <button type="button" className="loc-add" onClick={addService} disabled={services.length >= MAX_SERVICES}>+ Add another service</button>
-            </div>
-
-            <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
-              <span style={{ fontSize: 13 }}><strong>2 free days</strong> — no card needed. Add more licences whenever you're ready.</span>
-            </div>
-
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <button className="btn-outline" onClick={back}>Back</button>
-              {needsPayment ? (
-                <button className="btn" disabled={!step3Valid} onClick={next}>Continue</button>
-              ) : (
-                <button className="btn" disabled={!step3Valid || submitting} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
+              {badServices.filter((i) => i !== activeService).length > 0 && (
+                <div className="su-error" role="alert">
+                  {badServices.filter((i) => i !== activeService).map((i) => `Service ${i + 1}`).join(", ")} still need{badServices.filter((i) => i !== activeService).length === 1 ? "s" : ""} a name.
+                </div>
               )}
+              <button type="button" className="su-add" onClick={addService} disabled={services.length >= MAX_SERVICES}>+ Add another service</button>
             </div>
+
+            <div className="su-note"><strong>2 free days</strong> — no card needed. Add more licences whenever you're ready.</div>
           </div>
         )}
 
         {step === 4 && needsPayment && (
-          <div className="stack">
-            <div className="stack" style={{ gap: 2, marginBottom: 2 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>How would you like to pay?</div>
-            </div>
-            <div className="stack" style={{ gap: 8 }}>
+          <div className="su-stack">
+            <h2 className="su-h2" tabIndex={-1} ref={headingRef}>How would you like to pay?</h2>
+            <fieldset className="su-fieldset">
+              <legend className="sr-only">Payment method</legend>
               <PaymentOption
                 active={paymentMethod === "card"}
                 onClick={() => setPaymentMethod("card")}
@@ -879,30 +946,41 @@ function Signup({ onDone, setError, onBackToLanding }) {
                 title="Pay later"
                 desc="Get set up and explore the system now — staff kiosk and customer WhatsApp switch on once we've sorted payment with you."
               />
-            </div>
+            </fieldset>
             {paymentMethod === "invoice" && (
-              <div className="stack">
-                <Field label="Billing email">
-                  <input className="input" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
+              <div className="su-stack">
+                <Field label="Billing email" error={missing(invoiceEmail) ? "Enter a billing email." : null}>
+                  <input className="su-input" type="email" inputMode="email" autoComplete="email" value={invoiceEmail} onChange={(e) => setInvoiceEmail(e.target.value)} />
                 </Field>
-                <Field label="PO / reference number" hint="Required for invoice payment — your internal purchase order or reference number.">
-                  <input className="input" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
+                <Field label="PO / reference number" hint="Required for invoice payment — your internal purchase order or reference number." error={missing(poNumber) ? "Enter a PO or reference number." : null}>
+                  <input className="su-input" autoComplete="off" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
                 </Field>
               </div>
             )}
 
-            <div className="card row" style={{ justifyContent: "space-between", alignItems: "center", background: "var(--accent-weak)" }}>
-              <span className="muted" style={{ fontSize: 12 }}>{services.length} service license{services.length === 1 ? "" : "s"}</span>
+            <div className="su-note su-total">
+              <span>{services.length} service license{services.length === 1 ? "" : "s"}</span>
               <span>Total: <strong>{priceText(total)}</strong></span>
-            </div>
-
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <button className="btn-outline" onClick={back}>Back</button>
-              <button className="btn" disabled={submitting || !step4Valid} onClick={submit}>{submitting ? "Processing…" : "Create account"}</button>
             </div>
           </div>
         )}
+
+        {submitError && (
+          <div className="su-alert" role="alert" tabIndex={-1} ref={submitErrorRef} style={{ marginTop: 16 }}>
+            <span>{submitError}</span>
+          </div>
+        )}
+      </form>
+
+      <div className="su-bar">
+        <div className="su-bar-in">
+          <p className="su-bar-note"><strong>2 free days</strong> · no card needed</p>
+          <div className="su-bar-actions">
+            {step > 1 && <button type="button" className="su-btn su-btn-outline" onClick={back}>Back</button>}
+            <button type="submit" form="su-form" className="su-btn su-btn-primary" disabled={submitting} aria-busy={submitting || undefined}>{primaryLabel}</button>
+          </div>
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

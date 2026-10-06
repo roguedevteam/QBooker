@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { api } from "./lib/api.js";
 import { todayIso, refreshClock } from "./lib/clock.js";
 
@@ -22,19 +22,20 @@ export default function App() {
 
   useEffect(() => { refreshClock().then(() => setReady(true)); }, []);
 
-  if (!ready) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
+  if (!ready) return <div className="screen-msg muted" role="status">Loading…</div>;
 
   if (!tenantId) {
     return (
-      <div className="narrow card stack" style={{ marginTop: 60 }}>
-        <h3>QBooker</h3>
-        <p className="muted" style={{ fontSize: 13 }}>
+      <form className="narrow card stack entry" onSubmit={(e) => { e.preventDefault(); if (manualEntry.trim()) setTenantId(manualEntry.trim()); }}>
+        <h1 className="entry-title">QBooker</h1>
+        <p className="muted entry-copy">
           This page needs a business link to know who you're booking with — normally you'd arrive here
           via a link shared by the business. For testing, paste the business ID shown in their Admin portal.
         </p>
-        <input className="input" placeholder="Business ID" value={manualEntry} onChange={(e) => setManualEntry(e.target.value)} />
-        <button className="btn" disabled={!manualEntry.trim()} onClick={() => setTenantId(manualEntry.trim())}>Continue</button>
-      </div>
+        <label className="sr-only" htmlFor="biz-id">Business ID</label>
+        <input id="biz-id" className="input" placeholder="Business ID" autoComplete="off" value={manualEntry} onChange={(e) => setManualEntry(e.target.value)} />
+        <button className="btn btn-accent" type="submit" disabled={!manualEntry.trim()}>Continue</button>
+      </form>
     );
   }
 
@@ -55,6 +56,9 @@ function CustomerWhatsApp({ tenantId }) {
   const [cancelling, setCancelling] = useState(false);
   const [arrived, setArrived] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
+  const [serviceName, setServiceName] = useState(""); // header subtitle only (display)
+  const [pickedIdx, setPickedIdx] = useState(null); // visual "selected" state for the tapped option
+  const scrollRef = useRef(null);
   const lastStatusRef = useRef(null);
   const reminderSentRef = useRef(false);
 
@@ -104,6 +108,12 @@ function CustomerWhatsApp({ tenantId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedTicket, tenantId]);
 
+  useEffect(() => { setPickedIdx(null); }, [options]);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, options]);
+
   async function checkInNow() {
     if (!watchedTicket) return;
     setCheckingIn(true);
@@ -135,11 +145,12 @@ function CustomerWhatsApp({ tenantId }) {
     }
   }
 
-  function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text }]); setOptions(opts || []); }
+  function bot(text, opts, ticket) { setMessages((m) => [...m, { from: "bot", text, ticket }]); setOptions(opts || []); }
   function user(text) { setMessages((m) => [...m, { from: "user", text }]); }
 
   async function handle(action, payload) {
     if (action === "greet") {
+      setServiceName("");
       user("Hi");
       if (locations.length > 1) {
         const checks = await Promise.all(locations.map(async (l) => {
@@ -166,6 +177,7 @@ function CustomerWhatsApp({ tenantId }) {
       await showServices(payload);
     } else if (action === "svc") {
       const svc = services.find((s) => s.id === payload);
+      setServiceName(svc.name);
       user(svc.name);
       try {
         const r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes());
@@ -208,14 +220,12 @@ function CustomerWhatsApp({ tenantId }) {
       const svc = services.find((s) => s.id === payload);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null });
-        let text = `You're checked in ✅ Your ticket number: ${r.ticket.ticket_number}\n`;
-        if (r.queue) {
-          text += `You're #${r.queue.position} in line`;
-          if (r.queue.estimatedMinutes != null) text += ` — about ${r.queue.estimatedMinutes} min`;
-          text += `.\n`;
-        }
-        text += `We'll message you here when it's your turn.`;
-        bot(text, [{ label: "Simulate a new customer", action: "restart" }]);
+        bot("You're checked in ✅\nWe'll message you here when it's your turn.", [{ label: "Simulate a new customer", action: "restart" }], {
+          number: r.ticket.ticket_number,
+          position: r.queue ? r.queue.position : null,
+          eta: r.queue && r.queue.estimatedMinutes != null ? `About ${r.queue.estimatedMinutes} min` : null,
+          service: svc.name,
+        });
         lastStatusRef.current = "waiting";
         setTicketStatus("waiting");
         setQueueInfo(r.queue || null);
@@ -225,7 +235,13 @@ function CustomerWhatsApp({ tenantId }) {
       const svc = services.find((s) => s.id === payload.serviceId);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime });
-        bot(`You're booked ✅ ${formatTime(payload.slotTime)} today. Ticket: ${r.ticket.ticket_number}\nWe'll message you here when it's your turn.`, [{ label: "Simulate a new customer", action: "restart" }]);
+        bot("You're booked ✅\nWe'll message you here when it's your turn.", [{ label: "Simulate a new customer", action: "restart" }], {
+          number: r.ticket.ticket_number,
+          position: null,
+          eta: `${formatTime(payload.slotTime)} today`,
+          etaLabel: "Appointment",
+          service: svc.name,
+        });
         lastStatusRef.current = "booked";
         setTicketStatus("booked");
         setQueueInfo(null);
@@ -238,6 +254,7 @@ function CustomerWhatsApp({ tenantId }) {
       setTicketStatus(null);
       setQueueInfo(null);
       lastStatusRef.current = null;
+      setServiceName("");
       setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
       setOptions([{ label: "Hi", action: "greet" }]);
     }
@@ -284,52 +301,90 @@ function CustomerWhatsApp({ tenantId }) {
   }
 
   if (notFound) {
-    return <div className="narrow card" style={{ marginTop: 60, color: "var(--error)" }}>We couldn't find that business. Check the link and try again.</div>;
+    return <div className="narrow card screen-error" role="alert">We couldn't find that business. Check the link and try again.</div>;
   }
 
+  const showStatus = watchedTicket && (ticketStatus === "waiting" || ticketStatus === "booked");
+
   return (
-    <div>
-      <div className="header row" style={{ justifyContent: "space-between" }}>
-        <strong>{businessName || "QBooker"}</strong>
+    <div className="app">
+      <header className="chat-head">
+        <span className="chat-avatar" aria-hidden="true">{(businessName || "Q").trim().charAt(0).toUpperCase()}</span>
+        <div className="chat-head-text">
+          <h1 className="chat-title">{businessName || "QBooker"}</h1>
+          <p className="chat-sub">{serviceName || "Queue & bookings"}</p>
+        </div>
+      </header>
+      {error && (
+        <div className="chat-error" role="alert">
+          <span>{error}</span>
+          <button className="btn-outline" onClick={() => setError("")}>Dismiss</button>
+        </div>
+      )}
+      <div className="chat-scroll" ref={scrollRef}>
+        <div className="chat-list" role="log" aria-live="polite" aria-label="Conversation">
+          {messages.map((m, i) => (
+            <div key={i} className={`msg msg-${m.from}`}>
+              <div className="bubble">{m.text}</div>
+              {m.ticket && (
+                <div className="ticket" aria-label={`Ticket ${m.ticket.number}`}>
+                  <div className="ticket-top">
+                    <span className="ticket-label">Your ticket{m.ticket.service ? ` · ${m.ticket.service}` : ""}</span>
+                    <span className="ticket-num mono">{m.ticket.number}</span>
+                  </div>
+                  <dl className="ticket-meta">
+                    {m.ticket.position != null && (
+                      <div><dt>Position</dt><dd>#{m.ticket.position}</dd></div>
+                    )}
+                    {m.ticket.eta && (
+                      <div><dt>{m.ticket.etaLabel || "Estimated wait"}</dt><dd>{m.ticket.eta}</dd></div>
+                    )}
+                  </dl>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
-      {error && <div className="container"><div className="card" style={{ borderColor: "var(--error)", color: "var(--error)" }}>{error} <button className="btn-outline" style={{ marginLeft: 8 }} onClick={() => setError("")}>Dismiss</button></div></div>}
-      <div className="narrow stack">
-        <div className="card stack" style={{ minHeight: 300 }}>
-          {messages.map((m, i) => <div key={i} style={{ textAlign: m.from === "user" ? "right" : "left", whiteSpace: "pre-line" }}>{m.text}</div>)}
-          <div className="wrap">
+
+      <footer className="chat-foot">
+        {options.length > 0 && (
+          <div className="replies" role="group" aria-label="Reply options">
             {options.map((o, i) => (
               <button
                 key={i}
-                className="btn-outline"
+                type="button"
+                className={`reply${pickedIdx === i ? " is-picked" : ""}${o.action === "restart" ? " reply-quiet" : ""}`}
                 disabled={o.disabled}
-                style={o.disabled ? { opacity: 0.5, cursor: "default" } : undefined}
-                onClick={() => { if (!o.disabled) handle(o.action, o.payload); }}
+                aria-pressed={pickedIdx === i}
+                onClick={() => { if (!o.disabled) { setPickedIdx(i); handle(o.action, o.payload); } }}
               >
                 {o.label}
               </button>
             ))}
           </div>
-        </div>
+        )}
 
-        {watchedTicket && (ticketStatus === "waiting" || ticketStatus === "booked") && (
-          <div className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13 }}>
+        {showStatus && (
+          <div className="status-bar">
+            <p className="status-text">
               {watchedTicket.type === "walk_in" && queueInfo && (
                 <>You're <strong>#{queueInfo.position}</strong> in line{queueInfo.estimatedMinutes != null && ` — about ${queueInfo.estimatedMinutes} min`}</>
               )}
-              {watchedTicket.type === "booked" && <>Booked for {formatTime(watchedTicket.slotTime)} today</>}
-            </div>
-            <div className="row" style={{ gap: 8 }}>
+              {watchedTicket.type === "walk_in" && !queueInfo && <>You're in the queue</>}
+              {watchedTicket.type === "booked" && <>Booked for <strong>{formatTime(watchedTicket.slotTime)}</strong> today</>}
+            </p>
+            <div className="status-actions">
               {watchedTicket.type === "booked" && (arrived
-                ? <span className="badge badge-green">✓ Checked in</span>
-                : <button className="btn" disabled={checkingIn} onClick={checkInNow}>{checkingIn ? "Checking in…" : "Check in"}</button>)}
-              <button className="btn-outline" style={{ color: "var(--error)" }} disabled={cancelling} onClick={cancelMyTicket}>
+                ? <span className="badge badge-green checked">✓ Checked in</span>
+                : <button className="btn btn-accent btn-checkin" disabled={checkingIn} onClick={checkInNow}>{checkingIn ? "Checking in…" : "Check in"}</button>)}
+              <button className="btn-outline danger" disabled={cancelling} onClick={cancelMyTicket}>
                 {cancelling ? "Cancelling…" : "Cancel"}
               </button>
             </div>
           </div>
         )}
-      </div>
+      </footer>
     </div>
   );
 }

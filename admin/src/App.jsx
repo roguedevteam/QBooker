@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { priceText } from "./lib/vat.js";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import { api, setToken, hasToken } from "./lib/api.js";
 
 const PLAN_LABELS = { day: "Day", week: "Week", month: "Month", year: "Year", custom: "Custom" };
@@ -11,6 +11,70 @@ const LICENSE_STATUS_META = {
   expired: { label: "Expired", color: "red" },
   refunded: { label: "Refunded", color: "red" },
 };
+
+const TAB_TITLES = { dashboard: "Dashboard", customers: "Customers", pricing: "Pricing", testing: "Testing" };
+const TABS = ["dashboard", "customers", "pricing", "testing"];
+
+function BackIcon({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+  );
+}
+function DotsIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+  );
+}
+const NAV_PATHS = {
+  dashboard: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  customers: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 5a3.5 3.5 0 010 7M18 14c2 .6 3.5 2.4 3.5 6" /></>,
+  pricing: <><path d="M3 12l9-9h8v8l-9 9z" /><circle cx="15.5" cy="8.5" r="1.3" /></>,
+  testing: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  signout: <path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />,
+};
+function NavIcon({ name }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">{NAV_PATHS[name]}</svg>
+  );
+}
+
+// Small "More" (three-dots) popover menu: items are 44px tall; closes on outside click, Escape or choice.
+function MoreMenu({ items, label = "More actions" }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const shown = items.filter(Boolean);
+  if (shown.length === 0) return null;
+  return (
+    <span className="menu-wrap" ref={ref}>
+      <button type="button" className="btn-outline icon-btn" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <DotsIcon />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {shown.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={it.danger ? "danger" : undefined} onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function statusBadgeClass(status) { return status === "active" ? "green" : status === "disabled" ? "red" : "amber"; }
+const money0 = (n) => `£${Number(n).toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
 // Address is stored as one "line1, line2, city, postcode" string on tenants.company_address
@@ -56,21 +120,21 @@ function AddressFields({ tenantId, companyAddress, onSaved, setError }) {
 
   return (
     <>
-      <label className="stack" style={{ gap: 2 }}>
-        <span className="muted" style={{ fontSize: 11 }}>Address line 1</span>
-        <input className="input" style={{ width: 180 }} value={line1} onChange={(e) => setLine1(e.target.value)} onBlur={save} />
+      <label className="field span2">
+        <span className="field-label">Address line 1</span>
+        <input className="input" autoComplete="off" value={line1} onChange={(e) => setLine1(e.target.value)} onBlur={save} />
       </label>
-      <label className="stack" style={{ gap: 2 }}>
-        <span className="muted" style={{ fontSize: 11 }}>Address line 2</span>
-        <input className="input" style={{ width: 180 }} value={line2} onChange={(e) => setLine2(e.target.value)} onBlur={save} />
+      <label className="field span2">
+        <span className="field-label">Address line 2</span>
+        <input className="input" autoComplete="off" value={line2} onChange={(e) => setLine2(e.target.value)} onBlur={save} />
       </label>
-      <label className="stack" style={{ gap: 2 }}>
-        <span className="muted" style={{ fontSize: 11 }}>City</span>
-        <input className="input" style={{ width: 140 }} value={city} onChange={(e) => setCity(e.target.value)} onBlur={save} />
+      <label className="field">
+        <span className="field-label">City</span>
+        <input className="input" autoComplete="off" value={city} onChange={(e) => setCity(e.target.value)} onBlur={save} />
       </label>
-      <label className="stack" style={{ gap: 2 }}>
-        <span className="muted" style={{ fontSize: 11 }}>Post / zip code</span>
-        <input className="input" style={{ width: 110 }} value={postcode} onChange={(e) => setPostcode(e.target.value)} onBlur={save} />
+      <label className="field">
+        <span className="field-label">Post / zip code</span>
+        <input className="input" autoComplete="off" value={postcode} onChange={(e) => setPostcode(e.target.value)} onBlur={save} />
       </label>
     </>
   );
@@ -115,19 +179,21 @@ function Login({ onSignedIn, setError, error }) {
   }
 
   return (
-    <div className="narrow" style={{ paddingTop: 80 }}>
-      <div className="card stack">
+    <div className="login-wrap">
+      <form className="card stack" onSubmit={(e) => { e.preventDefault(); if (!submitting) submit(); }}>
         <div className="row" style={{ marginBottom: 4 }}><Logo /></div>
-        <h2 style={{ margin: 0 }}>System Admin</h2>
-        <p className="muted" style={{ fontSize: 13 }}>Platform team only. Not linked from the customer-facing site.</p>
-        <input
-          className="input" type="password" placeholder="Password" value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <button className="btn" disabled={submitting} onClick={submit}>{submitting ? "Signing in…" : "Sign in"}</button>
-        {error && <div style={{ color: "var(--error)", fontSize: 13 }}>{error}</div>}
-      </div>
+        <h1>System Admin</h1>
+        <p className="muted small" style={{ margin: 0 }}>Platform team only. Not linked from the customer-facing site.</p>
+        <label className="field">
+          <span className="field-label">Password</span>
+          <input
+            className="input" type="password" autoComplete="current-password" value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+        <button className="btn btn-accent" type="submit" disabled={submitting}>{submitting ? "Signing in…" : "Sign in"}</button>
+        {error && <div role="alert" style={{ color: "var(--error)", fontSize: 14 }}>{error}</div>}
+      </form>
     </div>
   );
 }
@@ -139,7 +205,7 @@ function Dashboard({ setError, error, onSignOut }) {
   const [pricing, setPricing] = useState({ day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } });
   const [overview, setOverview] = useState(null);
   const [customerSearch, setCustomerSearch] = useState("");
-  const [customerStatusFilter, setCustomerStatusFilter] = useState("all"); // all | enabled | disabled
+  const [customerStatusFilter, setCustomerStatusFilter] = useState("all"); // all | unpaid | pending | enabled | disabled
 
   async function refresh() {
     try {
@@ -159,6 +225,8 @@ function Dashboard({ setError, error, onSignOut }) {
     if (q && !t.business_name?.toLowerCase().includes(q) && !t.email?.toLowerCase().includes(q)) return false;
     if (customerStatusFilter === "disabled" && t.status !== "disabled") return false;
     if (customerStatusFilter === "enabled" && t.status === "disabled") return false;
+    if (customerStatusFilter === "pending" && t.status !== "pending") return false;
+    if (customerStatusFilter === "unpaid" && !(Number(t.unpaid_count) > 0)) return false;
     return true;
   });
 
@@ -166,180 +234,286 @@ function Dashboard({ setError, error, onSignOut }) {
     ? Object.entries(overview.revenueByPlan).map(([planId, revenue]) => ({ name: PLAN_LABELS[planId] || planId, Revenue: revenue }))
     : [];
 
+  async function enableTenant(t) { await api.updateTenant(t.id, { status: "active" }); refresh(); }
+  async function disableTenant(t) {
+    if (confirm(`Disable "${t.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) {
+      await api.updateTenant(t.id, { status: "disabled" }); refresh();
+    }
+  }
+  async function deleteTenantRow(t) { if (confirmDeleteCustomer(t.business_name)) { await api.deleteTenant(t.id); refresh(); } }
+
+  function goTab(t) {
+    if (t === "customers" && tab === "customers" && viewingTenantId) { setViewingTenantId(null); refresh(); }
+    setTab(t);
+  }
+  const unpaidTenants = tenants.filter((t) => Number(t.unpaid_count) > 0);
+  const filterCounts = {
+    all: tenants.length,
+    unpaid: unpaidTenants.length,
+    pending: tenants.filter((t) => t.status === "pending").length,
+    enabled: tenants.filter((t) => t.status !== "disabled").length,
+    disabled: tenants.filter((t) => t.status === "disabled").length,
+  };
+
   return (
-    <div>
-      <div className="header row" style={{ justifyContent: "space-between" }}>
-        <Logo />
-        <div className="row">
-          <span className="muted" style={{ fontSize: 13 }}>System Admin</span>
-          <button className="btn-outline" onClick={onSignOut}>Sign out</button>
+    <div className="shell">
+      <aside className="sidebar" aria-label="Sidebar">
+        <div className="side-brand">
+          <div className="eyebrow">QBooker</div>
+          <div className="name">System admin</div>
         </div>
-      </div>
-      <div className="container stack">
-        {error && <div className="card" style={{ borderColor: "var(--error)", color: "var(--error)" }}>{error}</div>}
-        <div className="wrap">
-          {["dashboard", "customers", "pricing", "testing"].map((t) => (
-            <button key={t} className={tab === t ? "btn" : "btn-outline"} onClick={() => setTab(t)}>{t}</button>
+        <nav aria-label="Main">
+          {TABS.map((t) => (
+            <button key={t} type="button" className={`side-link${tab === t ? " active" : ""}`} aria-current={tab === t ? "page" : undefined} onClick={() => goTab(t)}>
+              <NavIcon name={t} />{TAB_TITLES[t]}
+            </button>
           ))}
-        </div>
+        </nav>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="side-link" onClick={onSignOut}><NavIcon name="signout" />Sign out</button>
+      </aside>
 
-        {tab === "dashboard" && overview && (
-          <div className="stack">
-            <div className="wrap">
-              <div className="card">£{overview.totalRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Revenue, ex VAT (active)</div></div>
-              <div className="card">£{overview.pendingRevenue.toFixed(2)}<div className="muted" style={{ fontSize: 11 }}>Pending invoices, ex VAT</div></div>
-              <div className="card">{overview.customerCount}<div className="muted" style={{ fontSize: 11 }}>Customers</div></div>
-              <div className="card">{overview.totalLocations}<div className="muted" style={{ fontSize: 11 }}>Locations, all customers</div></div>
-            </div>
-            {overview.deletedCustomerCount > 0 && (
-              <div className="muted" style={{ fontSize: 12 }}>
-                Includes £{overview.deletedRevenue.toFixed(2)} (ex VAT) from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
-              </div>
-            )}
-            <div className="card">
-              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Revenue by plan type (active customers)</div>
-              <div className="chart-wrap">
-                <ResponsiveContainer>
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#DEDDD6" />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Bar dataKey="Revenue" fill="#1D5C8A" radius={[0, 0, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              {chartData.length === 0 && <div className="muted" style={{ textAlign: "center", padding: 20 }}>No active customers yet.</div>}
-            </div>
+      <div style={{ minWidth: 0 }}>
+        <header className="app-header is-admin">
+          <div className="grow">
+            <div className="eyebrow">QBooker</div>
+            <div className="name">System admin</div>
           </div>
-        )}
+          <button type="button" className="signout" onClick={onSignOut}>Sign out</button>
+        </header>
 
-        {tab === "customers" && viewingTenantId && (
-          <CustomerDetail
-            tenantId={viewingTenantId}
-            onBack={() => { setViewingTenantId(null); refresh(); }}
-            setError={setError}
-          />
-        )}
+        <main className="shell-main stack" style={{ gap: 16 }}>
+          {error && <div className="err-banner" role="alert"><span className="grow">{error}</span><button type="button" className="btn-outline" onClick={() => setError("")}>Dismiss</button></div>}
 
-        {tab === "customers" && !viewingTenantId && (
-          <div className="stack">
-            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-              <input
-                className="input" style={{ width: 280 }}
-                placeholder="Search business or email…"
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-              />
-              <div className="row">
-                {[
-                  { id: "all", label: "All" },
-                  { id: "enabled", label: "Enabled" },
-                  { id: "disabled", label: "Disabled" },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    className={customerStatusFilter === f.id ? "btn" : "btn-outline"}
-                    onClick={() => setCustomerStatusFilter(f.id)}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+          {!(tab === "customers" && viewingTenantId) && (
+            <div className="page-head"><h1>{TAB_TITLES[tab]}</h1></div>
+          )}
+
+          {tab === "dashboard" && !overview && !error && <div className="card muted">Loading…</div>}
+          {tab === "dashboard" && overview && (
+            <div className="stack" style={{ gap: 16 }}>
+              <section className="stat-grid" aria-label="Key figures">
+                <div className="stat"><div className="stat-num">£{overview.totalRevenue.toFixed(2)}</div><div className="stat-label">Revenue, ex VAT (active)</div></div>
+                <div className="stat"><div className="stat-num warn">£{overview.pendingRevenue.toFixed(2)}</div><div className="stat-label">Pending invoices, ex VAT</div></div>
+                <div className="stat"><div className="stat-num">{overview.customerCount}</div><div className="stat-label">Customers</div></div>
+                <div className="stat"><div className="stat-num">{overview.totalLocations}</div><div className="stat-label">Locations, all customers</div></div>
+              </section>
+
+              {unpaidTenants.length > 0 && (
+                <div className="alert-strip">
+                  <div className="alert-row">
+                    <span><strong>{unpaidTenants.length} customer{unpaidTenants.length === 1 ? "" : "s"}</strong> {unpaidTenants.length === 1 ? "has" : "have"} unpaid licences</span>
+                    <button type="button" className="btn btn-accent" onClick={() => { setCustomerStatusFilter("unpaid"); setCustomerSearch(""); setViewingTenantId(null); setTab("customers"); }}>Review</button>
+                  </div>
+                </div>
+              )}
+
+              <section className="card stack" aria-labelledby="rev-plan">
+                <h2 id="rev-plan">Revenue by plan type, ex VAT (active customers)</h2>
+                {chartData.length > 0 ? (
+                  <div className="chart-wrap" style={{ height: Math.max(160, chartData.length * 56 + 30) }} role="img" aria-label={`Revenue by plan: ${chartData.map((d) => `${d.name} ${money0(d.Revenue)}`).join(", ")}`}>
+                    <ResponsiveContainer>
+                      <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E1E1DB" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 13 }} tickFormatter={(v) => `£${v}`} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 14 }} width={64} />
+                        <Tooltip formatter={(v) => money0(v)} cursor={{ fill: "#EEEEE9" }} />
+                        <Bar dataKey="Revenue" fill="#1D5C8A" radius={[0, 0, 0, 0]}>
+                          <LabelList dataKey="Revenue" position="right" formatter={(v) => money0(v)} style={{ fontSize: 13, fontWeight: 600 }} />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="muted" style={{ textAlign: "center", padding: 20 }}>No active customers yet.</div>
+                )}
+              </section>
+
+              {overview.deletedCustomerCount > 0 && (
+                <div className="muted small">
+                  Includes £{overview.deletedRevenue.toFixed(2)} (ex VAT) from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
+                </div>
+              )}
             </div>
-            <div className="card">
-            <table>
-              <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>License spend</th><th>Status</th><th>Actions</th></tr></thead>
-              <tbody>
-                {filteredTenants.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 20 }}>{tenants.length === 0 ? "No customers yet." : "No customers match your search."}</td></tr>}
-                {filteredTenants.map((t) => (
-                  <tr key={t.id}>
-                    <td>
-                      <button
-                        className="btn-outline"
-                        style={{ border: "none", padding: 0, background: "transparent", fontWeight: 600, textDecoration: "underline" }}
-                        onClick={() => setViewingTenantId(t.id)}
-                      >
-                        {t.business_name}
-                      </button>
-                    </td>
-                    <td>{t.email}</td>
-                    <td>
-                      {t.signup_country
-                        ? <span className={t.signup_country === "GB" ? "muted" : "badge badge-amber"} style={{ fontSize: 12 }} title={t.signup_country !== "GB" ? "Signed up from outside the UK — worth a second look" : undefined}>{t.signup_country}</span>
-                        : <span className="muted" style={{ fontSize: 12 }}>—</span>}
-                    </td>
-                    <td>{t.service_count}</td>
-                    <td>{t.location_count}</td>
-                    <td>£{Number(t.total_spend).toFixed(2)}</td>
-                    <td>
-                      <span className={`badge badge-${t.status === "active" ? "green" : t.status === "disabled" ? "red" : "amber"}`}>{t.status}</span>
-                      {Number(t.unpaid_count) > 0 && <span className="badge badge-red" style={{ marginLeft: 6 }} title="Invoice licenses awaiting payment — open the customer to mark them paid">{t.unpaid_count} unpaid</span>}
-                    </td>
-                    <td className="row">
-                      <button className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
-                      {t.status === "disabled"
-                        ? <button className="btn-outline" onClick={async () => { await api.updateTenant(t.id, { status: "active" }); refresh(); }}>Enable</button>
-                        : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${t.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(t.id, { status: "disabled" }); refresh(); } }}>Disable</button>}
-                      <button className="btn-outline" onClick={async () => { if (confirmDeleteCustomer(t.business_name)) { await api.deleteTenant(t.id); refresh(); } }}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        )}
+          )}
 
-        {tab === "pricing" && (
-          <div className="stack">
-            <div className="muted" style={{ fontSize: 12 }}>Enter prices without VAT. Customers see the VAT-inclusive amount (20%) in brackets.</div>
-            <div className="card wrap">
-              {["day", "week", "month", "year"].map((k) => (
-                <label key={k} className="stack" style={{ gap: 4 }}>
-                  <span className="muted">{PLAN_LABELS[k]} (per location)</span>
-                  <input className="input" style={{ width: 100 }} type="number" value={pricing[k]}
-                    onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
+          {tab === "customers" && viewingTenantId && (
+            <CustomerDetail
+              tenantId={viewingTenantId}
+              onBack={() => { setViewingTenantId(null); refresh(); }}
+              setError={setError}
+            />
+          )}
+
+          {tab === "customers" && !viewingTenantId && (
+            <div className="stack" style={{ gap: 12 }}>
+              <div className="toolbar">
+                <label className="field" style={{ flex: "none" }}>
+                  <span className="sr-only">Search customers</span>
+                  <input
+                    className="input search" type="search"
+                    placeholder="Search business or email…"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                  />
                 </label>
-              ))}
-              <label className="stack" style={{ gap: 4 }}>
-                <span className="muted">Custom (per location/day)</span>
-                <input className="input" style={{ width: 100 }} type="number" value={pricing.customDailyRate}
-                  onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
-              </label>
-              <button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button>
-              <div className="muted" style={{ fontSize: 11, width: "100%" }}>Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
-            </div>
+                <div className="chips" role="group" aria-label="Filter customers">
+                  {[
+                    { id: "all", label: "All" },
+                    { id: "unpaid", label: "Unpaid" },
+                    { id: "pending", label: "Pending" },
+                    { id: "enabled", label: "Enabled" },
+                    { id: "disabled", label: "Disabled" },
+                  ].map((f) => (
+                    <button
+                      key={f.id} type="button"
+                      className={`chip${customerStatusFilter === f.id ? " on" : ""}`}
+                      aria-pressed={customerStatusFilter === f.id}
+                      onClick={() => setCustomerStatusFilter(f.id)}
+                    >
+                      {f.label} {filterCounts[f.id]}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="card stack">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>Sale</div>
-                <label className="row" style={{ gap: 6 }}>
-                  <input type="checkbox" checked={pricing.sale?.active || false}
-                    onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, active: e.target.checked } }))} />
-                  <span className="muted" style={{ fontSize: 12 }}>Sale active</span>
-                </label>
-              </div>
-              <div className="muted" style={{ fontSize: 11 }}>
-                Manual only — no scheduling or automatic expiry. Leave a plan's discount price blank to leave it at full price.
-                Shown on the marketing page (and charged) whenever "Sale active" is on.
-              </div>
-              <div className="wrap">
-                {["day", "week", "month", "year"].map((k) => (
-                  <label key={k} className="stack" style={{ gap: 4 }}>
-                    <span className="muted">{PLAN_LABELS[k]} sale price</span>
-                    <input className="input" style={{ width: 100 }} type="number" placeholder="—"
-                      value={pricing.sale?.[k] ?? ""}
-                      onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, [k]: e.target.value === "" ? null : Number(e.target.value) } }))} />
+              {filteredTenants.length === 0 && (
+                <div className="card muted" style={{ textAlign: "center", padding: 20 }}>{tenants.length === 0 ? "No customers yet." : "No customers match your search."}</div>
+              )}
+
+              {filteredTenants.length > 0 && (
+                <>
+                  <div className="stack show-narrow" style={{ gap: 12 }}>
+                    {filteredTenants.map((t) => (
+                      <div key={t.id} className="cust-card">
+                        <button type="button" className="cust-open" onClick={() => setViewingTenantId(t.id)} aria-label={`Open ${t.business_name}`}>
+                          <span className="cust-name">{t.business_name}</span>
+                          <span className={`badge badge-${statusBadgeClass(t.status)}`}>{t.status}</span>
+                        </button>
+                        <div className="small muted" style={{ overflowWrap: "anywhere" }}>
+                          {t.email}{t.signup_country ? ` · ${t.signup_country}` : ""}
+                        </div>
+                        <div className="cust-meta">
+                          <span>{t.location_count} location{Number(t.location_count) === 1 ? "" : "s"}</span>
+                          <span>{t.service_count} service{Number(t.service_count) === 1 ? "" : "s"}</span>
+                          <span className="mono">£{Number(t.total_spend).toFixed(2)}</span>
+                        </div>
+                        <div className="wrap" style={{ gap: 8 }}>
+                          {t.signup_country && t.signup_country !== "GB" && <span className="badge badge-amber" title="Signed up from outside the UK — worth a second look">Outside UK: {t.signup_country}</span>}
+                          {Number(t.unpaid_count) > 0 && <span className="badge badge-amber">{t.unpaid_count} unpaid</span>}
+                          <span className="grow" />
+                          <button type="button" className="btn" onClick={() => setViewingTenantId(t.id)}>View</button>
+                          <MoreMenu label={`More actions for ${t.business_name}`} items={[
+                            t.status === "disabled"
+                              ? { label: "Enable", onClick: () => enableTenant(t) }
+                              : { label: "Disable", danger: true, onClick: () => disableTenant(t) },
+                            { label: "Delete", danger: true, onClick: () => deleteTenantRow(t) },
+                          ]} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="table-card show-wide">
+                    <table>
+                      <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>Licence spend, ex VAT</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                      <tbody>
+                        {filteredTenants.map((t) => (
+                          <tr key={t.id}>
+                            <td><button type="button" className="link-btn" onClick={() => setViewingTenantId(t.id)}>{t.business_name}</button></td>
+                            <td style={{ overflowWrap: "anywhere" }}>{t.email}</td>
+                            <td>
+                              {t.signup_country
+                                ? <span className={t.signup_country === "GB" ? "muted" : "badge badge-amber"} title={t.signup_country !== "GB" ? "Signed up from outside the UK — worth a second look" : undefined}>{t.signup_country}</span>
+                                : <span className="muted">—</span>}
+                            </td>
+                            <td>{t.service_count}</td>
+                            <td>{t.location_count}</td>
+                            <td className="num">£{Number(t.total_spend).toFixed(2)}</td>
+                            <td>
+                              <span className={`badge badge-${statusBadgeClass(t.status)}`}>{t.status}</span>
+                              {Number(t.unpaid_count) > 0 && <span className="badge badge-amber" style={{ marginLeft: 6 }} title="Invoice licenses awaiting payment — open the customer to mark them paid">{t.unpaid_count} unpaid</span>}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                <button type="button" className="btn-outline" onClick={() => setViewingTenantId(t.id)}>View</button>
+                                {t.status === "disabled"
+                                  ? <button type="button" className="btn-outline" onClick={() => enableTenant(t)}>Enable</button>
+                                  : <button type="button" className="btn-outline danger" onClick={() => disableTenant(t)}>Disable</button>}
+                                <button type="button" className="btn-outline" onClick={() => deleteTenantRow(t)}>Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "pricing" && (
+            <div className="stack" style={{ gap: 16 }}>
+              <p className="muted small" style={{ margin: 0 }}>Enter prices without VAT. Customers see the VAT-inclusive amount (20%) in brackets.</p>
+              <section className="card stack" aria-labelledby="plan-prices">
+                <h2 id="plan-prices">Plan prices</h2>
+                <div className="price-grid">
+                  {["day", "week", "month", "year"].map((k) => (
+                    <label key={k} className="field">
+                      <span className="field-label">{PLAN_LABELS[k]} (per location)</span>
+                      <input className="input" type="number" inputMode="decimal" value={pricing[k]}
+                        onChange={(e) => setPricing((p) => ({ ...p, [k]: Number(e.target.value) }))} />
+                    </label>
+                  ))}
+                  <label className="field">
+                    <span className="field-label">Custom (per location/day)</span>
+                    <input className="input" type="number" inputMode="decimal" value={pricing.customDailyRate}
+                      onChange={(e) => setPricing((p) => ({ ...p, customDailyRate: Number(e.target.value) }))} />
                   </label>
-                ))}
-              </div>
-              <div><button className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save sale</button></div>
-            </div>
-          </div>
-        )}
+                </div>
+                <div className="form-actions"><button type="button" className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save pricing</button></div>
+                <div className="field-hint">Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
+              </section>
 
-        {tab === "testing" && <ClockPanel setError={setError} />}
+              <section className="card stack" aria-labelledby="sale-h">
+                <div className="row spread">
+                  <h2 id="sale-h">Sale</h2>
+                  <label className="checkbox-row">
+                    <input type="checkbox" checked={pricing.sale?.active || false}
+                      onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, active: e.target.checked } }))} />
+                    <span>Sale active</span>
+                  </label>
+                </div>
+                <div className="field-hint">
+                  Manual only — no scheduling or automatic expiry. Leave a plan's discount price blank to leave it at full price.
+                  Shown on the marketing page (and charged) whenever "Sale active" is on.
+                </div>
+                <div className="price-grid four">
+                  {["day", "week", "month", "year"].map((k) => (
+                    <label key={k} className="field">
+                      <span className="field-label">{PLAN_LABELS[k]} sale price</span>
+                      <input className="input" type="number" inputMode="decimal" placeholder="—"
+                        value={pricing.sale?.[k] ?? ""}
+                        onChange={(e) => setPricing((p) => ({ ...p, sale: { ...p.sale, [k]: e.target.value === "" ? null : Number(e.target.value) } }))} />
+                    </label>
+                  ))}
+                </div>
+                <div className="form-actions"><button type="button" className="btn" onClick={async () => { await api.putPricing(pricing); refresh(); }}>Save sale</button></div>
+              </section>
+            </div>
+          )}
+
+          {tab === "testing" && <ClockPanel setError={setError} />}
+        </main>
+
+        <nav className="bottom-nav" aria-label="Main">
+          {TABS.map((t) => (
+            <button key={t} type="button" className={tab === t ? "active" : undefined} aria-current={tab === t ? "page" : undefined} onClick={() => goTab(t)}>
+              <NavIcon name={t} />{TAB_TITLES[t]}
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );
@@ -364,23 +538,31 @@ function GrantFreeLicense({ tenantId, service, onGranted, setError }) {
     }
   }
 
-  if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Free license</button>;
+  if (!open) return <button type="button" className="btn-outline" onClick={() => setOpen(true)}>+ Free license</button>;
   return (
-    <span className="row" style={{ gap: 4 }}>
-      <select value={planId} onChange={(e) => setPlanId(e.target.value)}>
-        {["day", "week", "month", "year", "custom"].map((id) => (
-          <option key={id} value={id}>{PLAN_LABELS[id]}</option>
-        ))}
-      </select>
+    <div className="inline-form" role="group" aria-label={`Grant free license on ${service.name}`}>
+      <label className="field">
+        <span className="field-label">Plan</span>
+        <select value={planId} onChange={(e) => setPlanId(e.target.value)}>
+          {["day", "week", "month", "year", "custom"].map((id) => (
+            <option key={id} value={id}>{PLAN_LABELS[id]}</option>
+          ))}
+        </select>
+      </label>
       {planId === "custom" && (
-        <input
-          className="input" type="number" min={1} style={{ width: 60 }} value={customDays}
-          onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))}
-        />
+        <label className="field">
+          <span className="field-label">Days</span>
+          <input
+            className="input" type="number" min={1} inputMode="numeric" value={customDays}
+            onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))}
+          />
+        </label>
       )}
-      <button className="btn" disabled={granting} onClick={grant}>{granting ? "Granting…" : "Grant"}</button>
-      <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
-    </span>
+      <div className="form-actions">
+        <button type="button" className="btn" disabled={granting} onClick={grant}>{granting ? "Granting…" : "Grant"}</button>
+        <button type="button" className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -396,36 +578,47 @@ function StaffUsers({ tenantId, staff, onChanged, setError }) {
     try { await api.deleteTenantStaff(tenantId, m.id); onChanged(); } catch (err) { setError(err.message); }
   }
   return (
-    <div className="stack" style={{ gap: 6 }}>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>Staff users ({staff.length})</div>
+    <section className="stack" style={{ gap: 10 }} aria-labelledby="staff-h">
+      <h2 id="staff-h">Staff users ({staff.length})</h2>
       <div className="card">
-        <table>
-          <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th></th></tr></thead>
-          <tbody>
-            {staff.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff users on this account.</td></tr>}
-            {staff.map((m) => editId === m.id ? (
-              <tr key={m.id}>
-                <td><input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
-                <td><input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
-                <td><input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
-                <td className="row">
-                  <button className="btn" disabled={!edit.firstName.trim() || !edit.lastName.trim() || !edit.email.trim()} onClick={() => save(m.id)}>Save</button>
-                  <button className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
-                </td>
-              </tr>
-            ) : (
-              <tr key={m.id}>
-                <td>{m.first_name}</td><td>{m.last_name}</td><td>{m.email}</td>
-                <td className="row">
-                  <button className="btn-outline" onClick={() => { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }}>Edit</button>
-                  <button className="btn-outline" style={{ color: "#B3261E" }} onClick={() => remove(m)}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {staff.length === 0 && <div className="muted" style={{ textAlign: "center", padding: 8 }}>No staff users on this account.</div>}
+        {staff.map((m) => editId === m.id ? (
+          <div key={m.id} className="staff-card">
+            <div className="form-grid">
+              <label className="field">
+                <span className="field-label">First name</span>
+                <input className="input" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} />
+              </label>
+              <label className="field">
+                <span className="field-label">Last name</span>
+                <input className="input" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} />
+              </label>
+              <label className="field span2">
+                <span className="field-label">Email</span>
+                <input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button type="button" className="btn" disabled={!edit.firstName.trim() || !edit.lastName.trim() || !edit.email.trim()} onClick={() => save(m.id)}>Save</button>
+              <button type="button" className="btn-outline" onClick={() => setEditId(null)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div key={m.id} className="staff-card">
+            <div className="list-row">
+              <div className="grow">
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{m.first_name} {m.last_name}</div>
+                <div className="small muted" style={{ overflowWrap: "anywhere" }}>{m.email}</div>
+              </div>
+              <div className="row">
+                <button type="button" className="btn-outline" aria-label={`Edit ${m.first_name} ${m.last_name}`} onClick={() => { setEditId(m.id); setEdit({ firstName: m.first_name, lastName: m.last_name, email: m.email }); }}>Edit</button>
+                <button type="button" className="btn-outline danger" aria-label={`Delete ${m.first_name} ${m.last_name}`} onClick={() => remove(m)}>Delete</button>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -439,14 +632,18 @@ function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
       onAdded();
     } catch (err) { setError(err.message); }
   }
-  if (!open) return <button className="btn-outline" onClick={() => setOpen(true)}>+ Annual license</button>;
+  if (!open) return <button type="button" className="btn-outline" onClick={() => setOpen(true)}>+ Annual license</button>;
   return (
-    <span className="row" style={{ gap: 4 }}>
-      <span className="muted" style={{ fontSize: 12 }}>Agreed price £</span>
-      <input className="input" type="number" min={1} style={{ width: 90 }} value={price} onChange={(e) => setPrice(e.target.value)} />
-      <button className="btn" disabled={!(Number(price) > 0)} onClick={add}>Add</button>
-      <button className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
-    </span>
+    <div className="inline-form" role="group" aria-label={`Add annual license on ${service.name}`}>
+      <label className="field">
+        <span className="field-label">Agreed price £ (ex VAT)</span>
+        <input className="input" type="number" min={1} inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+      </label>
+      <div className="form-actions">
+        <button type="button" className="btn" disabled={!(Number(price) > 0)} onClick={add}>Add</button>
+        <button type="button" className="btn-outline" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -455,7 +652,9 @@ function RefundLicenseButton({ tenantId, service, license, onRefunded, setError 
   if (!refundable) return null;
   return (
     <button
+      type="button"
       className="btn-outline"
+      aria-label={`Refund ${license.plan_label} license on ${service.name}`}
       onClick={async () => {
         if (!confirm(`Refund this ${license.plan_label} license on "${service.name}"? This can't be undone.`)) return;
         try {
@@ -493,172 +692,191 @@ function CustomerDetail({ tenantId, onBack, setError }) {
   const servicesByLocation = (locId) => services.filter((s) => s.location_id === locId);
   const licensesByService = (svcId) => licenses.filter((l) => l.service_id === svcId);
 
+  const unpaidBlocking = licenses.some((l) => l.paid === false && l.status !== "refunded");
+
   return (
-    <div className="stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <button className="btn-outline" onClick={onBack}>← All customers</button>
-        <span className={`badge badge-${tenant.status === "active" ? "green" : tenant.status === "disabled" ? "red" : "amber"}`}>
+    <div className="stack" style={{ gap: 16 }}>
+      <div className="page-head">
+        <div className="subhead grow">
+          <button type="button" className="back-btn" aria-label="Back to all customers" onClick={onBack}><BackIcon /></button>
+          <h1 style={{ overflowWrap: "anywhere" }}>{tenant.business_name}</h1>
+        </div>
+        <span className={`badge badge-${statusBadgeClass(tenant.status)}`}>
           {tenant.status === "pending" ? "Payment pending" : tenant.status === "disabled" ? "Disabled" : "Active"}
         </span>
       </div>
 
-      <div className="card stack">
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Account</div>
-        <div className="wrap">
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>First name</span>
+      <section className="card stack" aria-labelledby="acct-h">
+        <h2 id="acct-h">Account</h2>
+        <div className="form-grid">
+          <label className="field">
+            <span className="field-label">First name</span>
             <input
-              className="input" style={{ width: 140 }} defaultValue={tenant.first_name || ""}
+              className="input" defaultValue={tenant.first_name || ""}
               onBlur={async (e) => { if (e.target.value !== (tenant.first_name || "")) { await api.updateTenant(tenant.id, { firstName: e.target.value }); load(); } }}
             />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Last name</span>
+          <label className="field">
+            <span className="field-label">Last name</span>
             <input
-              className="input" style={{ width: 140 }} defaultValue={tenant.last_name || ""}
+              className="input" defaultValue={tenant.last_name || ""}
               onBlur={async (e) => { if (e.target.value !== (tenant.last_name || "")) { await api.updateTenant(tenant.id, { lastName: e.target.value }); load(); } }}
             />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Business name</span>
+          <label className="field">
+            <span className="field-label">Business name</span>
             <input
-              className="input" style={{ width: 200 }} defaultValue={tenant.business_name}
+              className="input" defaultValue={tenant.business_name}
               onBlur={async (e) => { if (e.target.value !== tenant.business_name) { await api.updateTenant(tenant.id, { businessName: e.target.value }); load(); } }}
             />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Email</span>
+          <label className="field">
+            <span className="field-label">Email</span>
             <input
-              className="input" style={{ width: 220 }} defaultValue={tenant.email}
+              className="input" type="email" defaultValue={tenant.email}
               onBlur={async (e) => { if (e.target.value !== tenant.email) { await api.updateTenant(tenant.id, { email: e.target.value }); load(); } }}
             />
           </label>
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Location count (billing)</span>
+          <label className="field">
+            <span className="field-label">Location count (billing)</span>
             <input
-              className="input" type="number" style={{ width: 80 }} defaultValue={tenant.location_count}
+              className="input" type="number" inputMode="numeric" defaultValue={tenant.location_count}
               onBlur={async (e) => { if (Number(e.target.value) !== tenant.location_count) { await api.updateTenant(tenant.id, { locationCount: Number(e.target.value) }); load(); } }}
             />
           </label>
-          <AddressFields key={tenant.id} tenantId={tenant.id} companyAddress={tenant.company_address} onSaved={load} setError={setError} />
-          <label className="stack" style={{ gap: 2 }}>
-            <span className="muted" style={{ fontSize: 11 }}>Signed up from</span>
-            <span style={{ padding: "8px 0" }}>
+          <div className="field">
+            <span className="field-label">Signed up from</span>
+            <span style={{ minHeight: 40, display: "flex", alignItems: "center" }}>
               {tenant.signup_country
                 ? <span className={tenant.signup_country === "GB" ? undefined : "badge badge-amber"}>{tenant.signup_country}{tenant.signup_country !== "GB" ? " — outside the UK" : ""}</span>
                 : <span className="muted">Unknown</span>}
             </span>
-          </label>
+          </div>
+          <AddressFields key={tenant.id} tenantId={tenant.id} companyAddress={tenant.company_address} onSaved={load} setError={setError} />
         </div>
-        <div className="row">
-          {tenant.status === "pending" && !licenses.some((l) => l.paid === false && l.status !== "refunded") && <button className="btn" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Activate account</button>}
+        <div className="form-actions">
+          {tenant.status === "pending" && !unpaidBlocking && <button type="button" className="btn btn-accent" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Activate account</button>}
           {tenant.status === "disabled"
-            ? <button className="btn-outline" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Enable account</button>
-            : <button className="btn-outline" style={{ color: "#B3261E" }} onClick={async () => { if (confirm(`Disable "${tenant.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(tenant.id, { status: "disabled" }); load(); } }}>Disable account</button>}
+            ? <button type="button" className="btn-outline" onClick={async () => { await api.updateTenant(tenant.id, { status: "active" }); load(); }}>Enable account</button>
+            : <button type="button" className="btn-outline danger" onClick={async () => { if (confirm(`Disable "${tenant.business_name}"? They won't be able to sign in to anything — admin, staff, or customer WhatsApp — until you re-enable the account.`)) { await api.updateTenant(tenant.id, { status: "disabled" }); load(); } }}>Disable account</button>}
           <button
-            className="btn-outline"
+            type="button"
+            className="btn-outline danger"
             onClick={async () => { if (confirmDeleteCustomer(tenant.business_name)) { await api.deleteTenant(tenant.id); onBack(); } }}
           >
             Delete customer
           </button>
         </div>
-      </div>
+      </section>
 
       <StaffUsers tenantId={tenant.id} staff={staff} onChanged={load} setError={setError} />
 
       <div className="stack" style={{ gap: 2 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>Locations, services &amp; licenses</div>
-        <div className="muted" style={{ fontSize: 12 }}>{locations.length} location{locations.length === 1 ? "" : "s"}</div>
+        <h2>Locations, services &amp; licenses</h2>
+        <div className="muted small">{locations.length} location{locations.length === 1 ? "" : "s"}</div>
       </div>
-      {locations.length === 0 && <div className="card muted" style={{ fontSize: 13 }}>No locations yet.</div>}
+      {locations.length === 0 && <div className="card muted">No locations yet.</div>}
 
       {locations.map((loc) => (
-        <div key={loc.id} className="card stack" style={{ gap: 10 }}>
-          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13 }}>📍</span>
-              <input
-                className="input" style={{ width: 160, fontWeight: 600 }} defaultValue={loc.name}
-                onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
-              />
-              {loc.code && <code className="muted" style={{ fontSize: 12, background: "var(--surface-page)", padding: "2px 6px", borderRadius: 4 }}>{loc.code}</code>}
+        <section key={loc.id} className="loc-block" aria-label={`Location ${loc.name}`}>
+          <div className="wrap" style={{ justifyContent: "space-between", gap: 8 }}>
+            <div className="row grow" style={{ flexWrap: "wrap" }}>
+              <label className="grow" style={{ minWidth: 160 }}>
+                <span className="sr-only">Location name</span>
+                <input
+                  className="input" style={{ fontWeight: 600 }} defaultValue={loc.name}
+                  onBlur={async (e) => { if (e.target.value !== loc.name) { await api.updateTenantLocation(tenant.id, loc.id, { name: e.target.value }); load(); } }}
+                />
+              </label>
+              {loc.code && <code className="badge badge-grey">{loc.code}</code>}
             </div>
             <button
-              className="btn-outline"
+              type="button"
+              className="btn-outline danger"
               onClick={async () => { if (confirm(`Delete location "${loc.name}"? This deletes its services and licenses too — can't be undone.`)) { await api.deleteTenantLocation(tenant.id, loc.id); load(); } }}
             >
               Delete location
             </button>
           </div>
 
-          <div className="stack" style={{ gap: 8 }}>
-            {servicesByLocation(loc.id).length === 0 && <div className="muted" style={{ fontSize: 12, padding: "0 4px" }}>No services at this location.</div>}
+          <div className="stack" style={{ gap: 12 }}>
+            {servicesByLocation(loc.id).length === 0 && <div className="muted small">No services at this location.</div>}
             {servicesByLocation(loc.id).map((svc) => {
               const svcLicenses = licensesByService(svc.id);
               const lockTitle = "Locked — this service has a license that's been scheduled, active or expired, or a day with hours already set.";
               return (
-                <div key={svc.id} className="stack" style={{ gap: 8, background: "#fff", border: "1px solid var(--line)", borderRadius: 6, padding: 12 }}>
-                  <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                    <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
-                      <strong style={{ fontSize: 13 }}>{svc.name}</strong>
-                      {svc.archived && <span className="badge badge-amber">Archived</span>}
-                      <label className="row" style={{ gap: 4 }}>
-                        <span className="muted" style={{ fontSize: 11 }}>Type:</span>
+                <div key={svc.id} className="svc-block">
+                  <div className="wrap" style={{ gap: 10 }}>
+                    <strong style={{ fontSize: 16 }}>{svc.name}</strong>
+                    {svc.archived && <span className="badge badge-amber">Archived</span>}
+                  </div>
+                  <div className="form-grid">
+                    <label className="field">
+                      <span className="field-label">Type</span>
+                      <select
+                        value={svc.mode} disabled={svc.modeLocked} title={svc.modeLocked ? lockTitle : undefined}
+                        onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}
+                      >
+                        {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </label>
+                    {svc.mode !== "queue" && (
+                      <label className="field">
+                        <span className="field-label">Slot length</span>
                         <select
-                          value={svc.mode} disabled={svc.modeLocked} title={svc.modeLocked ? lockTitle : undefined}
-                          onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { mode: e.target.value }); load(); }}
+                          value={svc.slot_minutes} disabled={svc.modeLocked}
+                          title={svc.modeLocked ? lockTitle : undefined}
+                          onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); }}
                         >
-                          {["queue", "appointment", "hybrid"].map((m) => <option key={m} value={m}>{m}</option>)}
+                          {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
                         </select>
                       </label>
-                      {svc.mode !== "queue" && (
-                        <label className="row" style={{ gap: 4 }}>
-                          <span className="muted" style={{ fontSize: 11 }}>Slot length:</span>
-                          <select
-                            value={svc.slot_minutes} disabled={svc.modeLocked}
-                            title={svc.modeLocked ? lockTitle : undefined}
-                            onChange={async (e) => { await api.updateTenantService(tenant.id, svc.id, { slotMinutes: Number(e.target.value) }); load(); }}
-                          >
-                            {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-                          </select>
-                        </label>
-                      )}
-                    </div>
-                    <div className="row">
-                      <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
-                      <AddAnnualLicense tenantId={tenant.id} service={svc} onAdded={load} setError={setError} />
-                      <button className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
-                        {svc.archived ? "Unarchive" : "Archive"}
-                      </button>
-                      <button
-                        className="btn-outline"
-                        onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    )}
+                  </div>
+                  <div className="svc-actions">
+                    <GrantFreeLicense tenantId={tenant.id} service={svc} onGranted={load} setError={setError} />
+                    <AddAnnualLicense tenantId={tenant.id} service={svc} onAdded={load} setError={setError} />
+                    <button type="button" className="btn-outline" onClick={async () => { await api.updateTenantService(tenant.id, svc.id, { archived: !svc.archived }); load(); }}>
+                      {svc.archived ? "Unarchive" : "Archive"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline danger"
+                      onClick={async () => { if (confirm(`Delete service "${svc.name}"? This can't be undone.`)) { await api.deleteTenantService(tenant.id, svc.id); load(); } }}
+                    >
+                      Delete
+                    </button>
                   </div>
 
-                  <div className="stack" style={{ gap: 4, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
-                    {svcLicenses.length === 0 && <div className="muted" style={{ fontSize: 12 }}>No licenses on this service.</div>}
+                  <div className="lic-list">
+                    {svcLicenses.length === 0 && <div className="muted small">No licenses on this service.</div>}
                     {svcLicenses.map((lic) => {
                       const meta = LICENSE_STATUS_META[lic.status] || { label: lic.status, color: "blue" };
+                      const canMarkPaid = lic.paid === false && lic.payment_method !== "later" && lic.status !== "refunded";
                       return (
-                        <div key={lic.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
-                          <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+                        <div key={lic.id} className="lic-card">
+                          <div className="lic-title">
+                            <div className="grow">
+                              {lic.plan_label}
+                              {lic.start_date && <div className="lic-sub">{lic.start_date} to {lic.end_date}</div>}
+                            </div>
                             <span className={`badge badge-${meta.color}`}>{meta.label}</span>
-                            <span style={{ fontWeight: 600 }}>{lic.plan_label}</span>
-                            {lic.start_date && <span className="muted">{lic.start_date} to {lic.end_date}</span>}
-                            <span className="muted">{Number(lic.price) > 0 ? priceText(lic.price) : "Free"}</span>
-                            {Number(lic.price) > 0 && (lic.paid === false
-                              ? <span className="badge badge-red">{lic.payment_method === "later" ? "Pay later — unpaid" : "Invoice — unpaid"}</span>
-                              : <span className="badge badge-green">{lic.payment_method === "invoice" ? "Invoice — paid" : "Paid by card"}</span>)}
-                            {lic.invoice_po && <span className="muted">PO {lic.invoice_po}</span>}
-                            <span className="muted">Purchased {new Date(lic.purchased_at).toLocaleDateString()}</span>
                           </div>
-                          <div className="row" style={{ gap: 8 }}>
-                            {lic.paid === false && lic.payment_method !== "later" && lic.status !== "refunded" && (
-                              <button className="btn" onClick={async () => { try { await api.markLicensePaid(tenant.id, lic.id); load(); } catch (err) { setError(err.message); } }}>Mark paid</button>
+                          <div className="lic-body">
+                            <span className="mono">{Number(lic.price) > 0 ? priceText(lic.price) : "Free"}</span>
+                            {lic.invoice_po && <> · PO {lic.invoice_po}</>}
+                            {" · "}Purchased {new Date(lic.purchased_at).toLocaleDateString()}
+                          </div>
+                          {Number(lic.price) > 0 && (
+                            <div>
+                              {lic.paid === false
+                                ? <span className="badge badge-amber">{lic.payment_method === "later" ? "Pay later — unpaid" : "Invoice — unpaid"}</span>
+                                : <span className="badge badge-green">{lic.payment_method === "invoice" ? "Invoice — paid" : "Paid by card"}</span>}
+                            </div>
+                          )}
+                          <div className="lic-actions">
+                            {canMarkPaid && (
+                              <button type="button" className="btn btn-accent" aria-label={`Mark ${lic.plan_label} license on ${svc.name} as paid`} onClick={async () => { try { await api.markLicensePaid(tenant.id, lic.id); load(); } catch (err) { setError(err.message); } }}>Mark paid</button>
                             )}
                             <RefundLicenseButton tenantId={tenant.id} service={svc} license={lic} onRefunded={load} setError={setError} />
                           </div>
@@ -670,7 +888,7 @@ function CustomerDetail({ tenantId, onBack, setError }) {
               );
             })}
           </div>
-        </div>
+        </section>
       ))}
     </div>
   );
@@ -693,23 +911,26 @@ function ClockPanel({ setError }) {
   }
 
   return (
-    <div className="card stack" style={{ maxWidth: 420 }}>
-      <div style={{ fontSize: 13 }}>
+    <div className="card stack" style={{ maxWidth: 480 }}>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: "21px" }}>
         Simulated "today" for testing date-locking, plan windows, etc. — affects every app
         (marketing, admin portal, staff kiosk) since it's set on the server.
-      </div>
+      </p>
       {clock && (
-        <div className="row">
+        <div className="status-line">
           <span className="muted">Currently:</span>
           <strong>{clock.today}</strong>
           <span className={`badge badge-${clock.simulated ? "amber" : "green"}`}>{clock.simulated ? "simulated" : "real date"}</span>
         </div>
       )}
-      <div className="row">
+      <label className="field">
+        <span className="field-label">Simulated date</span>
         <input className="input" type="date" value={draft} onChange={(e) => setDraft(e.target.value)} />
-        <button className="btn" onClick={apply}>Set date</button>
+      </label>
+      <div className="form-actions">
+        <button type="button" className="btn" onClick={apply}>Set date</button>
+        {clock?.simulated && <button type="button" className="btn-outline" onClick={reset}>Reset to real date</button>}
       </div>
-      {clock?.simulated && <button className="btn-outline" onClick={reset}>Reset to real date</button>}
     </div>
   );
 }
