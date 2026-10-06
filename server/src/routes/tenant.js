@@ -571,22 +571,26 @@ router.delete("/tickets/:id", asyncHandler(async (req, res) => {
 }));
 
 router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
-  const { date, clockMinutes, roomLabel } = req.body;
+  const { date, clockMinutes, roomLabel, workType } = req.body;
+  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
+  // Hybrid services: staff choose to work the queue, the appointments, or both.
+  const takeWalkIns = workType !== "appointments";
+  const takeBooked = workType !== "queue";
   // One atomic statement (row locked with FOR UPDATE SKIP LOCKED inside the subquery) so two
   // staff covering the same service calling "next" at the same moment can't both land on the
   // same ticket — the loser just sees the next one in line instead.
   const result = await query(
-    `update tickets set status='seen'
+    `update tickets set status='seen', called_at=now(), finished_at=null
      where id = (
        select id from tickets
        where service_id=$1 and tenant_id=$2 and visit_date=$3
-         and ((type='walk_in' and status='waiting') or (type='booked' and status='booked' and slot_time <= $4))
+         and (($5 and type='walk_in' and status='waiting') or ($6 and type='booked' and status='booked' and slot_time <= $4))
        order by (case when type='booked' then slot_time else extract(epoch from created_at)::int end) asc
        limit 1
        for update skip locked
      )
      returning *`,
-    [req.params.id, req.tenant.id, date, clockMinutes]
+    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
   const ticket = result.rows[0];
@@ -603,8 +607,9 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
 // so two staff clicking the same row can't both call it.
 router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
+  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
   const result = await query(
-    `update tickets set status='seen' where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    `update tickets set status='seen', called_at=now(), finished_at=null where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
     [req.params.id, req.tenant.id]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
@@ -619,6 +624,7 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
 
 router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
   const { roomLabel } = req.body;
+  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
   const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
   const ticket = ticketResult.rows[0];
@@ -643,7 +649,7 @@ router.post("/tickets/:id/return-to-queue", asyncHandler(async (req, res) => {
     hourBlock = currentHourBlock(cfg, Number(clockMinutes));
   }
   const result = await query(
-    `update tickets set status='waiting', type='walk_in', slot_time=null, hour_block=$1 where id=$2 returning *`,
+    `update tickets set status='waiting', type='walk_in', slot_time=null, hour_block=$1, called_at=null, finished_at=null where id=$2 returning *`,
     [hourBlock, ticket.id]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -689,7 +695,7 @@ router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
     hourBlock = currentHourBlock(cfg, Number(clockMinutes));
   }
   const result = await query(
-    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3 where id=$4 returning *`,
+    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3, called_at=null, finished_at=null where id=$4 returning *`,
     [newServiceId, newService.location_id, hourBlock, ticket.id]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -701,6 +707,7 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
   const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
   if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
   const ticket = ticketResult.rows[0];
+  await query(`update tickets set finished_at=coalesce(finished_at, now()) where id=$1`, [ticket.id]);
   const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${service?.name || "service"}`]);

@@ -6,6 +6,9 @@ function nowMinutes() {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 }
+function formatClock(iso) {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
 function formatTime(min) {
   let h = Math.floor(min / 60);
   const m = min % 60;
@@ -107,6 +110,8 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [serviceIds, setServiceIds] = useState([]);
+  const [roles, setRoles] = useState({}); // serviceId -> "queue" | "appointments" | "both" (hybrid services only)
+  const [showSeen, setShowSeen] = useState(false);
   const [started, setStarted] = useState(false);
   const [room, setRoom] = useState("");
   const [nowServing, setNowServing] = useState({}); // serviceId -> ticket object
@@ -138,7 +143,19 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
       <div className="narrow card stack">
         <h3>Which services are you covering?</h3>
         {locServices.map((s) => (
-          <label key={s.id} className="row"><input type="checkbox" onChange={(e) => setServiceIds((prev) => e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id))} /> {s.name}</label>
+          <div key={s.id} className="stack" style={{ gap: 6 }}>
+            <label className="row"><input type="checkbox" onChange={(e) => setServiceIds((prev) => e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id))} /> {s.name}</label>
+            {serviceIds.includes(s.id) && s.mode === "hybrid" && (
+              <div className="row" style={{ marginLeft: 26, gap: 14, flexWrap: "wrap" }}>
+                <span className="muted" style={{ fontSize: 12 }}>You'll work:</span>
+                {[["queue", "Queue"], ["appointments", "Appointments"], ["both", "Both"]].map(([val, label]) => (
+                  <label key={val} className="row" style={{ gap: 4, fontSize: 13 }}>
+                    <input type="radio" name={`role-${s.id}`} checked={(roles[s.id] || "both") === val} onChange={() => setRoles((prev) => ({ ...prev, [s.id]: val }))} /> {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
         <button className="btn" disabled={serviceIds.length === 0} onClick={() => setStarted(true)}>Start shift</button>
       </div>
@@ -147,7 +164,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
 
   async function callNext(serviceId) {
     try {
-      const r = await api.callNext(serviceId, { date, clockMinutes: nowMinutes(), roomLabel: room });
+      const r = await api.callNext(serviceId, { date, clockMinutes: nowMinutes(), roomLabel: room, workType: workTypeFor(serviceId) });
       setNowServing((prev) => ({ ...prev, [serviceId]: r.ticket }));
       refreshTickets();
     } catch (err) {
@@ -164,15 +181,31 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
     } catch (err) { setError(err.message); refreshTickets(); }
   }
   // Is there anyone the "Call next" button could actually call right now? Mirrors the server's rule.
+  function workTypeFor(serviceId) {
+    const svc = services.find((x) => x.id === serviceId);
+    if (svc?.mode === "queue") return "queue";
+    if (svc?.mode === "appointment") return "appointments";
+    return roles[serviceId] || "both";
+  }
   function hasWaiting(serviceId) {
     const mins = nowMinutes();
-    return tickets.some((t) => t.service_id === serviceId && ((t.type === "walk_in" && t.status === "waiting") || (t.type === "booked" && t.status === "booked" && t.slot_time <= mins)));
+    const wt = workTypeFor(serviceId);
+    return tickets.some((t) => t.service_id === serviceId && ((wt !== "appointments" && t.type === "walk_in" && t.status === "waiting") || (wt !== "queue" && t.type === "booked" && t.status === "booked" && t.slot_time <= mins)));
   }
+  const roomSet = !!room.trim();
   async function doAction(fn, serviceId) {
     try { await fn(); setNowServing((prev) => { const next = { ...prev }; delete next[serviceId]; return next; }); refreshTickets(); } catch (err) { setError(err.message); }
   }
 
   const myTickets = tickets.filter((t) => serviceIds.includes(t.service_id));
+  // Waiting list in the order "Call next" would take people: due appointments by slot time,
+  // then walk-ins by arrival, then appointments that aren't due yet (earliest first).
+  const nowMin = nowMinutes();
+  const rank = (t) => (t.type === "booked" ? (t.slot_time <= nowMin ? [0, t.slot_time] : [2, t.slot_time]) : [1, new Date(t.created_at).getTime()]);
+  const waitingList = myTickets.filter((t) => t.status === "waiting" || t.status === "booked")
+    .sort((a, b) => { const [ra, va] = rank(a); const [rb, vb] = rank(b); return ra - rb || va - vb; });
+  const doneList = myTickets.filter((t) => !(t.status === "waiting" || t.status === "booked"))
+    .sort((a, b) => new Date(b.called_at || b.created_at) - new Date(a.called_at || a.created_at));
   const showServiceCol = serviceIds.length > 1;
 
   return (
@@ -182,7 +215,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
         <span style={{ color: room.trim() ? "#1B1D1F" : "#B3261E", fontSize: 13 }}>Where are you right now?</span>
         <input className="input" style={{ borderColor: room.trim() ? "#DEDDD6" : "#B3261E" }} placeholder="e.g. Room 1, Bay 6…" value={room} onChange={(e) => setRoom(e.target.value)} />
       </div>
-      {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Not set — customers you call will be told no location has been given yet.</div>}
+      {!room.trim() && <div className="muted" style={{ fontSize: 11, color: "#B3261E" }}>Set your room name to start calling tickets.</div>}
 
       {locServices.filter((s) => serviceIds.includes(s.id)).map((s) => {
         const serving = nowServing[s.id];
@@ -191,7 +224,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
             <div>{s.name}</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#1B1D1F" }}>{serving?.ticket_number || "—"}</div>
             {serving && <div style={{ fontSize: 13 }}>{room.trim() ? `📍 ${room.trim()}` : "Now serving"}</div>}
-            <button className="btn" disabled={!hasWaiting(s.id)} onClick={() => callNext(s.id)}>{hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
+            <button className="btn" disabled={!roomSet || !hasWaiting(s.id)} onClick={() => callNext(s.id)}>{!roomSet ? "Set your room to call tickets" : hasWaiting(s.id) ? "Call next ticket" : "No tickets waiting"}</button>
             {serving && (
               <div className="stack">
                 <button className="btn" style={{ background: "#2F6F4E" }} onClick={() => doAction(() => api.closeTicket(serving.id), s.id)}>Close ticket — finished serving</button>
@@ -201,7 +234,7 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
                   <button className="btn-outline" style={{ flex: 1, color: "#B3261E" }} onClick={() => doAction(() => api.cancelTicket(serving.id), s.id)}>Cancel ticket</button>
                 </div>
                 <div className="row">
-                  <button className="btn-outline" style={{ flex: 1 }} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>
+                  <button className="btn-outline" style={{ flex: 1 }} disabled={!roomSet} onClick={async () => { try { await api.callAgain(serving.id, { roomLabel: room }); } catch (err) { setError(err.message); } }}>Call again</button>
                   {locServices.filter((x) => x.id !== s.id).length > 0 && (
                     <select style={{ flex: 1 }} defaultValue="" onChange={(e) => { if (e.target.value) doAction(() => api.routeTicket(serving.id, { newServiceId: e.target.value, clockMinutes: nowMinutes() }), s.id); }}>
                       <option value="">Route to service…</option>
@@ -215,23 +248,51 @@ function StaffKiosk({ tenant, locationId, setError, onSignOut }) {
         );
       })}
 
-      <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}><strong style={{ fontSize: 13 }}>Today's tickets &amp; appointments</strong><button className="btn-outline" onClick={refreshTickets}>Refresh</button></div>
+      <div className="card stack">
+        <div className="row" style={{ justifyContent: "space-between" }}><strong style={{ fontSize: 13 }}>Waiting — next to be called first</strong><button className="btn-outline" onClick={refreshTickets}>Refresh</button></div>
         <table>
-          <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Type/time</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Type/time</th><th></th></tr></thead>
           <tbody>
-            {myTickets.length === 0 && <tr><td colSpan={showServiceCol ? 5 : 4} className="muted" style={{ textAlign: "center", padding: 12 }}>Nothing yet today.</td></tr>}
-            {myTickets.map((t) => (
+            {waitingList.length === 0 && <tr><td colSpan={showServiceCol ? 5 : 4} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody waiting.</td></tr>}
+            {waitingList.map((t, i) => (
               <tr key={t.id}>
+                <td className="muted">{i + 1}</td>
                 <td>{t.ticket_number}</td>
-                {showServiceCol && <td>{services.find((s) => s.id === t.service_id)?.name || "—"}</td>}
-                <td>{t.type === "booked" ? formatTime(t.slot_time) : "Walk-in"}</td>
-                <td><span className={`badge badge-${t.status === "seen" ? "green" : t.status === "cancelled" || t.status === "no_show" ? "red" : "blue"}`}>{t.status}</span></td>
-                <td style={{ textAlign: "right" }}>{(t.status === "waiting" || t.status === "booked") && <button className="btn-outline" onClick={() => callSpecific(t)}>Call</button>}</td>
+                {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
+                <td>
+                  {t.type === "booked" ? `Booked ${formatTime(t.slot_time)}` : `Walk-in, joined ${formatClock(t.created_at)}`}
+                  {t.type === "booked" && t.slot_time > nowMinutes() && <span className="muted" style={{ fontSize: 11 }}> (not due yet)</span>}
+                </td>
+                <td style={{ textAlign: "right" }}><button className="btn-outline" disabled={!roomSet} title={roomSet ? undefined : "Set your room first"} onClick={() => callSpecific(t)}>Call</button></td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="card stack">
+        <button type="button" className="row" style={{ justifyContent: "space-between", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }} onClick={() => setShowSeen((v) => !v)} aria-expanded={showSeen}>
+          <strong style={{ fontSize: 13 }}>Seen &amp; closed today ({doneList.length})</strong>
+          <span className="muted" style={{ fontSize: 12 }}>{showSeen ? "Hide ▲" : "Show ▼"}</span>
+        </button>
+        {showSeen && (
+          <table>
+            <thead><tr><th>Ticket</th>{showServiceCol && <th>Service</th>}<th>Booked / joined</th><th>Called</th><th>Finished</th><th>Status</th></tr></thead>
+            <tbody>
+              {doneList.length === 0 && <tr><td colSpan={showServiceCol ? 6 : 5} className="muted" style={{ textAlign: "center", padding: 12 }}>Nobody seen yet today.</td></tr>}
+              {doneList.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.ticket_number}</td>
+                  {showServiceCol && <td>{services.find((x) => x.id === t.service_id)?.name || "—"}</td>}
+                  <td>{t.type === "booked" ? `Booked for ${formatTime(t.slot_time)}` : `Joined ${formatClock(t.created_at)}`}</td>
+                  <td>{t.called_at ? formatClock(t.called_at) : "—"}</td>
+                  <td>{t.finished_at ? formatClock(t.finished_at) : t.status === "seen" ? "In progress" : "—"}</td>
+                  <td><span className={`badge badge-${t.status === "seen" ? "green" : "red"}`}>{t.status === "no_show" ? "no-show" : t.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
