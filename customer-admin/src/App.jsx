@@ -1274,7 +1274,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               return (
                 <div key={id} className={`plan-option${planId === id ? " active" : ""}`} onClick={() => setPlanId(id)}>
                   <span className="plan-option-label">{id === "custom" ? "Custom" : id.charAt(0).toUpperCase() + id.slice(1)}</span>
-                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc)</small></span>
+                  <span className="plan-option-price">{id === "custom" ? `from ${exMoney(pricing.customDailyRate)}/day` : exMoney(price)}<small style={{ display: "block", fontSize: 10, fontWeight: 400 }}>({exMoney(incVat(id === "custom" ? pricing.customDailyRate : price))} inc VAT)</small></span>
                 </div>
               );
             })}
