@@ -263,11 +263,14 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                 <span className="wrow-info">
                   <span className="wrow-main">
                     {t.type === "booked"
-                      ? <>Appointment {formatTime(t.slot_time)}{t.arrived_at ? ` · in ${formatClock(t.arrived_at)}` : ""}</>
-                      : <>Walk-in · {wm} min</>}
+                      ? <>Appointment {formatTime(t.slot_time)}</>
+                      : <>Walk-in · waiting {wm} min</>}
+                    {t.type === "booked" && (t.arrived_at
+                      ? <span className="badge badge-green">Checked in {formatClock(t.arrived_at)}</span>
+                      : <span className="badge badge-grey">Not checked in</span>)}
                     {i === 0 && <span className="badge badge-next">Next</span>}
                   </span>
-                  {multi && <span className="wrow-svc">{svcName(t.service_id)}</span>}
+                  <span className="wrow-svc">{svcName(t.service_id)}</span>
                 </span>
                 <span className="wrow-actions">
                   <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>
