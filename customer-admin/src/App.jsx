@@ -585,13 +585,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                       </span>
                       <ChevronRight />
                     </button>
-                    {loc.code && (
-                      <div className="code-row">
-                        <span className="label">WhatsApp code</span>
-                        <span className="code-text">{loc.code}</span>
-                        <CopyButton value={loc.code} label={`Copy code for ${loc.name}`} />
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -605,13 +598,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
             return (
               <div className="stack" style={{ gap: 16 }}>
                 <div className="loc-toolbar" role="toolbar" aria-label={`${loc.name} actions`}>
-                  {loc.code && (
-                    <span className="loc-code" title="Customers message this code on WhatsApp">
-                      <span className="label">WhatsApp code</span>
-                      <span className="code-text">{loc.code}</span>
-                      <CopyButton value={loc.code} label="Copy code" />
-                    </span>
-                  )}
                   {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
                   <button
                     type="button"
@@ -1705,23 +1691,6 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   useEffect(() => { if (autoBuy) { startBuy(); onAutoBuyHandled?.(); } }, [autoBuy]); // eslint-disable-line react-hooks/exhaustive-deps
   const currentLic = currentLicenceOf(licenses);
   const modeText = service.mode === "queue" ? "Queue (walk-ins)" : service.mode === "appointment" ? `Appointments · ${service.slot_minutes} min slots` : `Queue and appointments · ${service.slot_minutes} min slots`;
-  // Fake for now — there's no real WhatsApp Business number wired up yet, so the QR just
-  // points at the same stand-in customer link the Setup tab shows, with the service tagged
-  // on so the real version can route straight to it once WhatsApp is actually connected.
-  function printServiceQR() {
-    const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
-    // The location code rides along in the QR so "Only joinable from the clinic" locations accept the scan.
-    const link = `${CUSTOMER_APP_URL}/?t=${tenant.id}&s=${service.id}${locationCode ? `&c=${encodeURIComponent(locationCode)}` : ""}`;
-    openPrintableQR({
-      link,
-      pageTitle: `QR code — ${service.name}`,
-      businessName: tenant?.business_name || "",
-      heading: service.name,
-      cta: "📱 Scan to message us on WhatsApp",
-      sub: "Join the queue or book instantly — no app to download.",
-    });
-  }
-
   return (
     <div className="svc-card" style={service.archived ? { opacity: 0.6 } : undefined}>
       <div className="svc-head">
@@ -1753,7 +1722,6 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
         {showLicencesBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
         <div className="svc-buy">
           <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
-          <button type="button" className="btn-outline icon-btn" aria-label="Print QR code" title="Print QR code" onClick={printServiceQR}><QrIcon /></button>
           <button
             type="button" className="btn-outline icon-btn" aria-label="Archive service" title="Archive service"
             onClick={async () => {
