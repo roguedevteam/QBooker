@@ -46,7 +46,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   const [tab, setTab] = useState("waiting"); // phone tabs
   const [view, setView] = useState("queue"); // tablet/desktop: queue | today
   const [panel, setPanel] = useState(null); // inside "With you now": null | "away" | "route"
-  const [editRoom, setEditRoom] = useState(false);
+  const [hadSaved] = useState(() => { const sv = loadPref(SERVICES_KEY, []); return !!String(loadPref(ROOM_KEY, "")).trim() && Array.isArray(sv) && sv.length > 0; }); // used the kiosk before on this device
+  const [changing, setChanging] = useState(false); // start screen: show the full form instead of "same as last time"
   const [note, setNote] = useState("");
   const [showAllSeen, setShowAllSeen] = useState(false);
   const [licensed, setLicensed] = useState({}); // serviceId -> true | false (outside its licence window today)
@@ -143,6 +144,35 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
       savePref(ROLES_KEY, roles);
       setStarted(true);
     };
+    const quick = hadSaved && !changing && canStart;
+    if (quick) {
+      const picked = locServices.filter((x) => serviceIds.includes(x.id));
+      const roleLabel = (x) => x.mode === "hybrid" ? ({ queue: "Queue only", appointments: "Appointments only", both: "Queue and appointments" }[roles[x.id] || "both"]) : x.mode === "queue" ? "Queue" : "Appointments";
+      return (
+        <main className="narrow auth start">
+          <div>
+            <div className="hello">Hello {staff?.firstName}</div>
+            <h1 className="h-big">Ready to start?</h1>
+            {locationName && <p className="muted loc-line">{locationName}{onChangeLocation && <> · <button type="button" className="link-btn inline" onClick={onChangeLocation}>Change location</button></>}</p>}
+          </div>
+          <div className="quick-card">
+            <div className="field-hint nomargin">Same as last time</div>
+            {picked.map((x) => (
+              <div key={x.id} className="quick-svc">
+                <div className="quick-svc-main"><strong>{x.name}</strong><span className="muted">{roleLabel(x)}</span></div>
+                <span className={`pill${waitingCount(x.id) ? " pill-warn" : ""}`}>{waitingCount(x.id) === 0 ? "Nobody waiting" : `${waitingCount(x.id)} waiting`}</span>
+              </div>
+            ))}
+            <div className="quick-room"><span className="muted">Room or desk</span><strong>{room.trim()}</strong></div>
+          </div>
+          <div className="start-foot">
+            <button className="btn-big btn-fill" onClick={start}>Start in {room.trim()}</button>
+            <button className="btn-sec" onClick={() => setChanging(true)}>Change service or room</button>
+          </div>
+          <div><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
+        </main>
+      );
+    }
     return (
       <main className="narrow auth start">
         <div>
@@ -227,7 +257,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   const svcName = (id) => services.find((x) => x.id === id)?.name || "";
   const covered = locServices.filter((s) => serviceIds.includes(s.id));
   const next = waitingList[0];
-  const canCall = !busy && !calling;
+  const canCall = !busy && !calling && room.trim().length > 0;
   const headLine = [covered.map((s) => s.name).join(", "), locationName].filter(Boolean).join(" · ");
   const staffName = staff ? `${staff.firstName} ${staff.lastName}`.trim() : tenant?.business_name;
   const signOutHint = "Finish the patient with you before signing out.";
@@ -403,33 +433,31 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   return (
     <>
       <div className="kiosk-bar">
-        <button type="button" className="who" aria-label={`${staffName}${room.trim() ? `, ${room.trim()}` : ""}. Change room or desk`} aria-expanded={editRoom} onClick={() => setEditRoom((v) => !v)}>
+        <div className="who">
           <span className="who-top">{headLine || tenant?.business_name}</span>
-          <span className="who-sub">{staffName}{room.trim() ? ` · ${room.trim()}` : ""}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg></span>
-        </button>
+          <span className="who-sub">{staffName}</span>
+        </div>
         {isSimulatedToday() && <span className="badge badge-amber">Simulated date: {date}</span>}
         <button className="btn-signout" disabled={busy} aria-describedby={busy ? "signout-hint" : undefined} title={busy ? signOutHint : undefined} onClick={onSignOut}>Sign out</button>
         {busy && <span id="signout-hint" className="sr-only">{signOutHint}</span>}
       </div>
-      {editRoom && (
-        <form className="room-edit" onSubmit={(e) => { e.preventDefault(); if (room.trim()) setEditRoom(false); }}>
-          <label className="field-label" htmlFor="room-edit">Room or desk</label>
-          <div className="room-edit-row">
-            <input id="room-edit" className="input" placeholder="e.g. Room 2" value={room} maxLength={60} autoFocus autoComplete="off" onChange={(e) => saveRoom(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape" && room.trim()) setEditRoom(false); }} />
-            <button type="submit" className="btn-sec" disabled={!room.trim()}>Done</button>
-          </div>
-        </form>
-      )}
       {busy && <div className="sr-only" id="busy-note">{signOutHint}</div>}
 
       <main className="work">
-        {isWide && (
-          <div className="view-toggle" role="tablist" aria-label="Choose a view">
-            {[["queue", "Queue"], ["today", "Today"]].map(([k, label]) => (
-              <button key={k} type="button" role="tab" aria-selected={view === k} className={`vt${view === k ? " on" : ""}`} onClick={() => setView(k)}>{label}</button>
-            ))}
+        <div className="work-bar">
+          {isWide && (
+            <div className="view-toggle" role="tablist" aria-label="Choose a view">
+              {[["queue", "Queue"], ["today", "Today"]].map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={view === k} className={`vt${view === k ? " on" : ""}`} onClick={() => setView(k)}>{label}</button>
+              ))}
+            </div>
+          )}
+          <div className="room-box">
+            <label className="room-box-label" htmlFor="room-live">Room or desk</label>
+            <input id="room-live" className={`input room-box-input${room.trim() ? "" : " invalid"}`} placeholder="e.g. Room 2" value={room} maxLength={60} autoComplete="off" aria-required="true" onChange={(e) => saveRoom(e.target.value)} />
           </div>
-        )}
+        </div>
+        {!room.trim() && <div className="field-hint room-warn" role="alert">Enter your room or desk to call patients.</div>}
 
         <div className="sr-only" role="status" aria-live="polite">{note}</div>
         {note && <div className="field-ok note-line" aria-hidden="true">{note}</div>}
