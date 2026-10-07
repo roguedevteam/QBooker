@@ -5,7 +5,7 @@ import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import {
-  getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, buildTodayRibbon,
+  getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, buildTodayRibbon, BLOCK_MINUTES,
 } from "../lib/scheduling.js";
 import { isDateFullyPast, addDays } from "../lib/plan.js";
 import { getToday } from "../lib/clock.js";
@@ -526,6 +526,19 @@ router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
   });
 }));
 
+// A day is "live" once it is today or earlier (date <= getToday()). Past days are rejected
+// outright. Today can still be edited, but only upwards: staff counts can never drop below what
+// is already in place, hours that have already started (before nowMinutes) are frozen, and an
+// hour block that already has non-cancelled tickets can't be removed. Anything else (more staff,
+// extra hours later in the day, removing an untouched upcoming hour) is fine.
+function isLiveDate(date) {
+  return !!date && String(date).slice(0, 10) <= String(getToday()).slice(0, 10);
+}
+function londonNowMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+  return Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
+}
+
 router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res) => {
   const { date, hours, staffCount, bookingStaffCount } = req.body;
   const { service } = await getServiceWithLicenses(req.params.id, req.tenant.id);
@@ -540,6 +553,37 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
   // can't push the total past staffCount — clamp defensively here too, not just client-side.
   const requestedWalkIn = req.body.walkInStaffCount ?? Math.max(0, resolvedStaff - resolvedBooking);
   const resolvedWalkIn = Math.max(0, Math.min(requestedWalkIn, resolvedStaff - resolvedBooking));
+  const newHours = Array.isArray(hours) ? hours.map(Number).filter(Number.isFinite) : [];
+
+  if (isLiveDate(date)) {
+    const existing = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
+    if (existing) {
+      if (resolvedStaff < existing.staff_count
+        || resolvedBooking < (existing.booking_staff_count ?? 0)
+        || resolvedWalkIn < (existing.walkin_staff_count ?? 0)) {
+        return res.status(409).json({ error: "Staff can't be reduced once the day is live — you can only add more." });
+      }
+      const nowMinutes = Number.isFinite(Number(req.body.nowMinutes)) && Number(req.body.nowMinutes) >= 0 && Number(req.body.nowMinutes) <= 1439
+        ? Math.floor(Number(req.body.nowMinutes)) : londonNowMinutes();
+      const oldHours = existing.hours || [];
+      const removed = oldHours.filter((h) => !newHours.includes(h));
+      const added = newHours.filter((h) => !oldHours.includes(h));
+      if (removed.some((h) => h < nowMinutes) || added.some((h) => h < nowMinutes)) {
+        return res.status(409).json({ error: "Hours that have already started can't be changed on a live day." });
+      }
+      if (removed.length) {
+        const tix = (await query(
+          `select type, slot_time, hour_block from tickets where service_id=$1 and visit_date=$2 and status != 'cancelled'`,
+          [service.id, date]
+        )).rows;
+        const booked = removed.filter((h) => tix.some((t) => (t.type === "booked" ? t.slot_time >= h && t.slot_time < h + BLOCK_MINUTES : t.hour_block === h)));
+        if (booked.length) {
+          return res.status(409).json({ error: "Those hours already have bookings or people in the queue, so they can't be removed." });
+        }
+      }
+    }
+  }
+
   const result = await query(
     `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
      values ($1,$2,$3,$4,$5,$6)
@@ -547,7 +591,7 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
        hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
        walkin_staff_count = excluded.walkin_staff_count
      returning *`,
-    [req.params.id, date, hours || [], resolvedStaff, resolvedBooking, resolvedWalkIn]
+    [req.params.id, date, hours ? newHours : [], resolvedStaff, resolvedBooking, resolvedWalkIn]
   );
   res.json({ dailyConfig: result.rows[0] });
 }));
@@ -558,7 +602,7 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
   const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1, walkin_staff_count: 1 };
   let applied = 0;
   for (const date of toDates || []) {
-    if (isDateFullyPast(date)) continue;
+    if (isLiveDate(date)) continue; // never overwrite a live (today/past) day in bulk
     if (!(await isServiceLicensedOn(req.params.id, date))) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
@@ -573,22 +617,19 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (re
   res.json({ ok: true, count: applied, skipped: (toDates || []).length - applied });
 }));
 
-// Clears hours across every one of the service's current scheduled/active windows in one
-// call. For today specifically, the client tells us which blocks have already passed (it
-// knows the real time; the server only knows the date) so they're preserved rather than wiped.
+// Clears hours across every one of the service's scheduled/active windows in one call.
+// Live days (today and earlier) are skipped entirely — only future days are cleared.
 router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(async (req, res) => {
-  const { keepHoursForToday } = req.body;
   const { licenses } = await getServiceWithLicenses(req.params.id, req.tenant.id);
   const windows = activeAndScheduledWindows(licenses);
   if (!windows.length) return res.json({ ok: true, count: 0 });
-  const today = getToday();
   let applied = 0;
   for (const window of windows) {
     let d = window.start;
     let guard = 0;
     while (d <= window.end && guard < 400) {
-      if (!isDateFullyPast(d)) {
-        const hours = d === today ? (keepHoursForToday || []) : [];
+      if (!isLiveDate(d)) { // live days (today/past) are never bulk-cleared
+        const hours = [];
         await query(
           `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
            values ($1,$2,$3,2,1,1)

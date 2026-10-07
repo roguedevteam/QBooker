@@ -335,3 +335,22 @@ select, .input {
 .loc-name-input:hover { background: #fff; border-color: var(--line, #CFCFC8); }
 .loc-name-input:focus { background: #fff; border-color: var(--blue, #1D5C8A); outline: 2px solid var(--blue, #1D5C8A); outline-offset: 0; }
 .loc-name-status { font-size: 13px; color: var(--muted, #5F615B); min-width: 56px; }
+
+/* Service header: name + pause control, then badges */
+.svc-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.svc-title { flex: 1 1 160px; min-width: 0; }
+.svc-pause { flex: none; min-height: 44px; }
+.svc-pause.is-paused { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+.svc-buy { display: flex; gap: 8px; flex: 1 1 190px; min-width: 0; }
+.svc-buy > .btn { flex: 1 1 auto; min-height: 44px; }
+.svc-buy > .icon-btn { flex: none; min-width: 44px; min-height: 44px; }
+@media (min-width: 768px) { .svc-buy { flex: 0 0 auto; } .svc-buy > .btn { flex: 0 0 auto; } }
+.add-loc-btn { min-height: 44px; }
+
+/* Live day: add staff stepper */
+.live-staff-box { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); background: var(--brand-weak); padding: 12px; min-width: 0; }
+.stepper-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper .icon-btn { min-width: 44px; min-height: 44px; font-size: 20px; line-height: 1; }
+.stepper-value { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 44px; font-weight: 700; font-size: 18px; }
+.live-staff-box .btn, .live-staff-box select { min-height: 44px; }
