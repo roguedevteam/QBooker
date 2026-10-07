@@ -459,3 +459,12 @@ select, .input {
 .lic-line-actions .btn, .lic-line-actions .btn-outline { min-height: 44px; padding: 0 12px; font-size: 14px; }
 .lic-line-actions:empty { display: none; }
 .svc-buy-btn { white-space: nowrap; }
+
+/* Unselected tabs read as buttons: lighter fill, outline, chevron; strip gets breathing room */
+.svc-tabs { padding-top: 8px; gap: 6px; }
+.svc-tabs.is-collapsed { padding-bottom: 8px; }
+.svc-tab:not([aria-selected="true"]) { background: #24506F; border: 1px solid #5E85A3; border-top-width: 1px; color: #fff; min-height: 48px; cursor: pointer; }
+.svc-tab:not([aria-selected="true"]):hover { background: #2C5E83; }
+.svc-tab[aria-selected="true"] { min-height: 52px; margin-bottom: 0; }
+.svc-tab-chev { margin-left: auto; opacity: .85; flex: none; }
+@media (min-width: 768px) { .svc-tabs { gap: 6px; } .svc-tab-chev { margin-left: 4px; } }

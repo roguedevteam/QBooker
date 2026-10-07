@@ -1783,7 +1783,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
       )}
 
       {tabs.length > 0 && (
-        <div className="svc-tabs" role="tablist" aria-label={`${service.name} sections`} onKeyDown={onTabKeyDown}>
+        <div className={`svc-tabs${shownTab === null ? " is-collapsed" : ""}`} role="tablist" aria-label={`${service.name} sections`} onKeyDown={onTabKeyDown}>
           {tabs.map((n, i) => (
             <button
               key={n} type="button" role="tab" id={tabId(n)} aria-controls={panelId(n)}
@@ -1796,6 +1796,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
               </svg>
               {tabLabel[n]}
               {n === "licences" && toDateCount > 0 && <span className="badge badge-amber">{toDateCount} to date</span>}
+              {shownTab !== n && <svg className="svc-tab-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>}
             </button>
           ))}
         </div>
