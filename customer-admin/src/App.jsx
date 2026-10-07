@@ -330,7 +330,6 @@ const PHONE_TABS = ["dashboard", "locations", "staff", "profile"];
 function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [renamingLoc, setRenamingLoc] = useState(false);
   const [openLocId, setOpenLocId] = useState(undefined); // undefined = default (auto-open a sole location), null = list, id = that location
   const [ticketFilter, setTicketFilter] = useState("all");
   const [renewServiceId, setRenewServiceId] = useState(null);
@@ -487,7 +486,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
           {openLoc ? (
             <div className="subhead grow">
               <button type="button" className="back-btn" aria-label="Back to locations" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); }}><BackIcon /></button>
-              <h1>{openLoc.name}</h1>
+              <LocationNameField key={openLoc.id} loc={openLoc} onSaved={refreshCore} setError={setError} />
             </div>
           ) : (
             <h1>{TAB_TITLES[tab]}</h1>
@@ -559,7 +558,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                     </span>
                   )}
                   {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
-                  <button className="btn-outline" aria-expanded={renamingLoc} onClick={() => setRenamingLoc((v) => !v)}>Rename</button>
                   <button
                     className="btn-outline"
                     title="Archive location"
@@ -573,22 +571,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                   >
                     <ArchiveIcon /> Archive
                   </button>
-                </div>
-
-                {renamingLoc && (
-                  <label className="field">
-                    <span className="field-label">Location name</span>
-                    <input
-                      key={loc.id + loc.name}
-                      className="input" defaultValue={loc.name} autoFocus
-                      onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } setRenamingLoc(false); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenamingLoc(false); }}
-                    />
-                  </label>
-                )}
-
-                <div className="page-head">
-                  <h2>Services</h2>
                 </div>
 
                 {addingHere && (
@@ -840,6 +822,42 @@ function splitAddress(combined) {
 }
 function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+// The location's name as the page title, editable in place and saved automatically
+// (shortly after typing stops, and on Enter or leaving the field).
+function LocationNameField({ loc, onSaved, setError }) {
+  const [value, setValue] = useState(loc.name);
+  const [state, setState] = useState("idle"); // idle | saving | saved
+  const timer = useRef(null);
+  const last = useRef(loc.name);
+  async function save(v) {
+    const name = v.trim();
+    if (!name || name === last.current) return;
+    setState("saving");
+    try {
+      await api.updateLocation(loc.id, { name });
+      last.current = name;
+      setState("saved");
+      onSaved?.();
+      setTimeout(() => setState("idle"), 1500);
+    } catch (err) { setState("idle"); setError(err.message); }
+  }
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <div className="loc-name-wrap">
+      <label className="sr-only" htmlFor={`locname-${loc.id}`}>Location name</label>
+      <input
+        id={`locname-${loc.id}`}
+        className="loc-name-input"
+        value={value}
+        onChange={(e) => { setValue(e.target.value); clearTimeout(timer.current); const v = e.target.value; timer.current = setTimeout(() => save(v), 800); }}
+        onBlur={() => { clearTimeout(timer.current); if (!value.trim()) setValue(last.current); else save(value); }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      />
+      <span className="loc-name-status" aria-live="polite">{state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}</span>
+    </div>
+  );
 }
 
 // Named staff users. Each person signs in to the staff portal with their email plus a code sent to
