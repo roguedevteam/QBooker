@@ -144,8 +144,8 @@ function Logo({ size = 28, dark = false }) {
   return (
     <span className="logo">
       <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
-        <rect x="2" y="2" width="40" height="40" fill="var(--blue)" />
-        <circle cx="42" cy="22" r="7" fill="var(--accent)" />
+        <rect x="2" y="2" width="40" height="40" fill="var(--accent)" />
+        <circle cx="42" cy="22" r="7" fill="var(--blue)" />
       </svg>
       <span className={dark ? "logo-word logo-word-light" : "logo-word"}>QBooker</span>
     </span>
