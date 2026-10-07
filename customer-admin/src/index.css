@@ -361,3 +361,33 @@ select, .input {
 .svc-title { display: flex; flex-direction: column; gap: 6px; }
 .svc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .svc-status:empty { display: none; }
+
+
+/* ---- How patients join (location detail) ------------------------------------------------ */
+.chan-h { font-size: 18px; }
+.chan-lede { margin: 0; font-size: 14px; line-height: 21px; }
+.chan-group { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.chan-opt { position: relative; display: flex; gap: 12px; min-height: 48px; padding: 14px; background: #fff; border: 1px solid #D5D5CE; cursor: pointer; }
+.chan-opt.is-on { background: #EAF2F8; border: 2px solid var(--brand); padding: 13px; }
+.chan-opt input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.chan-opt:focus-within { outline: 3px solid var(--brand); outline-offset: 2px; }
+.chan-radio { flex: none; width: 22px; height: 22px; margin-top: 1px; border: 2px solid #6B6D66; border-radius: 50%; background: #fff; box-sizing: border-box; }
+.chan-opt.is-on .chan-radio { border: 6px solid var(--brand); }
+.chan-opt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chan-opt-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 16px; }
+.chan-opt-text { font-size: 14px; line-height: 20px; color: var(--muted); }
+.chan-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 14px; background: #fff; border: 1px solid #D5D5CE; }
+.chan-row.is-disabled { opacity: .6; }
+.chan-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 15px; line-height: 21px; }
+.chan-switch { flex: none; position: relative; width: 52px; height: 44px; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.chan-switch::before { content: ""; position: absolute; left: 3px; right: 3px; top: 9px; bottom: 9px; background: #6B6D66; }
+.chan-switch.is-on::before { background: var(--brand); }
+.chan-knob { position: absolute; top: 12px; left: 6px; width: 20px; height: 20px; background: #fff; transition: transform 120ms; }
+.chan-switch.is-on .chan-knob { transform: translateX(20px); }
+.chan-switch:disabled { cursor: not-allowed; }
+.chan-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.chan-actions .btn, .chan-actions .btn-outline { min-height: 48px; padding: 0 20px; }
+.chan-actions .btn { flex: 1 1 140px; }
+.chan-status { font-size: 14px; line-height: 20px; min-height: 20px; }
+.chan-status-ok { color: #1F5A2E; }
+.chan-status-error { color: var(--error); }

@@ -1,10 +1,31 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { query } from "../db/pool.js";
+import { rateLimit } from "../lib/rateLimit.js";
+import { getToday } from "../lib/clock.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, estimateWalkInWaitMinutes } from "../lib/scheduling.js";
 import { isServiceLicensedOn } from "../lib/serviceLicense.js";
 
 const router = Router();
+
+// --- Web channel helpers ---------------------------------------------------------------
+// Abuse limits for the web channel (per service, per day, counting tickets still waiting/booked).
+// The IP limit is deliberately looser than the device limit: a clinic's patients often share one
+// public IP (waiting-room wifi / mobile carrier NAT), so a tight per-IP cap would lock real
+// patients out.
+const MAX_ACTIVE_PER_DEVICE = 2;
+const MAX_ACTIVE_PER_IP = 6;
+
+function hashValue(v) {
+  const salt = process.env.JWT_SECRET || "qbooker";
+  return crypto.createHash("sha256").update(`${salt}|${v}`).digest("hex");
+}
+function newPublicToken() { return crypto.randomBytes(18).toString("base64url"); } // 24 chars, 144 bits
+const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/;
+const DEVICE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+const CHANNEL_MODES = ["whatsapp", "web", "both"];
 
 async function loadTenant(req, res, next) {
   const result = await query(`select * from tenants where id=$1`, [req.params.tenantId]);
@@ -40,10 +61,12 @@ router.get("/:tenantId/info", (req, res) => {
   res.json({ businessName: req.tenant.business_name, status: req.tenant.status });
 });
 
+// The location code is intentionally NOT returned here: when a location is "onsite only" it is
+// the on-site secret (printed on the QR poster / known at reception), so it must not be
+// readable from a public API.
 router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
-    `select l.id, l.name, l.website_url, lc.code from locations l
-     left join location_codes lc on lc.location_id = l.id
+    `select l.id, l.name, l.website_url, l.channel_mode, l.whatsapp_updates_offer, l.onsite_only from locations l
      where l.tenant_id=$1 and l.archived=false order by l.created_at`,
     [req.tenant.id]
   );
@@ -153,12 +176,46 @@ router.post("/:tenantId/tickets/:ticketId/check-in", asyncHandler(async (req, re
   res.json({ ticket: result.rows[0] });
 }));
 
-router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, res) => {
-  const { type, slotTime, hourBlock, date } = req.body;
+router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: "Too many join attempts from this connection. Please wait a few minutes or ask at reception." }), asyncHandler(async (req, res) => {
+  const { type, slotTime, hourBlock, date, onsiteCode, deviceId } = req.body;
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
   if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
     return res.status(409).json({ error: "We're not taking bookings today." });
+  }
+
+  // Location-level web-channel rules.
+  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
+  if (location?.channel_mode === "whatsapp") {
+    return res.status(403).json({ error: "This clinic takes joins through WhatsApp only. Please use WhatsApp, or ask at reception.", reason: "channel_whatsapp_only" });
+  }
+  // On-site check: only for joining the live queue (a booking made in advance from home is fine).
+  // The code must match this location's code (the one in the QR link / on the poster). It is a
+  // shared secret, not proof of presence — there is no geofencing.
+  if (location?.onsite_only && type === "walk_in") {
+    const supplied = String(onsiteCode || "").trim().toUpperCase();
+    const row = (await query(`select code from location_codes where location_id=$1`, [service.location_id])).rows[0];
+    if (!supplied) {
+      return res.status(403).json({ error: "Please scan the QR code at reception, or enter the location code shown there.", reason: "onsite_code_required" });
+    }
+    if (!row || row.code.toUpperCase() !== supplied) {
+      return res.status(403).json({ error: "That location code isn't right. Check the code shown at reception.", reason: "onsite_code_invalid" });
+    }
+  }
+
+  // Simultaneous-ticket limits per device and per IP for this service today.
+  const deviceHash = DEVICE_RE.test(String(deviceId || "")) ? hashValue(`device|${deviceId}`) : null;
+  const ipHash = req.ip ? hashValue(`ip|${req.ip}`) : null;
+  const activeCount = async (col, val) => Number((await query(
+    `select count(*) from ticket_web_access a join tickets t on t.id = a.ticket_id
+     where t.service_id=$1 and t.visit_date=$2 and t.status in ('waiting','booked') and a.${col}=$3`,
+    [service.id, date, val]
+  )).rows[0].count);
+  if (deviceHash && (await activeCount("device_hash", deviceHash)) >= MAX_ACTIVE_PER_DEVICE) {
+    return res.status(429).json({ error: "You already have a place in this queue on this phone. Leave it first if you want to join again.", reason: "too_many_device" });
+  }
+  if (ipHash && (await activeCount("ip_hash", ipHash)) >= MAX_ACTIVE_PER_IP) {
+    return res.status(429).json({ error: "Too many people are joining from this connection right now. Please ask at reception.", reason: "too_many_ip" });
   }
 
   const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);
@@ -166,15 +223,102 @@ router.post("/:tenantId/services/:serviceId/tickets", asyncHandler(async (req, r
   const initials = (service.name.match(/\b\w/g) || ["S", "V"]).slice(0, 2).join("").toUpperCase();
   const ticketNumber = `${initials}-${String(count).padStart(3, "0")}`;
 
+  // One statement so a ticket never exists without its public token.
+  const publicToken = newPublicToken();
   const result = await query(
-    `insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-    [req.tenant.id, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime ?? null, hourBlock ?? null, date]
+    `with t as (
+       insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+     ), a as (
+       insert into ticket_web_access (token, ticket_id, tenant_id, channel, device_hash, ip_hash)
+       select $10, t.id, t.tenant_id, 'web', $11, $12 from t
+     )
+     select * from t`,
+    [req.tenant.id, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime ?? null, hourBlock ?? null, date, publicToken, deviceHash, ipHash]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticketNumber} ${type === "booked" ? `booked ${service.name}` : `joined the ${service.name} queue (walk-in)`}`]);
+    [req.tenant.id, `Ticket ${ticketNumber} ${type === "booked" ? `booked ${service.name}` : `joined the ${service.name} queue (walk-in, web)`}`]);
   const queue = await getQueueInfo(result.rows[0]);
-  res.json({ ticket: result.rows[0], queue });
+  res.json({ ticket: result.rows[0], queue, publicToken });
+}));
+
+// --- Login-free ticket access by unguessable token --------------------------------------
+// Mounted at /api/public/ticket. The token is the only credential: it identifies exactly one
+// ticket. Responses carry ticket number, queue position and room only — no names, phone numbers
+// or clinical data are held on a ticket in the first place.
+export const publicTicketRouter = Router();
+publicTicketRouter.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+publicTicketRouter.use(rateLimit({ windowMs: 60 * 1000, max: 90 }));
+
+async function loadByToken(req, res, next) {
+  if (!TOKEN_RE.test(req.params.token)) return res.status(404).json({ error: "Ticket not found.", state: "unknown" });
+  const row = (await query(
+    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, l.whatsapp_updates_offer, te.business_name
+     from ticket_web_access a
+     join tickets t on t.id = a.ticket_id
+     join tenants te on te.id = t.tenant_id
+     left join services s on s.id = t.service_id
+     left join locations l on l.id = t.location_id
+     where a.token=$1`,
+    [req.params.token]
+  )).rows[0];
+  if (!row) return res.status(404).json({ error: "Ticket not found.", state: "unknown" });
+  req.ticketRow = row;
+  next();
+}
+
+// waiting | called | closed | cancelled | expired.
+// The tickets table has a single "serving" status for "called, not finished" (no separate
+// called-vs-serving stage), so serving is reported as "called"; completed and no_show are "closed".
+function publicState(t) {
+  if (t.status === "cancelled") return "cancelled";
+  if (t.status === "serving") return "called";
+  if (t.status === "completed" || t.status === "seen" || t.status === "no_show") return "closed";
+  if (String(t.visit_date).slice(0, 10) < getToday()) return "expired";
+  return "waiting"; // waiting | booked
+}
+
+publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
+  const t = req.ticketRow;
+  const state = publicState(t);
+  const queue = state === "waiting" ? await getQueueInfo(t) : null;
+  res.json({
+    state,
+    ticketNumber: t.ticket_number,
+    type: t.type,
+    slotTime: t.type === "booked" ? t.slot_time : null,
+    peopleAhead: queue ? queue.position - 1 : null,
+    estimatedMinutes: queue ? queue.estimatedMinutes : null,
+    serviceName: t.service_name,
+    locationName: t.location_name,
+    businessName: t.business_name,
+    calledRoom: state === "called" ? (t.called_room || null) : null,
+    whatsappUpdatesOffer: !!t.whatsapp_updates_offer,
+    whatsappUpdatesRequested: !!t.whatsapp_updates_requested,
+    updatedAt: new Date().toISOString(),
+  });
+}));
+
+publicTicketRouter.post("/:token/leave", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
+  const t = req.ticketRow;
+  if (t.status === "cancelled") return res.json({ state: "cancelled" }); // idempotent
+  if (!["waiting", "booked"].includes(t.status) || publicState(t) === "expired") {
+    return res.status(409).json({ error: "This ticket can no longer be cancelled.", state: publicState(t) });
+  }
+  await query(`update tickets set status='cancelled' where id=$1 and status in ('waiting','booked')`, [t.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [t.tenant_id, `Ticket ${t.ticket_number} cancelled by customer (web) for ${t.service_name || "service"}`]);
+  res.json({ state: "cancelled" });
+}));
+
+// STUB: records that the patient would like WhatsApp updates. Sends nothing and collects no
+// phone number — the WhatsApp business number isn't connected yet.
+publicTicketRouter.post("/:token/whatsapp-intent", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
+  await query(
+    `update ticket_web_access set whatsapp_updates_requested=true, whatsapp_updates_requested_at=coalesce(whatsapp_updates_requested_at, now()) where token=$1`,
+    [req.params.token]
+  );
+  res.json({ ok: true, delivered: false });
 }));
 
 export default router;

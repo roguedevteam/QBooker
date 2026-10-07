@@ -1,6 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { api } from "./lib/api.js";
 import { todayIso, refreshClock } from "./lib/clock.js";
+import { getSavedToken, saveToken, clearSavedToken, setUrlToken, urlParam, getDeviceId } from "./lib/storage.js";
+import { ChannelLanding, WhatsAppOnly } from "./Gate.jsx";
+import Returning from "./Returning.jsx";
 
 function nowMinutes() {
   const d = new Date();
@@ -58,21 +61,65 @@ function CustomerWhatsApp({ tenantId }) {
   const [checkingIn, setCheckingIn] = useState(false);
   const [serviceName, setServiceName] = useState(""); // header subtitle only (display)
   const [pickedIdx, setPickedIdx] = useState(null); // visual "selected" state for the tapped option
+  const [liveToken, setLiveToken] = useState(() => urlParam("k") || getSavedToken(tenantId) || ""); // set => Returning screen
+  const [justJoined, setJustJoined] = useState(false);
+  const [gate, setGate] = useState(null); // { locId, mode } while the "how to join" screen is up
+  const [startLoc, setStartLoc] = useState(undefined); // undefined = config not loaded yet; null = ask which location
+  const [codePrompt, setCodePrompt] = useState(null); // { svcId, message } — on-site code needed to join
+  const [codeInput, setCodeInput] = useState("");
+  const [joining, setJoining] = useState(false);
+  const onsiteCodeRef = useRef(urlParam("c").trim().toUpperCase()); // from the QR link, or typed in
+  const chosenRef = useRef(new Set()); // locations where the patient already passed the landing screen
   const scrollRef = useRef(null);
   const lastStatusRef = useRef(null);
   const reminderSentRef = useRef(false);
 
   useEffect(() => {
-    Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)])
-      .then(([info, l, s]) => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [info, l, sv] = await Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)]);
+        if (cancelled) return;
         setBusinessName(info.businessName);
         setLocations(l.locations);
-        setServices(s.services);
-        setMessages([{ from: "bot", text: `Welcome to ${info.businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
-        setOptions([{ label: "Hi", action: "greet" }]);
-      })
-      .catch(() => setNotFound(true));
+        setServices(sv.services);
+        // Which location did the patient arrive at? The QR link carries the location code (?c=)
+        // and sometimes a service (?s=); a single-location business needs neither.
+        let entry = null;
+        const code = urlParam("c").trim();
+        if (code) {
+          try { const ci = await api.getCodeInfo(code); if (ci.tenantId === tenantId) entry = ci.locationId; } catch { /* unknown code: ignore */ }
+        }
+        if (!entry) { const sid = urlParam("s"); const svc = sv.services.find((x) => x.id === sid); if (svc) entry = svc.location_id; }
+        if (!entry && l.locations.length === 1) entry = l.locations[0].id;
+        if (!cancelled) setStartLoc(entry);
+      } catch { if (!cancelled) setNotFound(true); }
+    })();
+    return () => { cancelled = true; };
   }, [tenantId]);
+
+  // Runs once the config is in state (showServices reads it): greet, then apply the location's
+  // channel mode — landing screen for "both", WhatsApp-only page for "whatsapp", straight in for "web".
+  useEffect(() => {
+    if (startLoc === undefined) return;
+    beginChat(startLoc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startLoc]);
+
+  function beginChat(locId) {
+    const where = locations.find((l) => l.id === locId)?.name;
+    setMessages([{ from: "bot", text: `Hello! Welcome to ${businessName}${where && locations.length > 1 ? ` — ${where}` : ""}. What would you like to do?` }]);
+    setOptions([]);
+    if (locId) enterLocation(locId);
+    else handle("greet");
+  }
+
+  function enterLocation(locId) {
+    const loc = locations.find((l) => l.id === locId);
+    const mode = loc?.channel_mode || "both";
+    if (mode === "web" || chosenRef.current.has(locId)) { chosenRef.current.add(locId); return showServices(locId); }
+    setGate({ locId, mode }); // "both" -> landing, "whatsapp" -> WhatsApp-only page
+  }
 
   // Polls for "it's your turn" — the staff kiosk and this app are fully separate apps with
   // no other shared channel, so this is how a customer actually finds out they've been called.
@@ -89,7 +136,7 @@ function CustomerWhatsApp({ tenantId }) {
         setQueueInfo(r.queue || null);
         setArrived(!!r.arrived);
         if ((r.status === "serving" || r.status === "completed") && lastStatusRef.current !== "serving" && lastStatusRef.current !== "completed") {
-          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`, [{ label: "Simulate a new customer", action: "restart" }]);
+          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`, [{ label: "Start again", action: "restart" }]);
         }
         lastStatusRef.current = r.status;
       } catch {
@@ -100,7 +147,7 @@ function CustomerWhatsApp({ tenantId }) {
         const minsToGo = watchedTicket.slotTime - mins;
         if (minsToGo > 0 && minsToGo <= 15) {
           reminderSentRef.current = true;
-          bot(`⏰ Reminder: your appointment is in ${minsToGo} minute${minsToGo === 1 ? "" : "s"}.`, [{ label: "Simulate a new customer", action: "restart" }]);
+          bot(`⏰ Reminder: your appointment is in ${minsToGo} minute${minsToGo === 1 ? "" : "s"}.`, [{ label: "Start again", action: "restart" }]);
         }
       }
     }, 6000);
@@ -120,7 +167,7 @@ function CustomerWhatsApp({ tenantId }) {
     try {
       await api.checkIn(tenantId, watchedTicket.id);
       setArrived(true);
-      bot("✅ You're checked in. Please take a seat — we'll call you at your appointment time, or sooner if we can.", [{ label: "Simulate a new customer", action: "restart" }]);
+      bot("✅ You're checked in. Please take a seat — we'll call you at your appointment time, or sooner if we can.", [{ label: "Start again", action: "restart" }]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -133,7 +180,7 @@ function CustomerWhatsApp({ tenantId }) {
     setCancelling(true);
     try {
       await api.cancelTicket(tenantId, watchedTicket.id);
-      bot(`Your ${watchedTicket.type === "booked" ? "booking" : "spot in the queue"} has been cancelled — come back any time.`, [{ label: "Simulate a new customer", action: "restart" }]);
+      bot(`Your ${watchedTicket.type === "booked" ? "booking" : "spot in the queue"} has been cancelled — come back any time.`, [{ label: "Start again", action: "restart" }]);
       lastStatusRef.current = "cancelled";
       setWatchedTicket(null);
       setTicketStatus(null);
@@ -151,7 +198,6 @@ function CustomerWhatsApp({ tenantId }) {
   async function handle(action, payload) {
     if (action === "greet") {
       setServiceName("");
-      user("Hi");
       if (locations.length > 1) {
         const checks = await Promise.all(locations.map(async (l) => {
           const locServices = services.filter((s) => s.location_id === l.id);
@@ -174,7 +220,7 @@ function CustomerWhatsApp({ tenantId }) {
       }
     } else if (action === "loc") {
       user(locations.find((l) => l.id === payload)?.name);
-      await showServices(payload);
+      await enterLocation(payload);
     } else if (action === "svc") {
       const svc = services.find((s) => s.id === payload);
       setServiceName(svc.name);
@@ -218,24 +264,24 @@ function CustomerWhatsApp({ tenantId }) {
       bot("Pick a time:", payload.slots.slice(0, 9).map((t) => ({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: payload.serviceId, slotTime: t } })));
     } else if (action === "join") {
       const svc = services.find((s) => s.id === payload);
-      try {
-        const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null });
-        bot("You're checked in ✅\nWe'll message you here when it's your turn.", [{ label: "Simulate a new customer", action: "restart" }], {
-          number: r.ticket.ticket_number,
-          position: r.queue ? r.queue.position : null,
-          eta: r.queue && r.queue.estimatedMinutes != null ? `About ${r.queue.estimatedMinutes} min` : null,
-          service: svc.name,
-        });
-        lastStatusRef.current = "waiting";
-        setTicketStatus("waiting");
-        setQueueInfo(r.queue || null);
-        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "walk_in" });
-      } catch (err) { bot(`Sorry — ${err.message}`); }
+      const loc = locations.find((l) => l.id === svc.location_id);
+      user("Join the queue");
+      // "Only joinable from the clinic": the QR link carries the location code; without it, ask for it.
+      if (loc?.onsite_only && !onsiteCodeRef.current) { askForCode(svc.id); return; }
+      await doJoin(svc);
+    } else if (action === "wa") {
+      user("Message me on WhatsApp");
+      try { await api.whatsappIntent(payload); } catch { /* recorded best-effort */ }
+      bot("Thanks, we've noted that. WhatsApp updates aren't switched on yet, so please keep this page open. We'll show your number here when you're called.", [{ label: "Open my live ticket", action: "keep", payload }]);
+    } else if (action === "keep") {
+      user(payload.label || "Open my live ticket");
+      setJustJoined(true);
+      setLiveToken(payload.token || payload);
     } else if (action === "book") {
       const svc = services.find((s) => s.id === payload.serviceId);
       try {
-        const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime });
-        bot("You're booked ✅\nWe'll message you here when it's your turn.", [{ label: "Simulate a new customer", action: "restart" }], {
+        const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime, deviceId: getDeviceId() });
+        bot("You're booked ✅\nWe'll message you here when it's your turn.", [{ label: "Start again", action: "restart" }], {
           number: r.ticket.ticket_number,
           position: null,
           eta: `${formatTime(payload.slotTime)} today`,
@@ -246,7 +292,7 @@ function CustomerWhatsApp({ tenantId }) {
         setTicketStatus("booked");
         setQueueInfo(null);
         setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "booked", slotTime: payload.slotTime });
-      } catch (err) { bot(`Sorry — ${err.message}`); }
+      } catch (err) { bot(`Sorry — ${err.message}`, [{ label: "Choose another service", action: "greet" }]); }
     } else if (action === "website") {
       window.open(payload, "_blank", "noopener");
     } else if (action === "restart") {
@@ -255,9 +301,56 @@ function CustomerWhatsApp({ tenantId }) {
       setQueueInfo(null);
       lastStatusRef.current = null;
       setServiceName("");
-      setMessages([{ from: "bot", text: `Welcome to ${businessName} 👋 Reply Hi to get a ticket or book a slot.` }]);
-      setOptions([{ label: "Hi", action: "greet" }]);
+      beginChat(startLoc ?? null);
     }
+  }
+
+  function askForCode(svcId, message) {
+    setCodeInput("");
+    setCodePrompt({ svcId });
+    bot(message || "This clinic asks you to join from the clinic. Scan the QR code at reception again, or type the location code shown there.", []);
+  }
+
+  async function doJoin(svc, code = onsiteCodeRef.current) {
+    const loc = locations.find((l) => l.id === svc.location_id);
+    setJoining(true);
+    try {
+      const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null, deviceId: getDeviceId(), onsiteCode: code || undefined });
+      const token = r.publicToken;
+      const ahead = r.queue ? r.queue.position - 1 : null;
+      bot("You're in the queue ✅", [], {
+        number: r.ticket.ticket_number,
+        ahead,
+        eta: r.queue && r.queue.estimatedMinutes != null ? `About ${r.queue.estimatedMinutes} min` : null,
+        service: svc.name,
+      });
+      lastStatusRef.current = "waiting";
+      if (token) {
+        saveToken(tenantId, token); // so reopening this page on this phone finds the ticket
+        setUrlToken(token);
+        if (loc?.whatsapp_updates_offer) {
+          bot("Want a WhatsApp message when you're nearly up? Then you can leave the page.", [
+            { label: "Message me on WhatsApp", action: "wa", payload: token },
+            { label: "No thanks, I'll keep this page open", action: "keep", payload: { token, label: "No thanks, I'll keep this page open" } },
+          ]);
+        } else {
+          bot("Take a seat. We'll show your number on this page when you're called.", [{ label: "Watch my place in the queue", action: "keep", payload: { token, label: "Watch my place in the queue" } }]);
+        }
+        setMessages((m) => [...m, { from: "note", text: "Saved on this phone. Come back to this page any time to see your place." }]);
+      } else {
+        // Older server without public tickets: fall back to the in-chat status bar.
+        setTicketStatus("waiting"); setQueueInfo(r.queue || null);
+        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "walk_in" });
+        setOptions([{ label: "Start again", action: "restart" }]);
+      }
+    } catch (err) {
+      if (err.reason === "onsite_code_required" || err.reason === "onsite_code_invalid") {
+        onsiteCodeRef.current = "";
+        askForCode(svc.id, err.message);
+      } else {
+        bot(`Sorry — ${err.message}`, [{ label: "Choose another service", action: "greet" }]);
+      }
+    } finally { setJoining(false); }
   }
 
   // Only shows services that are actually open right now — closed/out-of-hours ones never
@@ -304,6 +397,33 @@ function CustomerWhatsApp({ tenantId }) {
     return <div className="narrow card screen-error" role="alert">We couldn't find that business. Check the link and try again.</div>;
   }
 
+  if (liveToken) {
+    return (
+      <Returning
+        token={liveToken}
+        justJoined={justJoined}
+        onSeen={() => { saveToken(tenantId, liveToken); setUrlToken(liveToken); }}
+        onEnded={() => { clearSavedToken(tenantId); }}
+        onRestart={() => { clearSavedToken(tenantId); setUrlToken(""); setLiveToken(""); setJustJoined(false); beginChat(startLoc ?? null); }}
+      />
+    );
+  }
+
+  if (gate) {
+    const gateLoc = locations.find((l) => l.id === gate.locId);
+    const locServices = services.filter((s) => s.location_id === gate.locId);
+    const title = locServices.length === 1 ? locServices[0].name : (gateLoc?.name || businessName);
+    if (gate.mode === "whatsapp") {
+      return <WhatsAppOnly businessName={businessName} title={title} code={onsiteCodeRef.current} onBack={locations.length > 1 ? () => { setGate(null); handle("greet"); } : null} />;
+    }
+    return (
+      <ChannelLanding
+        businessName={businessName} title={title} code={onsiteCodeRef.current}
+        onContinue={() => { chosenRef.current.add(gate.locId); setGate(null); showServices(gate.locId); }}
+      />
+    );
+  }
+
   const showStatus = watchedTicket && (ticketStatus === "waiting" || ticketStatus === "booked");
 
   return (
@@ -325,7 +445,7 @@ function CustomerWhatsApp({ tenantId }) {
         <div className="chat-list" role="log" aria-live="polite" aria-label="Conversation">
           {messages.map((m, i) => (
             <div key={i} className={`msg msg-${m.from}`}>
-              <div className="bubble">{m.text}</div>
+              {m.from === "note" ? <div className="chat-note">{m.text}</div> : <div className="bubble">{m.text}</div>}
               {m.ticket && (
                 <div className="ticket" aria-label={`Ticket ${m.ticket.number}`}>
                   <div className="ticket-top">
@@ -333,8 +453,8 @@ function CustomerWhatsApp({ tenantId }) {
                     <span className="ticket-num mono">{m.ticket.number}</span>
                   </div>
                   <dl className="ticket-meta">
-                    {m.ticket.position != null && (
-                      <div><dt>Position</dt><dd>#{m.ticket.position}</dd></div>
+                    {m.ticket.ahead != null && (
+                      <div><dt>People ahead</dt><dd>{m.ticket.ahead}</dd></div>
                     )}
                     {m.ticket.eta && (
                       <div><dt>{m.ticket.etaLabel || "Estimated wait"}</dt><dd>{m.ticket.eta}</dd></div>
@@ -348,6 +468,25 @@ function CustomerWhatsApp({ tenantId }) {
       </div>
 
       <footer className="chat-foot">
+        {codePrompt && (
+          <form
+            className="code-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const code = codeInput.trim().toUpperCase();
+              if (!code) return;
+              onsiteCodeRef.current = code;
+              const svc = services.find((x) => x.id === codePrompt.svcId);
+              setCodePrompt(null);
+              if (svc) doJoin(svc, code);
+            }}
+          >
+            <label htmlFor="onsite-code" className="code-label">Location code (shown at reception)</label>
+            <input id="onsite-code" className="input mono" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} placeholder="QB-XXXXXX" autoComplete="off" autoCapitalize="characters" spellCheck="false" />
+            <button className="btn btn-accent" type="submit" disabled={!codeInput.trim() || joining}>Join the queue</button>
+            <button className="btn-outline" type="button" onClick={() => { setCodePrompt(null); handle("greet"); }}>Back</button>
+          </form>
+        )}
         {options.length > 0 && (
           <div className="replies" role="group" aria-label="Reply options">
             {options.map((o, i) => (

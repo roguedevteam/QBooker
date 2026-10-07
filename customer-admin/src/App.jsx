@@ -591,6 +591,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                   </button>
                 </div>
 
+                <ChannelSettings key={loc.id} loc={loc} tenant={tenant} onSaved={refreshCore} />
+
                 {addingHere && (
                   <ServiceWizard
                     locationId={loc.id}
@@ -609,6 +611,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                   <ServiceEditor
                     key={s.id} statusInHeader={locServices.length === 1} service={s} allServices={services} tenant={tenant} setError={setError}
                     locationName={loc.name}
+                    locationCode={loc.code}
                     onChange={() => { refreshCore(); refreshLicenses(); }}
                     autoBuy={renewServiceId === s.id}
                     onAutoBuyHandled={() => setRenewServiceId(null)}
@@ -843,6 +846,82 @@ function splitAddress(combined) {
 }
 function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+// "How patients join" — which channels a location offers, per the ChannelAdmin design.
+// The location code (also the WhatsApp code) is what the QR carries, and what "only joinable
+// from the clinic" checks. It does not check where the patient physically is.
+const CHANNEL_CHOICES = [
+  { value: "whatsapp", title: "WhatsApp only", text: "Patients message your number. WhatsApp message charges apply." },
+  { value: "web", title: "Web page only", text: "Looks like a chat, opens in the browser. No message charges." },
+  { value: "both", title: "Both", text: "Patients choose. Most will use the web page, so you pay for fewer messages.", recommended: true },
+];
+
+function ChannelSettings({ loc, tenant, onSaved }) {
+  const saved = { mode: loc.channel_mode || "both", offer: loc.whatsapp_updates_offer !== false, onsite: !!loc.onsite_only };
+  const [mode, setMode] = useState(saved.mode);
+  const [offer, setOffer] = useState(saved.offer);
+  const [onsite, setOnsite] = useState(saved.onsite);
+  const [status, setStatus] = useState({ kind: "idle", text: "" }); // idle | saving | ok | error
+  const dirty = mode !== saved.mode || offer !== saved.offer || onsite !== saved.onsite;
+  const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
+  const previewHref = `${CUSTOMER_APP_URL}/?t=${tenant.id}${loc.code ? `&c=${encodeURIComponent(loc.code)}` : ""}`;
+
+  async function save() {
+    setStatus({ kind: "saving", text: "Saving…" });
+    try {
+      await api.updateLocation(loc.id, { channelMode: mode, whatsappUpdatesOffer: offer, onsiteOnly: onsite });
+      await onSaved?.();
+      setStatus({ kind: "ok", text: "Saved. Patients see the new setting straight away." });
+    } catch (err) {
+      setStatus({ kind: "error", text: `Not saved: ${err.message}` });
+    }
+  }
+
+  return (
+    <section className="card stack chan" aria-labelledby={`chan-h-${loc.id}`} style={{ gap: 14 }}>
+      <h2 id={`chan-h-${loc.id}`} className="chan-h">How patients join</h2>
+      <p className="muted chan-lede">One QR code and location code works for every option. Patients pick on their phone, or you can limit it.</p>
+
+      <fieldset className="chan-group">
+        <legend className="sr-only">How patients join {loc.name}</legend>
+        {CHANNEL_CHOICES.map((c) => (
+          <label key={c.value} className={`chan-opt${mode === c.value ? " is-on" : ""}`}>
+            <input type="radio" name={`channel-${loc.id}`} value={c.value} checked={mode === c.value} onChange={() => { setMode(c.value); setStatus({ kind: "idle", text: "" }); }} />
+            <span className="chan-radio" aria-hidden="true" />
+            <span className="chan-opt-body">
+              <span className="chan-opt-title"><strong>{c.title}</strong>{c.recommended && <span className="badge badge-green">Recommended</span>}</span>
+              <span className="chan-opt-text">{c.text}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+
+      <div className={`chan-row${mode === "whatsapp" ? " is-disabled" : ""}`}>
+        <span className="chan-row-text" id={`offer-l-${loc.id}`}>
+          <strong>Offer WhatsApp updates to web users</strong>
+          <span className="small muted">A button to be messaged when nearly up{mode === "whatsapp" ? " (not used when WhatsApp only)" : ""}</span>
+        </span>
+        <button type="button" role="switch" aria-checked={offer && mode !== "whatsapp"} aria-labelledby={`offer-l-${loc.id}`} disabled={mode === "whatsapp"}
+          className={`chan-switch${offer && mode !== "whatsapp" ? " is-on" : ""}`} onClick={() => { setOffer(!offer); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
+      </div>
+
+      <div className="chan-row">
+        <span className="chan-row-text" id={`onsite-l-${loc.id}`}>
+          <strong>Only joinable from the clinic</strong>
+          <span className="small muted">Patients must scan the QR code at reception or enter your location code{loc.code ? ` (${loc.code})` : ""}. Stops people joining the queue from home by accident. It checks the code, not where the phone is.</span>
+        </span>
+        <button type="button" role="switch" aria-checked={onsite} aria-labelledby={`onsite-l-${loc.id}`}
+          className={`chan-switch${onsite ? " is-on" : ""}`} onClick={() => { setOnsite(!onsite); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
+      </div>
+
+      <div className="chan-actions">
+        <button type="button" className="btn btn-accent" disabled={!dirty || status.kind === "saving"} onClick={save}>{status.kind === "saving" ? "Saving…" : "Save"}</button>
+        <a className="btn-outline" href={previewHref} target="_blank" rel="noopener noreferrer">Preview</a>
+      </div>
+      <div className={`chan-status chan-status-${status.kind}`} role={status.kind === "error" ? "alert" : "status"} aria-live="polite">{status.kind === "saving" ? "" : status.text}</div>
+    </section>
+  );
 }
 
 // The location's name as the page title, editable in place and saved automatically
@@ -1521,7 +1600,7 @@ function licenseSummary(licenses) {
   return { text: "No license", color: "red" };
 }
 
-function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, autoBuy, onAutoBuyHandled, startExpanded = false, statusInHeader = false }) {
+function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, locationCode, autoBuy, onAutoBuyHandled, startExpanded = false, statusInHeader = false }) {
   const [panel, setPanel] = useState(startExpanded ? "hours" : null); // null | "hours" | "licences"
   const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
@@ -1561,7 +1640,8 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   // on so the real version can route straight to it once WhatsApp is actually connected.
   function printServiceQR() {
     const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
-    const link = `${CUSTOMER_APP_URL}/?t=${tenant.id}&s=${service.id}`;
+    // The location code rides along in the QR so "Only joinable from the clinic" locations accept the scan.
+    const link = `${CUSTOMER_APP_URL}/?t=${tenant.id}&s=${service.id}${locationCode ? `&c=${encodeURIComponent(locationCode)}` : ""}`;
     const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&color=1D5C8A&data=${encodeURIComponent(link)}`;
     const businessName = tenant?.business_name || "";
     const html = `<!doctype html><html><head><title>QR code — ${service.name}</title>

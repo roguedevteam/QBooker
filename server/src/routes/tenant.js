@@ -204,10 +204,22 @@ router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   // Website is business-wide now (see PATCH /me) — no longer edited per location.
-  const { name, address, archived } = req.body;
+  const { name, address, archived, channelMode, whatsappUpdatesOffer, onsiteOnly } = req.body;
+  // Web-channel settings are validated strictly (undefined = leave unchanged).
+  if (channelMode !== undefined && !["whatsapp", "web", "both"].includes(channelMode)) {
+    return res.status(400).json({ error: "channelMode must be 'whatsapp', 'web' or 'both'." });
+  }
+  if (whatsappUpdatesOffer !== undefined && typeof whatsappUpdatesOffer !== "boolean") {
+    return res.status(400).json({ error: "whatsappUpdatesOffer must be true or false." });
+  }
+  if (onsiteOnly !== undefined && typeof onsiteOnly !== "boolean") {
+    return res.status(400).json({ error: "onsiteOnly must be true or false." });
+  }
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived) where id=$4 and tenant_id=$5 returning *`,
-    [name, address, archived, req.params.id, req.tenant.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived),
+       channel_mode=coalesce($4,channel_mode), whatsapp_updates_offer=coalesce($5,whatsapp_updates_offer), onsite_only=coalesce($6,onsite_only)
+     where id=$7 and tenant_id=$8 returning *`,
+    [name, address, archived, channelMode ?? null, whatsappUpdatesOffer ?? null, onsiteOnly ?? null, req.params.id, req.tenant.id]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Location not found." });
   if (archived === true) {
@@ -216,6 +228,11 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   } else if (archived === false) {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
       [req.tenant.id, `Location "${result.rows[0].name}" unarchived`]);
+  }
+  if (channelMode !== undefined || whatsappUpdatesOffer !== undefined || onsiteOnly !== undefined) {
+    const r = result.rows[0];
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `Location "${r.name}" join settings changed: channel ${r.channel_mode}, WhatsApp updates ${r.whatsapp_updates_offer ? "offered" : "not offered"}, on-site only ${r.onsite_only ? "on" : "off"}`]);
   }
   res.json({ location: result.rows[0] });
 }));

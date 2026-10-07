@@ -5,7 +5,7 @@ import "dotenv/config";
 import authRoutes from "./routes/auth.js";
 import tenantRoutes from "./routes/tenant.js";
 import systemRoutes, { publicRouter } from "./routes/system.js";
-import customerPublicRoutes from "./routes/customerPublic.js";
+import customerPublicRoutes, { publicTicketRouter } from "./routes/customerPublic.js";
 import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { closeStaleTickets } from "./lib/closeStaleTickets.js";
@@ -30,6 +30,7 @@ app.use("/api/tenant", restrictedCors, tenantRoutes);
 app.use("/api/system", restrictedCors, systemRoutes);
 app.use("/api/public", openCors, publicRouter);
 app.use("/api/public/tenant", openCors, customerPublicRoutes);
+app.use("/api/public/ticket", openCors, publicTicketRouter);
 app.use("/api/public/code", openCors, publicCodesRoutes);
 app.use("/api/whatsapp", openCors, whatsappRoutes);
 
