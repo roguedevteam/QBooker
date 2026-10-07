@@ -1791,6 +1791,9 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
               tabIndex={shownTab === n || (shownTab === null && i === 0) ? 0 : -1}
               className="svc-tab" onClick={() => openTab(n)}
             >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+                {n === "calendar" ? <><rect x="3" y="5" width="18" height="16" /><path d="M3 10h18M8 3v4M16 3v4" /></> : <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>}
+              </svg>
               {tabLabel[n]}
               {n === "licences" && toDateCount > 0 && <span className="badge badge-amber">{toDateCount} to date</span>}
             </button>
