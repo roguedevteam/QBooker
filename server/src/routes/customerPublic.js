@@ -104,6 +104,12 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
   const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
   const day = dayResult.rows[0];
   if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
+  // Past the end of the last opening block today (hours are 30-minute start times): closed for the day,
+  // not "fully booked".
+  const nowMins = Number(clockMinutes);
+  if (Number.isFinite(nowMins) && String(date).slice(0, 10) === getToday() && nowMins >= Math.max(...day.hours) + 30) {
+    return res.json({ open: false, reason: "closed" });
+  }
 
   const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
   const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
