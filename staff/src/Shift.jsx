@@ -296,7 +296,13 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
       {mine.length === 0 && (
         <div className="empty-card calm">
           <strong>Nobody with you.</strong>
-          <span>{isWide ? "Tap Call this patient on the left." : "Go to 1 Waiting and tap Call this patient."}</span>
+          {!next && <span>Nobody is waiting either.</span>}
+          {next && <span>{patientKind(next)}{multi ? ` · ${svcName(next.service_id)}` : ""}</span>}
+          {next && (
+            <button className="btn-big btn-fill call-btn" disabled={!canCall} onClick={() => callTicket(next)}>
+              Call next patient <span className="mono">{next.ticket_number}</span>
+            </button>
+          )}
         </div>
       )}
       {mine.map((t) => {
@@ -449,9 +455,6 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                 </button>
               ))}
             </div>
-            {tab !== "waiting" && next && (
-              <div className="next-hint"><span>Next patient:{" "}<strong className="mono">{next.ticket_number}</strong>{" "}{next.type === "booked" ? `(${patientKind(next)}) ` : ""}(tap 1 to call)</span></div>
-            )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
               {tab === "waiting" && waitingCol}
               {tab === "now" && nowCol}
