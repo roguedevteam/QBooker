@@ -825,7 +825,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
             >
               <input className="su-input" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
-            <p className="su-hint">You can add your business address later from the Profile tab once you're set up.</p>
+            <p className="su-hint">You can add your business address later from the Account tab once you're set up.</p>
           </div>
         )}
 

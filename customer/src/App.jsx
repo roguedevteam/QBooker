@@ -284,7 +284,7 @@ function Patient({ tenantId }) {
   async function doJoin(svc, code = onsiteCodeRef.current) {
     setJoining(true);
     try {
-      const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null, deviceId: getDeviceId(), onsiteCode: code || undefined });
+      const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null, clockMinutes: nowMinutes(), deviceId: getDeviceId(), onsiteCode: code || undefined });
       openTicket(r.publicToken);
     } catch (err) {
       if (err.reason === "onsite_code_required" || err.reason === "onsite_code_invalid") {

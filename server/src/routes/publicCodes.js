@@ -5,6 +5,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 const router = Router();
 
 router.get("/:code", asyncHandler(async (req, res) => {
+  if (!/^[A-Za-z0-9-]{3,20}$/.test(req.params.code)) return res.status(404).json({ error: "That code wasn't recognised." });
   const result = await query(
     `select lc.code, lc.tenant_id, lc.location_id, t.business_name, l.name as location_name
      from location_codes lc

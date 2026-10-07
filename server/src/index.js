@@ -9,11 +9,17 @@ import customerPublicRoutes, { publicTicketRouter } from "./routes/customerPubli
 import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { closeStaleTickets } from "./lib/closeStaleTickets.js";
+import { HttpError } from "./lib/validate.js";
 
 const app = express();
+app.disable("x-powered-by");
 // Railway/Render sit in front of this as a reverse proxy — without this, req.ip is always the
 // proxy's own address, which would make every signup look like it's coming from the same place.
-app.set("trust proxy", true);
+// Trust exactly TRUST_PROXY proxy hops (default 1, which fits Railway): the client IP is then the
+// address the nearest proxy saw, and a client-supplied X-Forwarded-For can't fake another one.
+// Use 0 if the app is exposed directly with no proxy in front.
+const trustProxyHops = process.env.TRUST_PROXY === undefined || process.env.TRUST_PROXY === "" ? 1 : Number(process.env.TRUST_PROXY);
+app.set("trust proxy", Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim());
 const restrictedCors = cors({ origin: allowedOrigins, credentials: true });
@@ -22,6 +28,11 @@ const restrictedCors = cors({ origin: allowedOrigins, credentials: true });
 const openCors = cors();
 
 app.use(express.json());
+// Bodies are always JSON objects; an array (or anything else) is a malformed request.
+app.use((req, res, next) => {
+  if (Array.isArray(req.body)) return res.status(400).json({ error: "Request body must be a JSON object." });
+  next();
+});
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -34,7 +45,23 @@ app.use("/api/public/ticket", openCors, publicTicketRouter);
 app.use("/api/public/code", openCors, publicCodesRoutes);
 app.use("/api/whatsapp", openCors, whatsappRoutes);
 
+// Client mistakes (bad JSON, oversized body, validation failures) are answered with their own 4xx
+// and a short message. Database "bad value" errors that slip past validation are also 4xx. Only
+// genuine server faults are logged and answered with a 500.
 app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode;
+  if (status >= 400 && status < 500) {
+    let error = err instanceof HttpError ? err.message : "Bad request.";
+    if (err.type === "entity.too.large") error = "That request is too large.";
+    else if (err.type === "entity.parse.failed") error = "The request body isn't valid JSON.";
+    return res.status(status).json({ error, ...(err instanceof HttpError ? err.extra : {}) });
+  }
+  if (typeof err.code === "string" && /^(22|23)/.test(err.code)) {
+    console.warn(`[client input] database rejected a value (${err.code}${err.constraint ? ` ${err.constraint}` : ""})`);
+    if (err.code === "23505") return res.status(409).json({ error: "That already exists." });
+    return res.status(400).json({ error: "One of the values sent isn't acceptable." });
+  }
   console.error(err);
   res.status(500).json({ error: "Something went wrong on our end." });
 });

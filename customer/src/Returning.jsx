@@ -52,6 +52,7 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
   const audioRef = useRef(null);
   const prevState = useRef(null);
   const endedReported = useRef(false);
+  const notFoundRef = useRef(false); // the server said this ticket doesn't exist: nothing to wait for, stop asking
 
   async function checkIn() {
     setCheckBusy(true); setCheckError("");
@@ -60,13 +61,14 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
     finally { setCheckBusy(false); }
   }
   const poll = useCallback(async () => {
+    if (notFoundRef.current) return;
     try {
       const r = await api.getPublicTicket(token);
       setData(r); setProblem(null); setLastOk(Date.now());
       onSeen?.();
       if (r.state !== "waiting" && r.state !== "called" && !endedReported.current) { endedReported.current = true; onEnded?.(r.state); }
     } catch (err) {
-      if (err.status === 404) { setProblem("unknown"); setData(null); if (!endedReported.current) { endedReported.current = true; onEnded?.("unknown"); } }
+      if (err.status === 404) { notFoundRef.current = true; setProblem("unknown"); setData(null); if (!endedReported.current) { endedReported.current = true; onEnded?.("unknown"); } }
       else setProblem("offline"); // keep showing the last good data and keep retrying
     }
   }, [token, onSeen, onEnded]);
@@ -74,9 +76,9 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
   // Poll every ~10s, but only while the tab is visible; catch up straight away on return.
   useEffect(() => {
     let timer = null;
-    const tick = () => { if (!document.hidden) poll(); };
+    const tick = () => { if (notFoundRef.current) { clearInterval(timer); return; } if (!document.hidden) poll(); };
     const start = () => { clearInterval(timer); timer = setInterval(tick, POLL_MS); };
-    const onVis = () => { if (!document.hidden) { poll(); start(); } else clearInterval(timer); };
+    const onVis = () => { if (notFoundRef.current) return; if (!document.hidden) { poll(); start(); } else clearInterval(timer); };
     poll(); start();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onVis);

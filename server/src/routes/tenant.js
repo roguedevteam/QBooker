@@ -5,10 +5,16 @@ import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import {
-  getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, buildTodayRibbon, BLOCK_MINUTES,
+  currentHourBlock, buildTodayRibbon, BLOCK_MINUTES,
 } from "../lib/scheduling.js";
 import { isDateFullyPast, addDays } from "../lib/plan.js";
-import { getToday } from "../lib/clock.js";
+import { getToday, londonNowMinutes } from "../lib/clock.js";
+import { dayCfg, getAvailability, loadService as loadServiceForTenant } from "../lib/availability.js";
+import { createTicket, parseTicketRequest } from "../lib/tickets.js";
+import {
+  badRequest, notFound, conflict, isUuid, uuidParams, reqDate, optDate, reqString, optString, optEmail, optInt, optBool, optEnum,
+  clockMinutesOrUndefined, parseHours, EMAIL_RE,
+} from "../lib/validate.js";
 import {
   resolveServiceLicenses, resolveServiceLicense, activeAndScheduledWindows,
   isServiceLicensedOn, checkSchedulable, computeEndDate, isWithinRefundWindow,
@@ -20,6 +26,7 @@ import { domainAcceptsMail } from "../lib/emailCheck.js";
 import { closeStaleTickets } from "../lib/closeStaleTickets.js";
 
 const router = Router();
+uuidParams(router, "id", "licenseId");
 
 router.use(requireAuth("tenant_admin", "staff"));
 
@@ -55,18 +62,19 @@ function adminOnly(req, res, next) {
 }
 
 router.get("/me", (req, res) => res.json({
-  tenant: sanitizeTenant(req.tenant),
+  tenant: sanitizeTenant(req.tenant, req.auth.role),
   staff: req.staff ? { id: req.staff.id, firstName: req.staff.first_name, lastName: req.staff.last_name, email: req.staff.email } : null,
 }));
 
 // --- Staff users (customer admin manages who can sign in to the staff portal) ----------
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-async function validateStaffBody(req, res, { requireAll }) {
-  const first = req.body.firstName?.trim(), last = req.body.lastName?.trim(), email = req.body.email?.trim();
-  if (requireAll && (!first || !last || !email)) { res.status(400).json({ error: "First name, last name and email are all required." }); return null; }
+async function validateStaffBody(req, { requireAll }) {
+  const first = optString(req.body.firstName, "First name", { max: 100 });
+  const last = optString(req.body.lastName, "Last name", { max: 100 });
+  const email = optString(req.body.email, "Email", { max: 254 });
+  if (requireAll && (!first || !last || !email)) throw badRequest("First name, last name and email are all required.");
   if (email !== undefined) {
-    if (!EMAIL_RE.test(email)) { res.status(400).json({ error: "Enter a valid email address." }); return null; }
-    if (!(await domainAcceptsMail(email))) { res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." }); return null; }
+    if (!EMAIL_RE.test(email)) throw badRequest("Enter a valid email address.");
+    if (!(await domainAcceptsMail(email))) throw badRequest("That email address doesn't look like it can receive mail — check for a typo.");
   }
   return { first, last, email };
 }
@@ -75,8 +83,7 @@ router.get("/staff", adminOnly, asyncHandler(async (req, res) => {
   res.json({ staff: r.rows });
 }));
 router.post("/staff", adminOnly, asyncHandler(async (req, res) => {
-  const v = await validateStaffBody(req, res, { requireAll: true });
-  if (!v) return;
+  const v = await validateStaffBody(req, { requireAll: true });
   const dup = await query(`select 1 from staff_members where lower(email)=lower($1)`, [v.email]);
   if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
   const r = await query(`insert into staff_members (tenant_id, first_name, last_name, email) values ($1,$2,$3,$4) returning id, first_name, last_name, email, active, created_at`, [req.tenant.id, v.first, v.last, v.email]);
@@ -84,8 +91,7 @@ router.post("/staff", adminOnly, asyncHandler(async (req, res) => {
   res.json({ staff: r.rows[0] });
 }));
 router.patch("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
-  const v = await validateStaffBody(req, res, { requireAll: false });
-  if (!v) return;
+  const v = await validateStaffBody(req, { requireAll: false });
   if (v.email) {
     const dup = await query(`select 1 from staff_members where lower(email)=lower($1) and id<>$2`, [v.email, req.params.id]);
     if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
@@ -111,17 +117,17 @@ router.delete("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
 // Self-service profile edit — business name, contact name, email, company address and
 // website (website moved here from being per-location — it's a business-wide thing now).
 router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
-  const { businessName, firstName, lastName, email, companyAddress, websiteUrl, channelMode, whatsappUpdatesOffer, onsiteOnly } = req.body;
+  const businessName = optString(req.body.businessName, "Business name");
+  // Older accounts may have no contact name; a blank one is simply left unchanged.
+  const firstName = optString(req.body.firstName, "First name", { max: 100, allowEmpty: true }) || undefined;
+  const lastName = optString(req.body.lastName, "Last name", { max: 100, allowEmpty: true }) || undefined;
+  const email = optEmail(req.body.email);
+  const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
+  const websiteUrl = optString(req.body.websiteUrl, "Website", { max: 300, allowEmpty: true });
   // "How patients join" is account-wide. Validated strictly (undefined = leave unchanged).
-  if (channelMode !== undefined && !["whatsapp", "web", "both"].includes(channelMode)) {
-    return res.status(400).json({ error: "channelMode must be 'whatsapp', 'web' or 'both'." });
-  }
-  if (whatsappUpdatesOffer !== undefined && typeof whatsappUpdatesOffer !== "boolean") {
-    return res.status(400).json({ error: "whatsappUpdatesOffer must be true or false." });
-  }
-  if (onsiteOnly !== undefined && typeof onsiteOnly !== "boolean") {
-    return res.status(400).json({ error: "onsiteOnly must be true or false." });
-  }
+  const channelMode = optEnum(req.body.channelMode, "channelMode", ["whatsapp", "web", "both"]);
+  const whatsappUpdatesOffer = optBool(req.body.whatsappUpdatesOffer, "whatsappUpdatesOffer");
+  const onsiteOnly = optBool(req.body.onsiteOnly, "onsiteOnly");
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
@@ -142,7 +148,7 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
       [req.tenant.id, `Join settings changed (all locations): channel ${r.channel_mode}, WhatsApp updates ${r.whatsapp_updates_offer ? "offered" : "not offered"}, on-site only ${r.onsite_only ? "on" : "off"}`]);
   }
-  res.json({ tenant: sanitizeTenant(result.rows[0]) });
+  res.json({ tenant: sanitizeTenant(result.rows[0], req.auth.role) });
 }));
 
 // Self-service account deletion — permanent, same as the system-admin "Delete customer"
@@ -156,8 +162,7 @@ router.delete("/me", adminOnly, asyncHandler(async (req, res) => {
 // Dashboard setup-progress checklist — lets a tenant permanently dismiss a nag they don't
 // want to action (e.g. "add a website"), without it coming back.
 router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
-  const { task } = req.body;
-  if (!task) return res.status(400).json({ error: "Task required." });
+  const task = reqString(req.body.task, "Task", { max: 60 });
   const result = await query(
     `update tenants set dismissed_setup_tasks = array(select distinct unnest(dismissed_setup_tasks || $1::text[])) where id=$2 returning *`,
     [[task], req.tenant.id]
@@ -170,7 +175,9 @@ router.post("/setup/dismiss", adminOnly, asyncHandler(async (req, res) => {
 // real charge yet" stand-in used at signup); invoice just records/updates the billing details
 // and leaves the account pending for our team to confirm, same as the original invoice flow.
 router.post("/pay-now", adminOnly, asyncHandler(async (req, res) => {
-  const { paymentMethod, invoiceEmail, invoicePO } = req.body;
+  const { paymentMethod } = req.body;
+  const invoiceEmail = optString(req.body.invoiceEmail, "invoiceEmail", { max: 254, allowEmpty: true });
+  const invoicePO = optString(req.body.invoicePO, "invoicePO", { max: 100, allowEmpty: true });
   if (req.tenant.status !== "pending") {
     return res.status(409).json({ error: "This account isn't waiting on a payment." });
   }
@@ -208,24 +215,26 @@ router.get("/locations", asyncHandler(async (req, res) => {
 }));
 
 router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
-  const { name, address } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: "Name required." });
+  const name = reqString(req.body.name, "Name");
+  const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
   const t = req.tenant;
   const staffAccessCode = genAccessCode();
   const loc = await query(
     `insert into locations (tenant_id, name, address, staff_access_code) values ($1,$2,$3,$4) returning *`,
-    [t.id, name.trim(), address || "", staffAccessCode]
+    [t.id, name, address || "", staffAccessCode]
   );
   const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Location "${name.trim()}" added`]);
+    [req.tenant.id, `Location "${name}" added`]);
   res.json({ location: { ...loc.rows[0], code } });
 }));
 
 router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   // Website is business-wide now (see PATCH /me) — no longer edited per location.
-  const { name, address, archived } = req.body;
+  const name = optString(req.body.name, "Name");
+  const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
+  const archived = optBool(req.body.archived, "archived");
   // Join settings (channel mode etc.) are account-wide now — see PATCH /me; any sent here are ignored.
   const result = await query(
     `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived)
@@ -249,7 +258,7 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
 // Every license this tenant has ever bought, across every service, with status freshly
 // resolved — backs the Profile tab's licenses list (refund/print live there now instead of
 // each service's own dropdown).
-router.get("/licenses", asyncHandler(async (req, res) => {
+router.get("/licenses", adminOnly, asyncHandler(async (req, res) => {
   const services = (await query(`select id, name from services where tenant_id=$1`, [req.tenant.id])).rows;
   let licenses = [];
   for (const s of services) {
@@ -277,20 +286,31 @@ router.get("/services", asyncHandler(async (req, res) => {
 }));
 
 router.post("/services", adminOnly, asyncHandler(async (req, res) => {
-  const { name, locationId } = req.body;
-  if (!name?.trim() || !locationId) return res.status(400).json({ error: "Name and location required." });
+  const { locationId } = req.body;
+  if (locationId === undefined || locationId === null) throw badRequest("Name and location required.");
+  const name = reqString(req.body.name, "Name");
+  // The location must be one of this account's own.
+  const ownLocation = isUuid(locationId)
+    ? (await query(`select 1 from locations where id=$1 and tenant_id=$2`, [locationId, req.tenant.id])).rows[0]
+    : null;
+  if (!ownLocation) throw notFound("Location not found.");
   const result = await query(
     `insert into services (tenant_id, location_id, name) values ($1,$2,$3) returning *`,
-    [req.tenant.id, locationId, name.trim()]
+    [req.tenant.id, locationId, name]
   );
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Service "${name.trim()}" added`]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Service "${name}" added`]);
   res.json({ service: result.rows[0] });
 }));
 
 const VALID_SLOT_MINUTES = [5, 10, 15, 30, 60];
 
 router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { name, slotMinutes, mode, queuePaused, queueStaffCount, archived } = req.body;
+  const name = optString(req.body.name, "Name");
+  const slotMinutes = optInt(req.body.slotMinutes, "slotMinutes", { min: 1, max: 1440, loose: true });
+  const mode = optEnum(req.body.mode, "mode", ["queue", "appointment", "hybrid"]);
+  const queuePaused = optBool(req.body.queuePaused, "queuePaused");
+  const queueStaffCount = optInt(req.body.queueStaffCount, "queueStaffCount", { min: 0, max: 1000 });
+  const archived = optBool(req.body.archived, "archived");
   if (slotMinutes !== undefined && !VALID_SLOT_MINUTES.includes(Number(slotMinutes))) {
     return res.status(400).json({ error: `Slot length must be one of: ${VALID_SLOT_MINUTES.join(", ")} minutes.` });
   }
@@ -338,7 +358,9 @@ router.get("/services/:id/licenses", asyncHandler(loadService), asyncHandler(asy
 }));
 
 router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
-  const { planId, customDays, paymentMethod, invoiceEmail, invoicePO } = req.body;
+  const { planId, customDays, paymentMethod } = req.body;
+  const invoiceEmail = optString(req.body.invoiceEmail, "invoiceEmail", { max: 254, allowEmpty: true });
+  const invoicePO = optString(req.body.invoicePO, "invoicePO", { max: 100, allowEmpty: true });
   const pricingRow = (await query(`select value from platform_settings where key='plan_prices'`)).rows[0];
   const plan = resolvePlan(planId, customDays, planPricing(pricingRow));
   if (!plan) return res.status(400).json({ error: "Unknown plan type." });
@@ -378,7 +400,8 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
 // end date is always derived from the plan's fixed length. Only Available/Scheduled
 // licenses can be (re)scheduled; Active ones are locked.
 router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
-  const { startDate, unschedule } = req.body;
+  const unschedule = optBool(req.body.unschedule, "unschedule");
+  const startDate = unschedule ? undefined : optDate(req.body.startDate, "startDate");
   const license = await resolveServiceLicense(req.params.licenseId);
   if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
 
@@ -470,7 +493,9 @@ router.post("/services/:id/licenses/:licenseId/move", adminOnly, asyncHandler(lo
   const license = await resolveServiceLicense(req.params.licenseId);
   if (!license || license.service_id !== req.service.id) return res.status(404).json({ error: "License not found." });
   if (license.status !== "available") return res.status(409).json({ error: "Only an unscheduled license can be moved to another service." });
-  const target = (await query(`select * from services where id=$1 and tenant_id=$2`, [targetServiceId, req.tenant.id])).rows[0];
+  const target = isUuid(targetServiceId)
+    ? (await query(`select * from services where id=$1 and tenant_id=$2`, [targetServiceId, req.tenant.id])).rows[0]
+    : null;
   if (!target) return res.status(404).json({ error: "Target service not found." });
 
   const result = await query(`update service_licenses set service_id=$1 where id=$2 returning *`, [target.id, license.id]);
@@ -484,7 +509,9 @@ router.post("/services/:id/licenses/:licenseId/move", adminOnly, asyncHandler(lo
 // Active (today's inside its window) it's been live and can't be refunded from here.
 // Settle a "pay later" license: by card (Stripe stand-in, nothing stored) or by invoice.
 router.post("/services/:id/licenses/:licenseId/pay", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
-  const { paymentMethod, invoiceEmail, invoicePO } = req.body;
+  const { paymentMethod } = req.body;
+  const invoiceEmail = optString(req.body.invoiceEmail, "invoiceEmail", { max: 254, allowEmpty: true });
+  const invoicePO = optString(req.body.invoicePO, "invoicePO", { max: 100, allowEmpty: true });
   const lic = (await query(`select * from service_licenses where id=$1 and service_id=$2 and tenant_id=$3`, [req.params.licenseId, req.service.id, req.tenant.id])).rows[0];
   if (!lic) return res.status(404).json({ error: "License not found." });
   if (lic.paid) return res.status(409).json({ error: "This license is already paid." });
@@ -526,21 +553,14 @@ router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(
 }));
 
 // --- Per-day hours & staffing ----------------------------------------------------
-async function getServiceWithLicenses(serviceId, tenantId) {
-  const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, tenantId]);
-  const service = svcResult.rows[0];
-  if (!service) return { service: null, licenses: [] };
-  const licenses = await resolveServiceLicenses(serviceId);
-  return { service, licenses };
-}
-
-router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
-  const { from, to } = req.query;
+router.get("/services/:id/daily-config", asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const from = reqDate(req.query.from, "from");
+  const to = reqDate(req.query.to, "to");
   const result = await query(
     `select * from service_daily_config where service_id=$1 and date >= $2 and date <= $3 order by date`,
-    [req.params.id, from, to]
+    [req.service.id, from, to]
   );
-  const { licenses } = await getServiceWithLicenses(req.params.id, req.tenant.id);
+  const licenses = await resolveServiceLicenses(req.service.id);
   const windows = activeAndScheduledWindows(licenses);
   res.json({
     dailyConfig: result.rows,
@@ -556,15 +576,21 @@ router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
 function isLiveDate(date) {
   return !!date && String(date).slice(0, 10) <= String(getToday()).slice(0, 10);
 }
-function londonNowMinutes() {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
-  return Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
-}
 
-router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res) => {
-  const { date, hours, staffCount, bookingStaffCount } = req.body;
-  const { service } = await getServiceWithLicenses(req.params.id, req.tenant.id);
-  if (!service) return res.status(404).json({ error: "Service not found." });
+const MAX_STAFF = 1000;
+
+router.put("/services/:id/daily-config", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const { date } = req.body;
+  const service = req.service;
+  // A missing date can't be covered by any license; a malformed one is a bad request.
+  if (date === undefined || date === null) {
+    return res.status(409).json({ error: "That date isn't covered by a license for this service." });
+  }
+  reqDate(date, "date");
+  const newHours = parseHours(req.body.hours);
+  const staffCount = optInt(req.body.staffCount, "staffCount", { min: 0, max: MAX_STAFF });
+  const bookingStaffCount = optInt(req.body.bookingStaffCount, "bookingStaffCount", { min: -MAX_STAFF, max: MAX_STAFF });
+  const walkInStaffCount = optInt(req.body.walkInStaffCount, "walkInStaffCount", { min: -MAX_STAFF, max: MAX_STAFF });
   if (!(await isServiceLicensedOn(service.id, date))) {
     return res.status(409).json({ error: "That date isn't covered by a license for this service." });
   }
@@ -573,9 +599,8 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
   const resolvedBooking = Math.max(0, Math.min(bookingStaffCount ?? 1, resolvedStaff));
   // walkInStaffCount is independently set now (not just "whoever's left over"), but it still
   // can't push the total past staffCount — clamp defensively here too, not just client-side.
-  const requestedWalkIn = req.body.walkInStaffCount ?? Math.max(0, resolvedStaff - resolvedBooking);
+  const requestedWalkIn = walkInStaffCount ?? Math.max(0, resolvedStaff - resolvedBooking);
   const resolvedWalkIn = Math.max(0, Math.min(requestedWalkIn, resolvedStaff - resolvedBooking));
-  const newHours = Array.isArray(hours) ? hours.map(Number).filter(Number.isFinite) : [];
 
   if (isLiveDate(date)) {
     const existing = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
@@ -596,8 +621,7 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
           return res.status(409).json({ error: "Staff can't be reduced today because there are already bookings or customers in the queue for this service. You can still add more staff." });
         }
       }
-      const nowMinutes = Number.isFinite(Number(req.body.nowMinutes)) && Number(req.body.nowMinutes) >= 0 && Number(req.body.nowMinutes) <= 1439
-        ? Math.floor(Number(req.body.nowMinutes)) : londonNowMinutes();
+      const nowMinutes = clockMinutesOrUndefined(req.body.nowMinutes) ?? londonNowMinutes();
       const oldHours = existing.hours || [];
       const removed = oldHours.filter((h) => !newHours.includes(h));
       const added = newHours.filter((h) => !oldHours.includes(h));
@@ -624,36 +648,40 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
        hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
        walkin_staff_count = excluded.walkin_staff_count
      returning *`,
-    [req.params.id, date, hours ? newHours : [], resolvedStaff, resolvedBooking, resolvedWalkIn]
+    [service.id, date, newHours, resolvedStaff, resolvedBooking, resolvedWalkIn]
   );
   res.json({ dailyConfig: result.rows[0] });
 }));
 
-router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(async (req, res) => {
-  const { fromDate, toDates } = req.body;
-  const sourceResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [req.params.id, fromDate]);
+router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const fromDate = reqDate(req.body.fromDate, "fromDate");
+  const rawTo = req.body.toDates;
+  if (rawTo !== undefined && rawTo !== null && (!Array.isArray(rawTo) || rawTo.length > 400)) throw badRequest("toDates must be a list of up to 400 dates.");
+  const toDates = (rawTo || []).map((d) => reqDate(d, "toDates"));
+  const sourceResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [req.service.id, fromDate]);
   const source = sourceResult.rows[0] || { hours: [], staff_count: 2, booking_staff_count: 1, walkin_staff_count: 1 };
+  const windows = activeAndScheduledWindows(await resolveServiceLicenses(req.service.id));
   let applied = 0;
-  for (const date of toDates || []) {
+  for (const date of toDates) {
     if (isLiveDate(date)) continue; // never overwrite a live (today/past) day in bulk
-    if (!(await isServiceLicensedOn(req.params.id, date))) continue;
+    if (!windows.some((w) => date >= w.start && date <= w.end)) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
        values ($1,$2,$3,$4,$5,$6)
        on conflict (service_id, date) do update set
          hours = excluded.hours, staff_count = excluded.staff_count, booking_staff_count = excluded.booking_staff_count,
          walkin_staff_count = excluded.walkin_staff_count`,
-      [req.params.id, date, source.hours, source.staff_count, source.booking_staff_count, source.walkin_staff_count]
+      [req.service.id, date, source.hours, source.staff_count, source.booking_staff_count, source.walkin_staff_count]
     );
     applied++;
   }
-  res.json({ ok: true, count: applied, skipped: (toDates || []).length - applied });
+  res.json({ ok: true, count: applied, skipped: toDates.length - applied });
 }));
 
 // Clears hours across every one of the service's scheduled/active windows in one call.
 // Live days (today and earlier) are skipped entirely — only future days are cleared.
-router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(async (req, res) => {
-  const { licenses } = await getServiceWithLicenses(req.params.id, req.tenant.id);
+router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(loadService), asyncHandler(async (req, res) => {
+  const licenses = await resolveServiceLicenses(req.service.id);
   const windows = activeAndScheduledWindows(licenses);
   if (!windows.length) return res.json({ ok: true, count: 0 });
   let applied = 0;
@@ -667,7 +695,7 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(asyn
           `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
            values ($1,$2,$3,2,1,1)
            on conflict (service_id, date) do update set hours = excluded.hours`,
-          [req.params.id, d, hours]
+          [req.service.id, d, hours]
         );
         applied++;
       }
@@ -679,41 +707,80 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(asyn
 }));
 
 // --- Tickets ----------------------------------------------------------------------
+const TICKET_STATUSES = ["waiting", "booked", "seen", "serving", "completed", "no_show", "cancelled"];
+
 router.get("/tickets", asyncHandler(async (req, res) => {
-  const { date } = req.query;
+  const date = optDate(req.query.date, "date") ?? getToday();
   await closeStaleTickets();
   const result = await query(
     `select * from tickets where tenant_id=$1 and visit_date=$2 order by created_at desc`,
-    [req.tenant.id, date || new Date().toISOString().slice(0, 10)]
+    [req.tenant.id, date]
   );
   res.json({ tickets: result.rows });
 }));
 
+// Admin override: edits fields on a ticket. Fields left out are left alone (slotTime: null clears it).
 router.patch("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
-  const { status, serviceId, locationId, slotTime, type, hourBlock } = req.body;
+  const status = optEnum(req.body.status, "status", TICKET_STATUSES);
+  const type = optEnum(req.body.type, "type", ["walk_in", "booked"]);
+  const slotTimeGiven = req.body.slotTime !== undefined;
+  const slotTime = optInt(req.body.slotTime, "slotTime", { min: 0, max: 1439 }) ?? null;
+  const hourBlock = optInt(req.body.hourBlock, "hourBlock", { min: 0, max: 1410 });
+  const { serviceId, locationId } = req.body;
+  const existing = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!existing) throw notFound("Ticket not found.");
+
+  let newServiceId = null, newLocationId = null;
+  if (serviceId !== undefined && serviceId !== null) {
+    const svc = isUuid(serviceId) ? (await query(`select id, location_id from services where id=$1 and tenant_id=$2`, [serviceId, req.tenant.id])).rows[0] : null;
+    if (!svc) throw notFound("Service not found.");
+    newServiceId = svc.id; newLocationId = svc.location_id;
+  }
+  if (locationId !== undefined && locationId !== null) {
+    const loc = isUuid(locationId) ? (await query(`select id from locations where id=$1 and tenant_id=$2`, [locationId, req.tenant.id])).rows[0] : null;
+    if (!loc) throw notFound("Location not found.");
+    if (!newLocationId) newLocationId = loc.id; // a service move always takes that service's own location
+  }
   const result = await query(
     `update tickets set
        status = coalesce($1, status),
        service_id = coalesce($2, service_id),
        location_id = coalesce($3, location_id),
-       slot_time = $4,
-       type = coalesce($5, type),
-       hour_block = coalesce($6, hour_block)
-     where id=$7 and tenant_id=$8 returning *`,
-    [status, serviceId, locationId, slotTime, type, hourBlock, req.params.id, req.tenant.id]
+       slot_time = case when $4::boolean then $5::int else slot_time end,
+       type = coalesce($6, type),
+       hour_block = coalesce($7, hour_block)
+     where id=$8 and tenant_id=$9 returning *`,
+    [status ?? null, newServiceId, newLocationId, slotTimeGiven, slotTime, type ?? null, hourBlock ?? null, existing.id, req.tenant.id]
   );
   res.json({ ticket: result.rows[0] });
 }));
 
 router.delete("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
-  await query(`delete from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
+  const r = await query(`delete from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
+  if (r.rowCount === 0) throw notFound("Ticket not found.");
   res.json({ ok: true });
 }));
 
+// The room a ticket is called to. Blank / non-text is a 400 with the same friendly message.
+function parseRoom(v) {
+  if (typeof v !== "string" || !v.trim()) throw badRequest("Set where you are (room name) before calling anyone.");
+  return reqString(v, "Room name", { max: 80 });
+}
+// The client's clock, in minutes since midnight. Missing -> UK time now; present but nonsense -> 400.
+function parseClock(v) {
+  if (v === undefined || v === null) return londonNowMinutes();
+  const n = clockMinutesOrUndefined(v);
+  if (n === undefined) throw badRequest("clockMinutes must be a number of minutes between 0 and 1439.");
+  return n;
+}
+const callMessage = (roomLabel) => `It's your turn! Please come to ${roomLabel}.`;
+
 router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
-  const { date, clockMinutes, roomLabel, workType } = req.body;
-  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
+  const roomLabel = parseRoom(req.body.roomLabel);
+  const date = reqDate(req.body.date, "date");
+  const clockMinutes = parseClock(req.body.clockMinutes);
   // Hybrid services: staff choose to work the queue, the appointments, or both.
+  const workType = optEnum(req.body.workType, "workType", ["queue", "appointments", "both"]);
   const takeWalkIns = workType !== "appointments";
   const takeBooked = workType !== "queue";
   // One atomic statement (row locked with FOR UPDATE SKIP LOCKED inside the subquery) so two
@@ -730,12 +797,12 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
        for update skip locked
      )
      returning *`,
-    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked, roomLabel.trim(), req.staff?.id || null, staffName(req)]
+    [req.params.id, req.tenant.id, date, clockMinutes, takeWalkIns, takeBooked, roomLabel, req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Nobody left to call." });
   const ticket = result.rows[0];
-  const roomText = roomLabel?.trim() ? `Please come to ${roomLabel.trim()}.` : "No location has been given yet — please check with a member of staff.";
-  const body = `It's your turn! ${roomText}`;
+  const roomText = `Please come to ${roomLabel}.`;
+  const body = callMessage(roomLabel);
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward — WhatsApp ping sent: "${roomText}"`]);
@@ -746,30 +813,36 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
 // early). Same atomic claim as call-next: only a ticket that's still waiting/booked can be taken,
 // so two staff clicking the same row can't both call it.
 router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
-  const { roomLabel } = req.body;
-  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
+  const roomLabel = parseRoom(req.body.roomLabel);
   const result = await query(
     `update tickets set status='serving', called_at=now(), finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
-    [req.params.id, req.tenant.id, roomLabel.trim(), req.staff?.id || null, staffName(req)]
+    [req.params.id, req.tenant.id, roomLabel, req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
   const ticket = result.rows[0];
-  const roomText = roomLabel?.trim() ? `Please come to ${roomLabel.trim()}.` : "No location has been given yet — please check with a member of staff.";
-  const body = `It's your turn! ${roomText}`;
+  const roomText = `Please come to ${roomLabel}.`;
+  const body = callMessage(roomLabel);
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward out of turn — WhatsApp ping sent: "${roomText}"`]);
   res.json({ ticket, message: body });
 }));
 
+// The single-ticket actions below all start from this: the ticket must exist in this account (404),
+// and can then only be moved on from the states the action makes sense for (409 otherwise).
+async function loadOwnTicket(req) {
+  const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (!ticket) throw notFound("Ticket not found.");
+  return ticket;
+}
+const serviceName = async (id) => (await query(`select name from services where id=$1`, [id])).rows[0]?.name;
+
 router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
-  const { roomLabel } = req.body;
-  if (!roomLabel?.trim()) return res.status(400).json({ error: "Set where you are (room name) before calling anyone." });
-  const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
-  const roomText = roomLabel?.trim() ? `Please come to ${roomLabel.trim()}.` : "No location has been given yet — please check with a member of staff.";
-  const body = `It's your turn! ${roomText}`;
+  const roomLabel = parseRoom(req.body.roomLabel);
+  const ticket = await loadOwnTicket(req);
+  if (ticket.status !== "serving") throw conflict("Only a ticket that has been called can be called again.");
+  const roomText = `Please come to ${roomLabel}.`;
+  const body = callMessage(roomLabel);
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called again — WhatsApp ping sent: "${roomText}"`]);
@@ -777,80 +850,81 @@ router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
 }));
 
 router.post("/tickets/:id/return-to-queue", asyncHandler(async (req, res) => {
-  const { clockMinutes } = req.body;
-  const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
+  const clockMinutes = parseClock(req.body.clockMinutes);
+  const ticket = await loadOwnTicket(req);
+  if (ticket.status !== "serving") throw conflict("Only a ticket that has been called can be returned to the queue.");
   const service = (await query(`select * from services where id=$1`, [ticket.service_id])).rows[0];
   const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [ticket.service_id, ticket.visit_date])).rows[0];
   let hourBlock = ticket.hour_block;
   if (day?.hours?.length) {
     const cfg = { hours: day.hours, slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount: day.booking_staff_count };
-    hourBlock = currentHourBlock(cfg, Number(clockMinutes));
+    hourBlock = currentHourBlock(cfg, clockMinutes);
   }
   const result = await query(
-    `update tickets set status='waiting', type='walk_in', slot_time=null, hour_block=$1, called_at=null, finished_at=null where id=$2 returning *`,
+    `update tickets set status='waiting', type='walk_in', slot_time=null, hour_block=$1, called_at=null, finished_at=null where id=$2 and status='serving' returning *`,
     [hourBlock, ticket.id]
   );
+  if (!result.rows[0]) throw conflict("That ticket is no longer being served.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} didn't come forward — returned to the ${service?.name || "service"} queue`]);
   res.json({ ticket: result.rows[0] });
 }));
 
 router.post("/tickets/:id/cancel", asyncHandler(async (req, res) => {
-  const ticketResult = await query(`update tickets set status='cancelled' where id=$1 and tenant_id=$2 returning *`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
-  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  const ticket = await loadOwnTicket(req);
+  const r = await query(`update tickets set status='cancelled' where id=$1 and tenant_id=$2 and status in ('waiting','booked','serving') returning *`, [ticket.id, req.tenant.id]);
+  if (!r.rows[0]) throw conflict("This ticket has already ended, so it can't be cancelled.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticket.ticket_number} cancelled — didn't come forward for ${service?.name || "service"}`]);
-  res.json({ ticket });
+    [req.tenant.id, `Ticket ${ticket.ticket_number} cancelled — didn't come forward for ${(await serviceName(ticket.service_id)) || "service"}`]);
+  res.json({ ticket: r.rows[0] });
 }));
 
 // Distinct from "cancel" — this is for when staff called the customer forward and they never
 // showed, which matters separately in reporting (dashboard/stats already tracks no_show).
 router.post("/tickets/:id/no-show", asyncHandler(async (req, res) => {
-  const ticketResult = await query(`update tickets set status='no_show' where id=$1 and tenant_id=$2 returning *`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
-  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  const ticket = await loadOwnTicket(req);
+  const r = await query(`update tickets set status='no_show' where id=$1 and tenant_id=$2 and status in ('waiting','booked','serving') returning *`, [ticket.id, req.tenant.id]);
+  if (!r.rows[0]) throw conflict("This ticket has already ended, so it can't be marked as a no-show.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticket.ticket_number} marked as no-show for ${service?.name || "service"}`]);
-  res.json({ ticket });
+    [req.tenant.id, `Ticket ${ticket.ticket_number} marked as no-show for ${(await serviceName(ticket.service_id)) || "service"}`]);
+  res.json({ ticket: r.rows[0] });
 }));
 
 router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
-  const { newServiceId, clockMinutes } = req.body;
-  const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
+  const { newServiceId } = req.body;
+  const clockMinutes = parseClock(req.body.clockMinutes);
+  const ticket = await loadOwnTicket(req);
   const oldService = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
-  const newService = (await query(`select * from services where id=$1 and tenant_id=$2`, [newServiceId, req.tenant.id])).rows[0];
+  const newService = isUuid(newServiceId)
+    ? (await query(`select * from services where id=$1 and tenant_id=$2`, [newServiceId, req.tenant.id])).rows[0]
+    : null;
   if (!newService) return res.status(404).json({ error: "Target service not found." });
+  if (!["waiting", "booked", "serving"].includes(ticket.status)) throw conflict("This ticket has already ended, so it can't be sent to another service.");
 
-  const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [newServiceId, ticket.visit_date])).rows[0];
+  const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [newService.id, ticket.visit_date])).rows[0];
   let hourBlock = null;
   if (day?.hours?.length) {
     const cfg = { hours: day.hours, slotMinutes: newService.slot_minutes, staffCount: day.staff_count, bookingStaffCount: day.booking_staff_count };
-    hourBlock = currentHourBlock(cfg, Number(clockMinutes));
+    hourBlock = currentHourBlock(cfg, clockMinutes);
   }
   const result = await query(
-    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3, called_at=null, finished_at=null where id=$4 returning *`,
-    [newServiceId, newService.location_id, hourBlock, ticket.id]
+    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3, called_at=null, finished_at=null
+     where id=$4 and status in ('waiting','booked','serving') returning *`,
+    [newService.id, newService.location_id, hourBlock, ticket.id]
   );
+  if (!result.rows[0]) throw conflict("This ticket has already ended, so it can't be sent to another service.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} routed from ${oldService?.name || "service"} to ${newService.name}`]);
   res.json({ ticket: result.rows[0] });
 }));
 
 router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
-  const ticketResult = await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
-  if (ticketResult.rows.length === 0) return res.status(404).json({ error: "Ticket not found." });
-  const ticket = ticketResult.rows[0];
-  await query(`update tickets set status='completed', finished_at=coalesce(finished_at, now()) where id=$1`, [ticket.id]);
-  const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
+  const ticket = await loadOwnTicket(req);
+  if (ticket.status === "completed") return res.json({ ok: true }); // repeating a close is harmless
+  const r = await query(`update tickets set status='completed', finished_at=coalesce(finished_at, now()) where id=$1 and status='serving' returning id`, [ticket.id]);
+  if (!r.rows[0]) throw conflict("Only a ticket that has been called can be closed.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${service?.name || "service"}`]);
+    [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${(await serviceName(ticket.service_id)) || "service"}`]);
   res.json({ ok: true });
 }));
 
@@ -861,16 +935,11 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
 router.get("/today", asyncHandler(async (req, res) => {
   const { serviceId } = req.query;
   if (!serviceId) return res.status(400).json({ error: "serviceId required." });
-  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, req.tenant.id])).rows[0];
+  const service = isUuid(serviceId) ? (await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, req.tenant.id])).rows[0] : null;
   if (!service) return res.status(404).json({ error: "Service not found." });
 
   const date = getToday();
-  let nowMinutes = Number(req.query.clockMinutes);
-  if (!Number.isFinite(nowMinutes) || nowMinutes < 0 || nowMinutes > 1439) {
-    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
-    nowMinutes = Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
-  }
-  nowMinutes = Math.floor(nowMinutes);
+  const nowMinutes = clockMinutesOrUndefined(req.query.clockMinutes) ?? londonNowMinutes();
   const empty = (reason) => res.json({
     date, serviceId: service.id, serviceName: service.name, mode: service.mode, open: false, reason,
     blocks: [], nowMinutes, queueCount: 0, staffNow: 0, totals: { freeLeft: 0, bookedTotal: 0 },
@@ -881,10 +950,7 @@ router.get("/today", asyncHandler(async (req, res) => {
   if (!day || !day.hours?.length) return empty("closed");
 
   // Same mode mapping and defaults as /services/:id/availability.
-  const staffCount = day.staff_count ?? 2;
-  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? staffCount : (day.booking_staff_count ?? 1);
-  const walkInStaffCount = service.mode === "queue" ? staffCount : service.mode === "appointment" ? 0 : (day.walkin_staff_count ?? Math.max(0, staffCount - bookingStaffCount));
-  const cfg = { slotMinutes: service.slot_minutes, staffCount, bookingStaffCount, walkInStaffCount, hours: day.hours };
+  const cfg = dayCfg(service, day);
 
   const tix = (await query(
     `select type, status, slot_time, hour_block from tickets
@@ -899,70 +965,17 @@ router.get("/today", asyncHandler(async (req, res) => {
 
 // --- Availability (used by the Customer WhatsApp simulator) -----------------------
 router.get("/services/:id/availability", asyncHandler(async (req, res) => {
-  const { date, clockMinutes } = req.query;
-
-  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  const service = await loadServiceForTenant(req.tenant.id, req.params.id);
   if (!service) return res.status(404).json({ error: "Service not found." });
-  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
-    return res.json({ open: false, reason: "outside_license_window" });
-  }
-
-  // Pause/Resume is a live override that sits on top of the scheduled hours below —
-  // it doesn't replace the schedule, it just short-circuits it when active.
-  if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
-
-  const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
-  const day = dayResult.rows[0];
-  if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
-
-  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
-  const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
-  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, walkInStaffCount, hours: day.hours };
-
-  const blockCountResult = await query(
-    `select hour_block, count(*) from tickets
-     where service_id=$1 and visit_date=$2 and type='walk_in' and status != 'cancelled' and hour_block=$3 group by hour_block`,
-    [service.id, date, currentHourBlock(cfg, Number(clockMinutes))]
-  );
-  const walkInCountInBlock = Number(blockCountResult.rows[0]?.count || 0);
-  const walkIn = walkInStatusNow(cfg, walkInCountInBlock, Number(clockMinutes));
-
-  if (service.mode === "queue") {
-    return res.json({ open: true, walkIn, bookableSlots: [] });
-  }
-
-  const bookedResult = await query(
-    `select slot_time, count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' group by slot_time`,
-    [service.id, date]
-  );
-  const bookedCountByTime = {};
-  bookedResult.rows.forEach((r) => { bookedCountByTime[r.slot_time] = Number(r.count); });
-  const bookableSlots = getUpcomingBookableSlots(cfg, bookedCountByTime, Number(clockMinutes), 200);
-
-  res.json({ open: true, walkIn, bookableSlots });
+  res.json(await getAvailability(service, req.query.date, req.query.clockMinutes));
 }));
 
 router.post("/services/:id/tickets", asyncHandler(async (req, res) => {
-  const { type, slotTime, hourBlock, date } = req.body;
-  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  const parsed = parseTicketRequest(req.body);
+  const service = await loadServiceForTenant(req.tenant.id, req.params.id);
   if (!service) return res.status(404).json({ error: "Service not found." });
-  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
-    return res.status(409).json({ error: "We're not taking bookings today — outside this service's licensed period." });
-  }
-
-  const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);
-  const count = Number(countResult.rows[0].count) + 1;
-  const initials = (service.name.match(/\b\w/g) || ["S", "V"]).slice(0, 2).join("").toUpperCase();
-  const ticketNumber = `${initials}-${String(count).padStart(3, "0")}`;
-
-  const result = await query(
-    `insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-    [req.tenant.id, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime ?? null, hourBlock ?? null, date]
-  );
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticketNumber} ${type === "booked" ? `booked ${service.name}` : `joined the ${service.name} queue (walk-in)`}`]);
-  res.json({ ticket: result.rows[0] });
+  const { ticket } = await createTicket({ tenantId: req.tenant.id, service, req: parsed });
+  res.json({ ticket });
 }));
 
 // --- Audit log & dashboard ---------------------------------------------------------
@@ -972,10 +985,10 @@ router.get("/audit-log", asyncHandler(async (req, res) => {
 }));
 
 router.get("/dashboard/stats", asyncHandler(async (req, res) => {
-  const { date } = req.query;
+  const date = optDate(req.query.date, "date") ?? getToday();
   const result = await query(
     `select status, count(*) from tickets where tenant_id=$1 and visit_date=$2 group by status`,
-    [req.tenant.id, date || new Date().toISOString().slice(0, 10)]
+    [req.tenant.id, date]
   );
   const stats = { waiting: 0, booked: 0, serving: 0, completed: 0, no_show: 0, cancelled: 0 };
   result.rows.forEach((r) => { stats[r.status] = Number(r.count); });

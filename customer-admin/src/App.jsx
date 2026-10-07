@@ -450,8 +450,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
       done: unscheduledLicenseCount === 0,
       cta: "Go to Locations", go: () => setTab("locations"),
     },
-    { key: "address", label: "Enter your business address", done: hasAddress, cta: "Go to Profile", go: () => setTab("profile") },
-    { key: "website", label: "Add your business website", done: hasWebsite, cta: "Go to Profile", go: () => setTab("profile") },
+    { key: "address", label: "Enter your business address", done: hasAddress, cta: "Go to Account", go: () => setTab("profile") },
+    { key: "website", label: "Add your business website", done: hasWebsite, cta: "Go to Account", go: () => setTab("profile") },
   ];
   const setupTasks = allSetupTasks.filter((t) => !dismissedSetupTasks.includes(t.key));
   const setupDone = setupTasks.filter((t) => t.done).length;
@@ -551,6 +551,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
             <div className="loc-top grow">
               <div className="subhead">
                 <button type="button" className="back-btn" aria-label="Back to locations" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); }}><BackIcon /></button>
+                <h1 className="sr-only">{openLoc.name}</h1>
                 <LocationNameField key={openLoc.id} loc={openLoc} onSaved={refreshCore} setError={setError} />
               </div>
               <LocationStatusLine services={visibleServices.filter((s) => s.location_id === openLoc.id)} allLicenses={allLicenses} today={date} />
@@ -908,38 +909,6 @@ function splitAddress(combined) {
 }
 function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
-}
-
-// "Only joinable from the clinic": one account-wide switch, saved as soon as it is flipped.
-// The QR code carries a hidden location code; with this on, joining the live queue needs it.
-// It checks the code, not where the phone physically is.
-function OnSiteSetting({ tenant, onTenantChange }) {
-  const [on, setOn] = useState(!!tenant.onsite_only);
-  const [status, setStatus] = useState("");
-  async function flip() {
-    const next = !on;
-    setOn(next); setStatus("Saving…");
-    try {
-      const r = await api.updateMe({ onsiteOnly: next });
-      onTenantChange?.(r.tenant);
-      setStatus("Saved");
-    } catch (err) {
-      setOn(!next); setStatus(`Not saved: ${err.message}`);
-    }
-  }
-  return (
-    <div className="card stack chan" style={{ gap: 10 }}>
-      <h2 className="chan-h">Joining the queue</h2>
-      <div className="chan-row">
-        <span className="chan-row-text" id="onsite-l">
-          <strong>Only joinable from the clinic</strong>
-          <span className="small muted">Patients must scan the QR code at the clinic to join the queue, so nobody joins from home by accident. It checks the code, not where the phone is.</span>
-        </span>
-        <button type="button" role="switch" aria-checked={on} aria-labelledby="onsite-l" className={`chan-switch${on ? " is-on" : ""}`} onClick={flip}><span className="chan-knob" /></button>
-      </div>
-      <div className="small muted" role="status" aria-live="polite">{status}</div>
-    </div>
-  );
 }
 
 // The location's name as the page title, editable in place and saved automatically
@@ -2660,7 +2629,7 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
   if (step === 2) {
     return (
       <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
-        <h3>New service <span className="muted" style={{ fontSize: 13, fontWeight: 500 }}>— step 2 of 2: buy a license for "{createdService.name}"</span></h3>
+        <h3>New service <span className="muted" style={{ fontSize: 13, fontWeight: 500 }}>— step 2 of 3: buy a license for "{createdService.name}"</span></h3>
         <div className="muted small">This license is bound to this service. Choose when it starts as you buy, or decide later and assign dates from the service's own panel.</div>
         <ServiceLicensesPanel
           service={createdService} locationName={locationName} allServices={allServices || []} setError={setError}
@@ -2676,7 +2645,7 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
       <h3>"{createdService.name}" is ready</h3>
       <div className="muted small">
         {startedOn
-          ? `License bought — it starts ${formatDateDisplay(startedOn)}. Press Done, then set opening hours in the service's Hours panel.`
+          ? `License bought — it starts ${formatDateDisplay(startedOn)}. Press Done, then set opening hours in the service's Calendar tab.`
           : "License bought — assign it to calendar dates any time from the service's own panel."}
       </div>
       <div className="form-actions">

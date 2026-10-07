@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { query } from "../db/pool.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { optString } from "../lib/validate.js";
 
 const router = Router();
 
@@ -14,7 +15,9 @@ const router = Router();
 // The exact payload shape depends entirely on which BSP you end up using — the
 // destructuring below assumes a simplified { from, text } shape and will need adapting.
 router.post("/webhook", asyncHandler(async (req, res) => {
-  const { from, text } = req.body; // TODO: adapt to your BSP's actual webhook payload shape
+  // TODO: adapt to your BSP's actual webhook payload shape
+  const from = optString(req.body.from, "from", { max: 40, allowEmpty: true });
+  const text = optString(req.body.text, "text", { max: 2000, allowEmpty: true });
 
   if (!from || !text) return res.status(400).json({ error: "Missing from/text." });
 

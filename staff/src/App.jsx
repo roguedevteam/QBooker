@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { api, setToken, hasToken } from "./lib/api.js";
+import { api, setToken, hasToken, setAuthLostHandler } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 import SignIn from "./SignIn.jsx";
 import Shift from "./Shift.jsx";
@@ -44,6 +44,16 @@ export default function App() {
 
   function signOut() { setToken(null); setTenant(null); setStaff(null); setLocationId(null); }
 
+  // Any call or poll answered with 401/403 (session expired, this person was switched off or removed,
+  // or the account was disabled) returns the kiosk to the sign-in screen instead of sitting there failing.
+  useEffect(() => {
+    setAuthLostHandler(() => {
+      setToken(null); setTenant(null); setStaff(null); setLocationId(null);
+      setError("You've been signed out. Please sign in again.");
+    });
+    return () => setAuthLostHandler(null);
+  }, []);
+
   if (restoring) return <div className="container muted center-text" role="status">Loading…</div>;
 
   return (
@@ -57,7 +67,7 @@ export default function App() {
       )}
       {error && <div className="alert" role="alert"><span>{error}</span><button className="btn-outline" onClick={() => setError("")}>Dismiss</button></div>}
 
-      {!tenant && <SignIn onSignedIn={(t, st) => { setTenant(t); setStaff(st); }} />}
+      {!tenant && <SignIn onSignedIn={(t, st) => { setError(""); setTenant(t); setStaff(st); }} />}
       {tenant && !locationId && <LocationPicker staff={staff} onPick={(id, multi) => { setLocationId(id); setCanChangeLocation(multi); }} onSignOut={signOut} setError={setError} />}
       {tenant && locationId && <Shift tenant={tenant} staff={staff} locationId={locationId} setError={setError} onSignOut={signOut} onChangeLocation={canChangeLocation ? () => setLocationId(null) : null} />}
     </div>

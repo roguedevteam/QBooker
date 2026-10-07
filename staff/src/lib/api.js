@@ -14,6 +14,11 @@ export function hasToken() {
   return !!token;
 }
 
+// Called when the server says our session is no longer valid (401: expired, removed or switched off;
+// 403: the account was disabled), so the kiosk can return to the sign-in screen from any call or poll.
+let authLostHandler = null;
+export function setAuthLostHandler(fn) { authLostHandler = fn; }
+
 async function request(path, { method = "GET", body, auth = true } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth && token) headers.Authorization = `Bearer ${token}`;
@@ -23,7 +28,10 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    if (auth && token && (res.status === 401 || res.status === 403)) authLostHandler?.(res.status);
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
   return data;
 }
 

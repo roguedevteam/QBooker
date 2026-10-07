@@ -4,10 +4,13 @@ import { query } from "../db/pool.js";
 import { rateLimit } from "../lib/rateLimit.js";
 import { getToday } from "../lib/clock.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, estimateWalkInWaitMinutes } from "../lib/scheduling.js";
-import { isServiceLicensedOn } from "../lib/serviceLicense.js";
+import { estimateWalkInWaitMinutes } from "../lib/scheduling.js";
+import { loadService, getAvailability } from "../lib/availability.js";
+import { createTicket, parseTicketRequest } from "../lib/tickets.js";
+import { uuidParams } from "../lib/validate.js";
 
 const router = Router();
+uuidParams(router, "tenantId", "serviceId", "ticketId");
 
 // --- Web channel helpers ---------------------------------------------------------------
 // Abuse limits for the web channel (per service, per day, counting tickets still waiting/booked).
@@ -21,7 +24,6 @@ function hashValue(v) {
   const salt = process.env.JWT_SECRET || "qbooker";
   return crypto.createHash("sha256").update(`${salt}|${v}`).digest("hex");
 }
-function newPublicToken() { return crypto.randomBytes(18).toString("base64url"); } // 24 chars, 144 bits
 const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/;
 const DEVICE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -82,7 +84,8 @@ router.get("/:tenantId/services", asyncHandler(async (req, res) => {
   const result = await query(
     `select distinct s.id, s.name, s.location_id, s.mode from services s
      join service_licenses sl on sl.service_id = s.id and sl.status in ('scheduled','active')
-     where s.tenant_id=$1 and s.archived=false order by s.name`,
+     join locations l on l.id = s.location_id
+     where s.tenant_id=$1 and s.archived=false and l.archived=false order by s.name`,
     [req.tenant.id]
   );
   res.json({ services: result.rows });
@@ -90,51 +93,9 @@ router.get("/:tenantId/services", asyncHandler(async (req, res) => {
 
 router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (req, res) => {
   const { date, clockMinutes } = req.query;
-
-  const svcResult = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id]);
-  if (svcResult.rows.length === 0) return res.status(404).json({ error: "Service not found." });
-  const service = svcResult.rows[0];
-
-  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
-    return res.json({ open: false, reason: "outside_license_window" });
-  }
-
-  if (service.mode === "queue" && service.queue_paused) return res.json({ open: false, reason: "paused" });
-
-  const dayResult = await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date]);
-  const day = dayResult.rows[0];
-  if (!day || !day.hours?.length) return res.json({ open: false, reason: "closed" });
-  // Past the end of the last opening block today (hours are 30-minute start times): closed for the day,
-  // not "fully booked".
-  const nowMins = Number(clockMinutes);
-  if (Number.isFinite(nowMins) && String(date).slice(0, 10) === getToday() && nowMins >= Math.max(...day.hours) + 30) {
-    return res.json({ open: false, reason: "closed" });
-  }
-
-  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? day.staff_count : day.booking_staff_count;
-  const walkInStaffCount = service.mode === "queue" ? day.staff_count : service.mode === "appointment" ? 0 : day.walkin_staff_count;
-  const cfg = { slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount, walkInStaffCount, hours: day.hours };
-
-  const blockCountResult = await query(
-    `select count(*) from tickets
-     where service_id=$1 and visit_date=$2 and type='walk_in' and status != 'cancelled' and hour_block=$3`,
-    [service.id, date, currentHourBlock(cfg, Number(clockMinutes))]
-  );
-  const walkIn = walkInStatusNow(cfg, Number(blockCountResult.rows[0]?.count || 0), Number(clockMinutes));
-
-  if (service.mode === "queue") {
-    return res.json({ open: true, walkIn, bookableSlots: [] });
-  }
-
-  const bookedResult = await query(
-    `select slot_time, count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' group by slot_time`,
-    [service.id, date]
-  );
-  const bookedCountByTime = {};
-  bookedResult.rows.forEach((r) => { bookedCountByTime[r.slot_time] = Number(r.count); });
-  const bookableSlots = getUpcomingBookableSlots(cfg, bookedCountByTime, Number(clockMinutes), 200);
-
-  res.json({ open: true, walkIn, bookableSlots });
+  const service = await loadService(req.tenant.id, req.params.serviceId);
+  if (!service) return res.status(404).json({ error: "Service not found." });
+  res.json(await getAvailability(service, date, clockMinutes));
 }));
 
 // Polled by the customer app after joining/booking, since it's a fully separate app from
@@ -186,19 +147,20 @@ router.post("/:tenantId/tickets/:ticketId/check-in", asyncHandler(async (req, re
 }));
 
 router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: "Too many join attempts from this connection. Please wait a few minutes or ask at reception." }), asyncHandler(async (req, res) => {
-  const { type, slotTime, hourBlock, date, onsiteCode, deviceId } = req.body;
-  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.serviceId, req.tenant.id])).rows[0];
+  const { onsiteCode, deviceId } = req.body;
+  const parsed = parseTicketRequest(req.body);
+  const service = await loadService(req.tenant.id, req.params.serviceId);
   if (!service) return res.status(404).json({ error: "Service not found." });
-  if (service.archived || !(await isServiceLicensedOn(service.id, date))) {
-    return res.status(409).json({ error: "We're not taking bookings today." });
+  if (service.archived || service.location_archived) {
+    return res.status(409).json({ error: "We're not taking bookings today.", reason: "outside_license_window" });
   }
 
   // Web is the channel for every patient; only the on-site code is per location.
   // On-site check: only for joining the live queue (a booking made in advance from home is fine).
   // The code must match this location's code (the one in the QR link / on the poster). It is a
   // shared secret, not proof of presence — there is no geofencing.
-  if (req.tenant.onsite_only && type === "walk_in") {
-    const supplied = String(onsiteCode || "").trim().toUpperCase();
+  if (req.tenant.onsite_only && parsed.type === "walk_in") {
+    const supplied = typeof onsiteCode === "string" ? onsiteCode.trim().toUpperCase().slice(0, 40) : "";
     const row = (await query(`select code from location_codes where location_id=$1`, [service.location_id])).rows[0];
     if (!supplied) {
       return res.status(403).json({ error: "Please scan the QR code at reception, or enter the location code shown there.", reason: "onsite_code_required" });
@@ -208,43 +170,16 @@ router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 *
     }
   }
 
-  // Simultaneous-ticket limits per device and per IP for this service today.
-  const deviceHash = DEVICE_RE.test(String(deviceId || "")) ? hashValue(`device|${deviceId}`) : null;
+  // Simultaneous-ticket limits per device and per IP for this service today (checked, together with
+  // capacity and numbering, inside createTicket's locked transaction).
+  const deviceHash = DEVICE_RE.test(String(deviceId || "")) && typeof deviceId === "string" ? hashValue(`device|${deviceId}`) : null;
   const ipHash = req.ip ? hashValue(`ip|${req.ip}`) : null;
-  const activeCount = async (col, val) => Number((await query(
-    `select count(*) from ticket_web_access a join tickets t on t.id = a.ticket_id
-     where t.service_id=$1 and t.visit_date=$2 and t.status in ('waiting','booked') and a.${col}=$3`,
-    [service.id, date, val]
-  )).rows[0].count);
-  if (deviceHash && (await activeCount("device_hash", deviceHash)) >= MAX_ACTIVE_PER_DEVICE) {
-    return res.status(429).json({ error: "You already have a place in this queue on this phone. Leave it first if you want to join again.", reason: "too_many_device" });
-  }
-  if (ipHash && (await activeCount("ip_hash", ipHash)) >= MAX_ACTIVE_PER_IP) {
-    return res.status(429).json({ error: "Too many people are joining from this connection right now. Please ask at reception.", reason: "too_many_ip" });
-  }
-
-  const countResult = await query(`select count(*) from tickets where service_id=$1 and visit_date=$2`, [service.id, date]);
-  const count = Number(countResult.rows[0].count) + 1;
-  const initials = (service.name.match(/\b\w/g) || ["S", "V"]).slice(0, 2).join("").toUpperCase();
-  const ticketNumber = `${initials}-${String(count).padStart(3, "0")}`;
-
-  // One statement so a ticket never exists without its public token.
-  const publicToken = newPublicToken();
-  const result = await query(
-    `with t as (
-       insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
-     ), a as (
-       insert into ticket_web_access (token, ticket_id, tenant_id, channel, device_hash, ip_hash)
-       select $10, t.id, t.tenant_id, 'web', $11, $12 from t
-     )
-     select * from t`,
-    [req.tenant.id, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime ?? null, hourBlock ?? null, date, publicToken, deviceHash, ipHash]
-  );
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticketNumber} ${type === "booked" ? `booked ${service.name}` : `joined the ${service.name} queue (walk-in, web)`}`]);
-  const queue = await getQueueInfo(result.rows[0]);
-  res.json({ ticket: result.rows[0], queue, publicToken });
+  const { ticket, publicToken } = await createTicket({
+    tenantId: req.tenant.id, service, req: parsed, auditSuffix: ", web",
+    access: { deviceHash, ipHash, maxPerDevice: MAX_ACTIVE_PER_DEVICE, maxPerIp: MAX_ACTIVE_PER_IP },
+  });
+  const queue = await getQueueInfo(ticket);
+  res.json({ ticket, queue, publicToken });
 }));
 
 // --- Login-free ticket access by unguessable token --------------------------------------

@@ -444,6 +444,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
       {busy && <div className="sr-only" id="busy-note">{signOutHint}</div>}
 
       <main className="work">
+        <h1 className="sr-only">{headLine || "Staff kiosk"}</h1>
         <div className={`work-bar${wideToday ? "" : " work-bar-col"}`}>
           {isWide && (
             <div className="view-toggle" role="tablist" aria-label="Choose a view">

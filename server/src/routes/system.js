@@ -5,8 +5,12 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
 import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
+import {
+  badRequest, uuidParams, reqDate, optString, optEmail, optInt, optBool, optEnum, EMAIL_RE,
+} from "../lib/validate.js";
 
 const router = Router();
+uuidParams(router, "id", "staffId", "svcId", "locId", "licenseId");
 router.use(requireAuth("system_admin"));
 
 router.get("/tenants", asyncHandler(async (req, res) => {
@@ -27,9 +31,11 @@ router.get("/tenants", asyncHandler(async (req, res) => {
 }));
 
 router.patch("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
-  const first = req.body.firstName?.trim(), last = req.body.lastName?.trim(), email = req.body.email?.trim();
+  const first = optString(req.body.firstName, "First name", { max: 100 });
+  const last = optString(req.body.lastName, "Last name", { max: 100 });
+  const email = optString(req.body.email, "Email", { max: 254 });
   if (email !== undefined) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
     const dup = await query(`select 1 from staff_members where lower(email)=lower($1) and id<>$2`, [email, req.params.staffId]);
     if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
   }
@@ -50,7 +56,13 @@ router.delete("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
 }));
 
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
-  const { businessName, firstName, lastName, email, companyAddress, locationCount, status } = req.body;
+  const businessName = optString(req.body.businessName, "Business name");
+  const firstName = optString(req.body.firstName, "First name", { max: 100 });
+  const lastName = optString(req.body.lastName, "Last name", { max: 100 });
+  const email = optEmail(req.body.email);
+  const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
+  const locationCount = optInt(req.body.locationCount, "locationCount", { min: 0, max: 100000 });
+  const status = optEnum(req.body.status, "status", ["pending", "active", "disabled"]);
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
@@ -63,6 +75,7 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
      where id=$8 returning *`,
     [businessName, firstName, lastName, email, companyAddress, locationCount, status, req.params.id]
   );
+  if (!result.rows[0]) return res.status(404).json({ error: "Customer not found." });
   if (status === "active") {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
       [req.params.id, "Invoice payment confirmed by our team — staff kiosk and customer WhatsApp are now enabled."]);
@@ -117,7 +130,8 @@ router.get("/tenants/:id/detail", asyncHandler(async (req, res) => {
 }));
 
 router.patch("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
-  const { name, address } = req.body;
+  const name = optString(req.body.name, "Name");
+  const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
   const result = await query(
     `update locations set name=coalesce($1,name), address=coalesce($2,address) where id=$3 and tenant_id=$4 returning *`,
     [name, address, req.params.locId, req.params.id]
@@ -137,7 +151,10 @@ router.delete("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => 
 const VALID_SLOT_MINUTES = [5, 10, 15, 30, 60];
 
 router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
-  const { name, mode, slotMinutes, archived } = req.body;
+  const name = optString(req.body.name, "Name");
+  const mode = optEnum(req.body.mode, "mode", ["queue", "appointment", "hybrid"]);
+  const slotMinutes = optInt(req.body.slotMinutes, "slotMinutes", { min: 1, max: 1440, loose: true });
+  const archived = optBool(req.body.archived, "archived");
   if (slotMinutes !== undefined && !VALID_SLOT_MINUTES.includes(Number(slotMinutes))) {
     return res.status(400).json({ error: `Slot length must be one of: ${VALID_SLOT_MINUTES.join(", ")} minutes.` });
   }
@@ -172,8 +189,9 @@ router.delete("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
 // Annual licenses are price-on-application: platform admin sets the agreed price. Added as an
 // invoice license (unpaid until marked paid), otherwise identical to any other license.
 router.post("/tenants/:id/services/:svcId/licenses/annual", asyncHandler(async (req, res) => {
-  const price = Number(req.body.price);
-  if (!(price > 0)) return res.status(400).json({ error: "Enter the agreed annual price." });
+  const rawPrice = req.body.price;
+  const price = typeof rawPrice === "number" || (typeof rawPrice === "string" && rawPrice.length < 20) ? Number(rawPrice) : NaN;
+  if (!(price > 0) || price > 1000000) return res.status(400).json({ error: "Enter the agreed annual price." });
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
   const result = await query(
@@ -274,8 +292,21 @@ router.get("/pricing", asyncHandler(async (req, res) => {
 }));
 
 router.put("/pricing", asyncHandler(async (req, res) => {
-  const { day, week, month, year, customDailyRate, sale } = req.body;
-  const value = { day, week, month, year, customDailyRate, sale: sale || { active: false } };
+  const { sale } = req.body;
+  const price = (v, name) => {
+    if (v === undefined || v === null) return v;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1000000) throw badRequest(`${name} must be a number between 0 and 1,000,000.`);
+    return v;
+  };
+  const day = price(req.body.day, "day"), week = price(req.body.week, "week"), month = price(req.body.month, "month"), year = price(req.body.year, "year");
+  const customDailyRate = price(req.body.customDailyRate, "customDailyRate");
+  let cleanSale = { active: false };
+  if (sale !== undefined && sale !== null) {
+    if (typeof sale !== "object" || Array.isArray(sale)) throw badRequest("sale must be an object.");
+    cleanSale = { active: optBool(sale.active, "sale.active") ?? false };
+    for (const k of ["day", "week", "month", "year"]) cleanSale[k] = price(sale[k], `sale.${k}`);
+  }
+  const value = { day, week, month, year, customDailyRate, sale: cleanSale };
   await query(
     `insert into platform_settings (key, value) values ('plan_prices', $1)
      on conflict (key) do update set value = excluded.value`,
@@ -336,8 +367,8 @@ router.get("/clock", (req, res) => {
 });
 router.post("/clock", (req, res) => {
   const { date } = req.body;
-  if (!date) return res.status(400).json({ error: "date required (YYYY-MM-DD)." });
-  setSimulatedToday(date);
+  if (date === undefined || date === null || date === "") return res.status(400).json({ error: "date required (YYYY-MM-DD)." });
+  setSimulatedToday(reqDate(date, "date"));
   res.json({ today: getToday(), simulated: isSimulated() });
 });
 router.delete("/clock", (req, res) => {

@@ -1,9 +1,10 @@
+import crypto from "crypto";
 import { query } from "../db/pool.js";
 
 // Generates a 6-digit code. In production with real email/WhatsApp, you'd stop
 // returning `code` to the caller and instead only deliver it via the provider.
 export function genOtp() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 export function genAccessCode() {

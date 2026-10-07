@@ -1,6 +1,7 @@
 import { query } from "../db/pool.js";
 import { getToday } from "./clock.js";
 import { addDays, isDateFullyPast } from "./plan.js";
+import { badRequest } from "./validate.js";
 
 export const PLAN_META = {
   day: { label: "Day", days: 1 },
@@ -15,13 +16,21 @@ export function planPricing(pricingRow) {
   return pricingRow?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
 }
 
+export const MAX_CUSTOM_DAYS = 365;
+
 export function resolvePlan(planId, customDays, pricing) {
+  if (typeof planId !== "string") return null;
   const sale = pricing.sale?.active ? pricing.sale : null;
   if (planId === "custom") {
-    const planDays = Math.max(1, Number(customDays) || 1);
+    const n = typeof customDays === "string" && /^\d{1,5}$/.test(customDays.trim()) ? Number(customDays) : customDays;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > MAX_CUSTOM_DAYS) {
+      throw badRequest(`A custom plan must be a whole number of days between 1 and ${MAX_CUSTOM_DAYS}.`);
+    }
+    const planDays = n;
     return { planId, planLabel: `${planDays}-day custom plan`, planDays, price: (planDays * pricing.customDailyRate).toFixed(2) };
   }
-  if (PLAN_META[planId]) {
+  // Own properties only: "constructor", "__proto__", "toString" etc. must not resolve to a plan.
+  if (Object.prototype.hasOwnProperty.call(PLAN_META, planId)) {
     const planDays = PLAN_META[planId].days;
     const price = sale && sale[planId] != null ? sale[planId] : pricing[planId];
     return { planId, planLabel: PLAN_META[planId].label, planDays, price };
