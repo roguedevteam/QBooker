@@ -8,7 +8,7 @@ import { createLocationCode } from "../lib/codes.js";
 import { domainAcceptsMail } from "../lib/emailCheck.js";
 import { countryForIp } from "../lib/geo.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
-import { rateLimit } from "../lib/rateLimit.js";
+import { rateLimit, failureLimit } from "../lib/rateLimit.js";
 import { badRequest, reqString, optString, reqEmail, optEnum, optInt } from "../lib/validate.js";
 
 const router = Router();
@@ -268,12 +268,21 @@ router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
 }));
 
 // --- System admin login (real password, not simulated) -----------------------
-router.post("/system/login", asyncHandler(async (req, res) => {
+// The password is the only thing between the internet and the whole platform, so wrong guesses are
+// throttled per client address: 10 failures in 10 minutes and that address gets 429 until the window
+// passes (a correct sign-in clears the count). bcrypt runs async so a burst of guesses can't stall
+// every other request on the server.
+const systemLoginLimit = failureLimit({ windowMs: 10 * 60 * 1000, max: 10, message: "Too many incorrect passwords from this connection. Please wait a few minutes and try again." });
+const noStore = (req, res, next) => { res.set("Cache-Control", "no-store"); res.set("X-Content-Type-Options", "nosniff"); next(); };
+router.post("/system/login", noStore, systemLoginLimit.guard, asyncHandler(async (req, res) => {
   const { password } = req.body;
   const hash = process.env.SYSTEM_ADMIN_PASSWORD_HASH;
-  if (!hash || typeof password !== "string" || !password || password.length > 200 || !bcrypt.compareSync(password, hash)) {
+  const ok = !!hash && typeof password === "string" && password.length > 0 && password.length <= 200 && await bcrypt.compare(password, hash);
+  if (!ok) {
+    systemLoginLimit.fail(req);
     return res.status(401).json({ error: "Incorrect password." });
   }
+  systemLoginLimit.clear(req);
   const token = signSession({ role: "system_admin" }, "8h");
   res.json({ token });
 }));

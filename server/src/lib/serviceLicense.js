@@ -12,8 +12,22 @@ export const PLAN_META = {
 
 const REFUND_WINDOW_DAYS = 90; // ~3 months
 
+export const DEFAULT_PRICES = { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
+const PRICE_KEYS = Object.keys(DEFAULT_PRICES);
+
+// The price table in force: whatever the platform admin saved, with the built-in default standing
+// in for any price that is missing or not a usable number (e.g. a row saved by an older, laxer
+// version of the pricing form) so a customer can never be quoted or charged "undefined" / NaN.
+export function effectivePricing(stored) {
+  const v = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const out = {};
+  for (const k of PRICE_KEYS) out[k] = typeof v[k] === "number" && Number.isFinite(v[k]) && v[k] >= 0 ? v[k] : DEFAULT_PRICES[k];
+  out.sale = v.sale && typeof v.sale === "object" && !Array.isArray(v.sale) ? v.sale : { active: false };
+  return out;
+}
+
 export function planPricing(pricingRow) {
-  return pricingRow?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20 };
+  return effectivePricing(pricingRow?.value);
 }
 
 export const MAX_CUSTOM_DAYS = 365;

@@ -4,7 +4,7 @@
     python3 e2e/e2e.py                       # build + serve + run everything (phone and desktop)
     python3 e2e/e2e.py --vp phone --only A,C # subset
 
-Areas:  A marketing/sign-up   B customer-admin   C patient app   D staff kiosk   E cross-app flow
+Areas:  A marketing/sign-up   B customer-admin   C patient app   D staff kiosk   E cross-app flow   F system-admin console
 """
 import argparse, contextlib, functools, hashlib, http.server, json, os, re, shutil, signal, socket, subprocess
 import sys, threading, time, traceback, urllib.error, urllib.request
@@ -26,7 +26,8 @@ VIEWPORTS = {
 }
 SAVE_SCREENS = False
 IGNORED_URL = re.compile(r"fonts\.(googleapis|gstatic)\.com|api\.qrserver\.com")  # known external font/QR fetches (sandbox has no internet)
-APPS = ["marketing", "customer-admin", "staff", "customer"]
+APPS = ["marketing", "customer-admin", "staff", "customer", "sysadmin"]
+APP_SRC = {"sysadmin": "admin"}   # built from admin/ (the platform team's console), served as "sysadmin"
 
 
 def log(*a):
@@ -69,12 +70,12 @@ class Infra:
 
     def start(self):
         a = self.args
-        given = dict(api=a.api_url, marketing=a.marketing_url, admin=a.admin_url, staff=a.staff_url, customer=a.customer_url)
+        given = dict(api=a.api_url, marketing=a.marketing_url, admin=a.admin_url, staff=a.staff_url, customer=a.customer_url, sysadmin=a.sysadmin_url)
         if all(given.values()):
             self.urls = {k: v.rstrip("/") for k, v in given.items()}
             log("using running instances:", self.urls)
             return
-        ports = dict(api=free_port(4210), marketing=free_port(4211), admin=free_port(4212), staff=free_port(4213), customer=free_port(4214))
+        ports = dict(api=free_port(4210), marketing=free_port(4211), admin=free_port(4212), staff=free_port(4213), customer=free_port(4214), sysadmin=free_port(4215))
         urls = {k: f"http://localhost:{p}" for k, p in ports.items()}
         for k, v in given.items():
             if v:
@@ -86,7 +87,7 @@ class Infra:
         if not (a.skip_build and same):
             self.build(urls)
             stamp.write_text(json.dumps(urls))
-        for app, key in [("marketing", "marketing"), ("customer-admin", "admin"), ("staff", "staff"), ("customer", "customer")]:
+        for app, key in [("marketing", "marketing"), ("customer-admin", "admin"), ("staff", "staff"), ("customer", "customer"), ("sysadmin", "sysadmin")]:
             if given[key]:
                 continue
             handler = functools.partial(Quiet, directory=str(OUT / app))
@@ -103,14 +104,16 @@ class Infra:
                                    VITE_MARKETING_URL=urls["marketing"]),
             "staff": dict(VITE_API_URL=urls["api"]),
             "customer": dict(VITE_API_URL=urls["api"]),
+            "sysadmin": dict(VITE_API_URL=urls["api"]),
         }
         log("building front-ends ->", OUT)
         procs = []
         for app in APPS:
-            if not (ROOT / app / "node_modules").exists():
-                raise SystemExit(f"{app}/node_modules missing - run npm install there first")
+            src = ROOT / APP_SRC.get(app, app)
+            if not (src / "node_modules").exists():
+                raise SystemExit(f"{src.name}/node_modules missing - run npm install there first")
             lp = open(OUT / f"build-{app}.log", "w")
-            p = subprocess.Popen(["npx", "vite", "build", "--outDir", str(OUT / app), "--emptyOutDir"], cwd=ROOT / app,
+            p = subprocess.Popen(["npx", "vite", "build", "--outDir", str(OUT / app), "--emptyOutDir"], cwd=src,
                                  env={**os.environ, **envs[app]}, stdout=lp, stderr=subprocess.STDOUT)
             procs.append((app, p, lp))
         for app, p, lp in procs:
@@ -123,7 +126,7 @@ class Infra:
         host = re.sub(r"^.*@", "", DB_URL).split("/")[0].split(":")[0]
         if host not in ("localhost", "127.0.0.1", "::1") and not host.startswith("/"):
             raise SystemExit(f"refusing to start a test API against non-local database host {host!r}")
-        origins = ",".join(urls[k] for k in ("marketing", "admin", "staff", "customer"))
+        origins = ",".join(urls[k] for k in ("marketing", "admin", "staff", "customer", "sysadmin"))
         hash_ = subprocess.run(["node", "-e", "console.log(require('bcryptjs').hashSync('adminpass',4))"], cwd=ROOT / "server",
                                capture_output=True, text=True).stdout.strip()
         env = {**os.environ, "DATABASE_URL": DB_URL, "DATABASE_SSL": "false", "JWT_SECRET": "testsecret", "PORT": str(port),
@@ -1470,6 +1473,14 @@ def journey_E(env):
 # ==========================================================================================================
 # main
 # ==========================================================================================================
+def journey_F(env):
+    """System-admin console (admin/): see e2e/sysadmin.py. Independent of A-E: its fixtures are written straight to the test DB."""
+    sys.modules.setdefault("e2e", sys.modules[__name__])   # sysadmin.py does `import e2e` - give it this running module, not a second copy
+    sys.path.insert(0, str(HERE))
+    import sysadmin
+    sysadmin.run(env)
+
+
 def make_fixture_tenants(env):
     """Read-only tenants for the patient app's 'not open / no licence' states (shared by both viewports)."""
     api = env.api
@@ -1486,9 +1497,9 @@ def make_fixture_tenants(env):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vp", default="phone,desktop", help="comma list of viewports: phone,desktop")
-    ap.add_argument("--only", default="A,B,C,D,E", help="journeys to run (they build on each other; A is always needed first)")
+    ap.add_argument("--only", default="A,B,C,D,E,F", help="journeys to run (they build on each other; A is always needed first)")
     ap.add_argument("--api-url"); ap.add_argument("--marketing-url"); ap.add_argument("--admin-url")
-    ap.add_argument("--staff-url"); ap.add_argument("--customer-url")
+    ap.add_argument("--staff-url"); ap.add_argument("--customer-url"); ap.add_argument("--sysadmin-url")
     ap.add_argument("--skip-build", action="store_true", help="reuse the previous build in $E2E_OUT (same ports)")
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--screens", action="store_true", help="save a screenshot of every scanned screen to $E2E_OUT/screens")
@@ -1552,7 +1563,9 @@ def server_log_checks(T):
     T.add("X", "API server log has no errors/stack traces during the run", not bad, " | ".join(bad[:4]))
 
 
-AREA_NAMES = {"A": "Marketing / sign-up", "B": "Customer-admin", "C": "Patient app", "D": "Staff kiosk", "E": "Cross-app flow", "X": "Server log"}
+AREA_NAMES = {"A": "Marketing / sign-up", "B": "Customer-admin", "C": "Patient app", "D": "Staff kiosk", "E": "Cross-app flow", "X": "Server log",
+              "adm-L": "F System admin: login", "adm-D": "F System admin: dashboard", "adm-C": "F System admin: customers", "adm-V": "F System admin: customer",
+              "adm-P": "F System admin: pricing", "adm-T": "F System admin: clock", "adm-S": "F System admin: session"}
 
 
 def report(T, secs):

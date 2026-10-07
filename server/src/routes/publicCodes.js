@@ -11,7 +11,7 @@ router.get("/:code", asyncHandler(async (req, res) => {
      from location_codes lc
      join tenants t on t.id = lc.tenant_id
      join locations l on l.id = lc.location_id
-     where lc.code = $1`,
+     where lc.code = $1 and t.status <> 'disabled'`,
     [req.params.code.toUpperCase()]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "That code wasn't recognised." });

@@ -11,16 +11,32 @@ export function hasToken() {
   return !!token;
 }
 
+// Called when the server says the session is no longer valid (expired token, or a token that isn't a
+// system-admin one), so the app can go back to the sign-in screen instead of sitting on a dead dashboard.
+let sessionEnded = null;
+export function onSessionEnded(cb) { sessionEnded = cb; }
+
 async function request(path, { method = "GET", body, auth = true } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth && token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("Can't reach the server — check your connection and try again.");
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    if (auth && (res.status === 401 || res.status === 403)) {
+      setToken(null);
+      if (sessionEnded) sessionEnded("Your session has ended — please sign in again.");
+    }
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
   return data;
 }
 

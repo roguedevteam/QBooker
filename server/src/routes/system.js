@@ -3,7 +3,7 @@ import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
-import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing } from "../lib/serviceLicense.js";
+import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing, effectivePricing } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 import {
   badRequest, uuidParams, reqDate, optString, optEmail, optInt, optBool, optEnum, EMAIL_RE,
@@ -11,7 +11,11 @@ import {
 
 const router = Router();
 uuidParams(router, "id", "staffId", "svcId", "locId", "licenseId");
+// Everything here is platform-wide, sensitive and changes under the admin's hands: never cached.
+router.use((req, res, next) => { res.set("Cache-Control", "no-store"); res.set("X-Content-Type-Options", "nosniff"); next(); });
 router.use(requireAuth("system_admin"));
+
+const audit = (tenantId, message) => query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenantId, message]);
 
 router.get("/tenants", asyncHandler(async (req, res) => {
   const result = await query(
@@ -55,6 +59,8 @@ router.delete("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+const TENANT_FIELD_LABELS = { business_name: "business name", first_name: "first name", last_name: "last name", email: "email", company_address: "address", location_count: "location count" };
+
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   const businessName = optString(req.body.businessName, "Business name");
   const firstName = optString(req.body.firstName, "First name", { max: 100 });
@@ -63,6 +69,8 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
   const locationCount = optInt(req.body.locationCount, "locationCount", { min: 0, max: 100000 });
   const status = optEnum(req.body.status, "status", ["pending", "active", "disabled"]);
+  const prev = (await query(`select * from tenants where id=$1`, [req.params.id])).rows[0];
+  if (!prev) return res.status(404).json({ error: "Customer not found." });
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
@@ -75,15 +83,23 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
      where id=$8 returning *`,
     [businessName, firstName, lastName, email, companyAddress, locationCount, status, req.params.id]
   );
-  if (!result.rows[0]) return res.status(404).json({ error: "Customer not found." });
-  if (status === "active") {
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [req.params.id, "Invoice payment confirmed by our team — staff kiosk and customer WhatsApp are now enabled."]);
-  } else if (status === "disabled") {
-    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [req.params.id, "Account disabled by our team — sign-in is blocked until it's re-enabled."]);
+  const cur = result.rows[0];
+  if (!cur) return res.status(404).json({ error: "Customer not found." });
+  // Every real change leaves a trace the customer can see in their own activity log.
+  if (status !== undefined && status !== prev.status) {
+    if (status === "active") {
+      await audit(cur.id, prev.status === "pending"
+        ? "Invoice payment confirmed by our team — staff kiosk and customer WhatsApp are now enabled."
+        : "Account re-enabled by our team — sign-in is allowed again.");
+    } else if (status === "disabled") {
+      await audit(cur.id, "Account disabled by our team — sign-in is blocked until it's re-enabled.");
+    } else {
+      await audit(cur.id, "Account set to payment pending by our team.");
+    }
   }
-  res.json({ tenant: result.rows[0] });
+  const changed = Object.keys(TENANT_FIELD_LABELS).filter((k) => String(cur[k] ?? "") !== String(prev[k] ?? "")).map((k) => TENANT_FIELD_LABELS[k]);
+  if (changed.length) await audit(cur.id, `Account details updated by platform admin (${changed.join(", ")})`);
+  res.json({ tenant: cur });
 }));
 
 // A service's type (queue/appointment/hybrid) and slot length can only be changed once it's
@@ -137,17 +153,24 @@ router.patch("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
     [name, address, req.params.locId, req.params.id]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Location not found." });
+  if (name !== undefined || address !== undefined) await audit(req.params.id, `Location "${result.rows[0].name}" updated by platform admin`);
   res.json({ location: result.rows[0] });
 }));
 
 router.delete("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
-  await query(`delete from locations where id=$1 and tenant_id=$2`, [req.params.locId, req.params.id]);
+  const r = await query(`delete from locations where id=$1 and tenant_id=$2 returning name`, [req.params.locId, req.params.id]);
+  if (!r.rows[0]) return res.status(404).json({ error: "Location not found." });
+  // Keep the account's location count (shown in billing and summed in Reports) in step.
+  await query(`update tenants set location_count = greatest(location_count - 1, 0) where id=$1`, [req.params.id]);
+  await audit(req.params.id, `Location "${r.rows[0].name}" deleted by platform admin (its services and licenses went with it)`);
   res.json({ ok: true });
 }));
 
 // Keep in sync with the slot-length options customer-admin's own UI offers — a support
 // override that saved something outside this set (e.g. "2 min") would show up as a slot
 // length a tenant could never have picked themselves.
+const isWholePence = (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
+
 const VALID_SLOT_MINUTES = [5, 10, 15, 30, 60];
 
 router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
@@ -175,11 +198,14 @@ router.patch("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
     [name, mode, slotMinutes, archived, req.params.svcId, req.params.id]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+  if ([name, mode, slotMinutes, archived].some((v) => v !== undefined)) await audit(req.params.id, `Service "${result.rows[0].name}" updated by platform admin`);
   res.json({ service: result.rows[0] });
 }));
 
 router.delete("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
-  await query(`delete from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id]);
+  const r = await query(`delete from services where id=$1 and tenant_id=$2 returning name`, [req.params.svcId, req.params.id]);
+  if (!r.rows[0]) return res.status(404).json({ error: "Service not found." });
+  await audit(req.params.id, `Service "${r.rows[0].name}" deleted by platform admin (its licenses went with it)`);
   res.json({ ok: true });
 }));
 
@@ -189,9 +215,12 @@ router.delete("/tenants/:id/services/:svcId", asyncHandler(async (req, res) => {
 // Annual licenses are price-on-application: platform admin sets the agreed price. Added as an
 // invoice license (unpaid until marked paid), otherwise identical to any other license.
 router.post("/tenants/:id/services/:svcId/licenses/annual", asyncHandler(async (req, res) => {
+  // A number, or a plain decimal string ("1500", "1500.50") — not hex/exponent/padded forms — worth
+  // between 1p and £1,000,000 and expressible in whole pence (it is charged exactly as entered).
   const rawPrice = req.body.price;
-  const price = typeof rawPrice === "number" || (typeof rawPrice === "string" && rawPrice.length < 20) ? Number(rawPrice) : NaN;
+  const price = typeof rawPrice === "number" ? rawPrice : (typeof rawPrice === "string" && /^\d{1,9}(\.\d{1,10})?$/.test(rawPrice) ? Number(rawPrice) : NaN);
   if (!(price > 0) || price > 1000000) return res.status(400).json({ error: "Enter the agreed annual price." });
+  if (!isWholePence(price)) return res.status(400).json({ error: "The annual price can have at most 2 decimal places (whole pence)." });
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
   const result = await query(
@@ -232,15 +261,26 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
 // held as "pending" has nothing left unpaid, it goes active — same effect the old account-level
 // "Mark paid" had.
 router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (req, res) => {
-  const cur = (await query(`select payment_method from service_licenses where id=$1 and tenant_id=$2`, [req.params.licenseId, req.params.id])).rows[0];
-  if (cur?.payment_method === "later") {
+  const cur = (await query(`select * from service_licenses where id=$1 and tenant_id=$2`, [req.params.licenseId, req.params.id])).rows[0];
+  if (!cur) return res.status(404).json({ error: "License not found." });
+  // Already paid: nothing to do (a double click or retry must not move paid_at or log a second payment).
+  if (cur.paid && cur.status !== "refunded") return res.json({ license: cur, activated: false });
+  if (cur.status === "refunded") {
+    return res.status(409).json({ error: "This license has been refunded, so it can't be marked as paid." });
+  }
+  if (cur.payment_method === "later") {
     return res.status(409).json({ error: "This is a pay-later license — it stays unpaid until the customer pays by card or chooses invoice." });
   }
   const result = await query(
-    `update service_licenses set paid=true, paid_at=now() where id=$1 and tenant_id=$2 returning *`,
+    `update service_licenses set paid=true, paid_at=now() where id=$1 and tenant_id=$2 and paid=false and status != 'refunded' returning *`,
     [req.params.licenseId, req.params.id]
   );
-  if (!result.rows[0]) return res.status(404).json({ error: "License not found." });
+  if (!result.rows[0]) {
+    // Lost a race with another request (paid or refunded a moment ago): report what is true now.
+    const now = (await query(`select * from service_licenses where id=$1`, [req.params.licenseId])).rows[0];
+    if (now?.paid && now.status !== "refunded") return res.json({ license: now, activated: false });
+    return res.status(409).json({ error: "This license has just been refunded, so it can't be marked as paid." });
+  }
   const lic = result.rows[0];
   const remaining = (await query(`select count(*)::int c from service_licenses where tenant_id=$1 and paid=false and status != 'refunded'`, [req.params.id])).rows[0].c;
   let activated = false;
@@ -248,8 +288,7 @@ router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (re
     const u = await query(`update tenants set status='active' where id=$1 and status='pending' returning id`, [req.params.id]);
     activated = u.rows.length > 0;
   }
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.params.id, `Payment confirmed for ${lic.plan_label} license (£${lic.price})${activated ? " — account activated" : ""}`]);
+  await audit(req.params.id, `Payment confirmed for ${lic.plan_label} license (£${lic.price})${activated ? " — account activated" : ""}`);
   res.json({ license: lic, activated });
 }));
 
@@ -265,14 +304,15 @@ router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHand
     return res.status(409).json({ error: "Only a license that's never gone live (Available or Scheduled) can be refunded — this one is Active, Expired or already Refunded." });
   }
 
+  const result = await query(
+    `update service_licenses set status='refunded', refunded_at=now() where id=$1 and status in ('available','scheduled') returning *`,
+    [license.id]
+  );
+  if (!result.rows[0]) return res.status(409).json({ error: "This license has just changed state (refunded or gone live) — reload and check it." });
   if (license.status === "scheduled" && license.start_date && license.end_date) {
     await query(`delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
       [service.id, license.start_date, license.end_date]);
   }
-  const result = await query(
-    `update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`,
-    [license.id]
-  );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.params.id, `License refunded by platform admin for "${service.name}" — ${license.plan_label}`]);
   res.json({ license: { ...result.rows[0], service_name: service.name } });
@@ -286,27 +326,49 @@ router.delete("/tenants/:id", asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+async function storedPricing() {
+  return effectivePricing((await query(`select value from platform_settings where key='plan_prices'`)).rows[0]?.value);
+}
+
+// What the console shows is exactly what customers see and are charged (built-in defaults fill in
+// anything never saved).
 router.get("/pricing", asyncHandler(async (req, res) => {
-  const result = await query(`select value from platform_settings where key='plan_prices'`);
-  res.json({ pricing: result.rows[0]?.value || { sale: { active: false } } });
+  res.json({ pricing: await storedPricing() });
 }));
 
 router.put("/pricing", asyncHandler(async (req, res) => {
-  const { sale } = req.body;
   const price = (v, name) => {
-    if (v === undefined || v === null) return v;
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1000000) throw badRequest(`${name} must be a number between 0 and 1,000,000.`);
+    if (!isWholePence(v)) throw badRequest(`${name} can have at most 2 decimal places.`);
     return v;
   };
-  const day = price(req.body.day, "day"), week = price(req.body.week, "week"), month = price(req.body.month, "month"), year = price(req.body.year, "year");
-  const customDailyRate = price(req.body.customDailyRate, "customDailyRate");
-  let cleanSale = { active: false };
+  const cur = await storedPricing();
+  // Omitted prices keep their current value, so a partial update can never leave a plan without a price;
+  // an explicit null is refused for the same reason.
+  const next = {};
+  for (const k of ["day", "week", "month", "year", "customDailyRate"]) {
+    const v = req.body[k];
+    if (v === undefined) next[k] = cur[k];
+    else if (v === null) throw badRequest(`${k} can't be empty.`);
+    else next[k] = price(v, k);
+  }
+  const { sale } = req.body;
+  let cleanSale = sale === undefined ? cur.sale : { active: false };
   if (sale !== undefined && sale !== null) {
     if (typeof sale !== "object" || Array.isArray(sale)) throw badRequest("sale must be an object.");
     cleanSale = { active: optBool(sale.active, "sale.active") ?? false };
-    for (const k of ["day", "week", "month", "year"]) cleanSale[k] = price(sale[k], `sale.${k}`);
+    for (const k of ["day", "week", "month", "year"]) {
+      const v = sale[k];
+      if (v === undefined) continue;
+      cleanSale[k] = v === null ? null : price(v, `sale.${k}`);
+      if (cleanSale[k] != null && cleanSale[k] > next[k]) throw badRequest(`The sale price for ${k} can't be higher than its regular price.`);
+    }
   }
-  const value = { day, week, month, year, customDailyRate, sale: cleanSale };
+  // A saved sale price must never end up above its (possibly just lowered) regular price - customers would be charged more than list.
+  for (const k of ["day", "week", "month", "year"]) {
+    if (cleanSale[k] != null && cleanSale[k] > next[k]) throw badRequest(`The sale price for ${k} can't be higher than its regular price — lower or clear the sale price first.`);
+  }
+  const value = { ...next, sale: cleanSale };
   await query(
     `insert into platform_settings (key, value) values ('plan_prices', $1)
      on conflict (key) do update set value = excluded.value`,
@@ -315,49 +377,50 @@ router.put("/pricing", asyncHandler(async (req, res) => {
   res.json({ pricing: value });
 }));
 
-// Revenue now lives on service_licenses (one purchase per service), not on the tenant
-// as a whole — a tenant's "pending" status (unconfirmed invoice) still gates whether its
-// licenses are treated as billed, same as it used to gate the old account-wide plan.
+// Revenue lives on service_licenses (one purchase per service), not on the tenant as a whole — a
+// tenant's "pending" status (unconfirmed invoice) still gates whether its licenses are treated as
+// billed. All sums are done in whole pence so the figures are exact (no 0.1 + 0.2 noise).
+const pence = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
 router.get("/reports/overview", asyncHandler(async (req, res) => {
-  const tenants = (await query(`select * from tenants`)).rows;
-  const pending = new Set(tenants.filter((t) => t.status === "pending").map((t) => t.id));
-  const licenses = (await query(`select tenant_id, plan_id, price from service_licenses where status != 'refunded'`)).rows;
+  const counts = (await query(`select count(*)::int as customers, coalesce(sum(location_count),0)::bigint as locations from tenants`)).rows[0];
+  const lic = (await query(
+    `select l.plan_id, (t.status = 'pending') as pending, sum(l.price) as amount
+     from service_licenses l join tenants t on t.id = l.tenant_id
+     where l.status != 'refunded' group by l.plan_id, (t.status = 'pending')`
+  )).rows;
 
-  let totalRevenue = 0;
-  let pendingRevenue = 0;
-  const revenueByPlan = {};
-  for (const lic of licenses) {
-    const price = Number(lic.price || 0);
-    if (pending.has(lic.tenant_id)) {
-      pendingRevenue += price;
-    } else {
-      totalRevenue += price;
-      revenueByPlan[lic.plan_id] = (revenueByPlan[lic.plan_id] || 0) + price;
-    }
+  let totalP = 0;
+  let pendingP = 0;
+  const byPlanP = {};
+  for (const r of lic) {
+    const p = pence(r.amount);
+    if (r.pending) pendingP += p;
+    else { totalP += p; byPlanP[r.plan_id] = (byPlanP[r.plan_id] || 0) + p; }
   }
 
   // Fold in anonymised revenue snapshots from deleted customers so totals don't drop
   // just because an account was removed.
   const deletedRows = (await query(`select total_revenue, pending_revenue, revenue_by_plan from deleted_tenant_revenue`)).rows;
-  let deletedRevenue = 0;
+  let deletedP = 0;
   for (const row of deletedRows) {
-    totalRevenue += Number(row.total_revenue || 0);
-    pendingRevenue += Number(row.pending_revenue || 0);
-    deletedRevenue += Number(row.total_revenue || 0);
+    totalP += pence(row.total_revenue);
+    pendingP += pence(row.pending_revenue);
+    deletedP += pence(row.total_revenue);
     for (const [planId, amount] of Object.entries(row.revenue_by_plan || {})) {
-      revenueByPlan[planId] = (revenueByPlan[planId] || 0) + Number(amount || 0);
+      byPlanP[planId] = (byPlanP[planId] || 0) + pence(amount);
     }
   }
 
-  const totalLocations = tenants.reduce((sum, t) => sum + (t.location_count || 0), 0);
+  const revenueByPlan = {};
+  for (const [k, v] of Object.entries(byPlanP)) revenueByPlan[k] = v / 100;
   res.json({
-    customerCount: tenants.length,
-    totalRevenue,
-    pendingRevenue,
-    totalLocations,
+    customerCount: counts.customers,
+    totalRevenue: totalP / 100,
+    pendingRevenue: pendingP / 100,
+    totalLocations: Number(counts.locations),
     revenueByPlan,
     deletedCustomerCount: deletedRows.length,
-    deletedRevenue,
+    deletedRevenue: deletedP / 100,
   });
 }));
 
@@ -379,8 +442,7 @@ router.delete("/clock", (req, res) => {
 // Public (unauthenticated) pricing lookup, used by the signup screen.
 export const publicRouter = Router();
 publicRouter.get("/pricing", asyncHandler(async (req, res) => {
-  const result = await query(`select value from platform_settings where key='plan_prices'`);
-  res.json({ pricing: result.rows[0]?.value || { day: 25, week: 100, month: 200, year: 600, customDailyRate: 20, sale: { active: false } } });
+  res.json({ pricing: await storedPricing() });
 }));
 // Public read-only clock, so the marketing/web/admin apps can all agree on "today"
 // (which may be a simulated date set from System Admin for testing).
