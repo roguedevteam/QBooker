@@ -391,3 +391,5 @@ select, .input {
 .chan-status { font-size: 14px; line-height: 20px; min-height: 20px; }
 .chan-status-ok { color: #1F5A2E; }
 .chan-status-error { color: var(--error); }
+
+.chan-loc { margin: 8px 0 0; font-size: 17px; font-weight: 600; }

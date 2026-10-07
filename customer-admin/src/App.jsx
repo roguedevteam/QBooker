@@ -93,6 +93,7 @@ function DotsIcon({ size = 20 }) {
 const NAV_PATHS = {
   dashboard: <path d="M4 11l8-7 8 7v9H4z" />,
   locations: <><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></>,
+  customers: <><path d="M4 5h16v11H9l-5 4z" /><path d="M8 9h8M8 12h5" /></>,
   staff: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 5a3.5 3.5 0 010 7M18 14c2 .6 3.5 2.4 3.5 6" /></>,
   profile: <><rect x="4" y="3" width="16" height="18" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   audit: <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>,
@@ -332,9 +333,9 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
-const SIDE_TABS = ["dashboard", "locations", "staff", "profile", "audit", "shop"];
-const PHONE_TABS = ["dashboard", "locations", "staff", "profile"];
+const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", customers: "Customers", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
+const SIDE_TABS = ["dashboard", "locations", "customers", "staff", "profile", "audit", "shop"];
+const PHONE_TABS = ["dashboard", "locations", "customers", "staff"];
 
 function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, setError }) {
   const [tab, setTab] = useState("dashboard");
@@ -472,7 +473,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
   async function deleteTicket(t) { await api.deleteTicket(t.id); refreshQueue(); }
   const effectiveOpenLocId = openLocId !== undefined ? openLocId : (visibleLocations.length === 1 ? visibleLocations[0].id : null);
   const openLoc = tab === "locations" && effectiveOpenLocId ? visibleLocations.find((l) => l.id === effectiveOpenLocId) || null : null;
-  const moreActive = tab === "audit" || tab === "shop";
+  const moreActive = tab === "audit" || tab === "shop" || tab === "profile";
 
   return (
     <div className="shell">
@@ -591,8 +592,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                   </button>
                 </div>
 
-                <ChannelSettings key={loc.id} loc={loc} tenant={tenant} onSaved={refreshCore} />
-
                 {addingHere && (
                   <ServiceWizard
                     locationId={loc.id}
@@ -634,6 +633,9 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
 
       {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
           until "shop" is added back to the tab list above. */}
+      {tab === "customers" && (
+        <CustomersTab tenant={tenant} locations={visibleLocations} staffAppUrl={STAFF_APP_URL} customerLink={customerLink} onSaved={refreshCore} />
+      )}
       {tab === "staff" && <StaffTab staffAppUrl={STAFF_APP_URL} setError={setError} />}
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
@@ -822,7 +824,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
           <div className="sheet-backdrop phone-only" onClick={() => setMoreOpen(false)} />
           <div className="sheet" role="dialog" aria-modal="true" aria-label="More">
             <div className="sheet-title">More</div>
-            <button type="button" className={tab === "audit" ? "active" : undefined} autoFocus onClick={() => goTab("audit")}><NavIcon name="audit" />Audit log</button>
+            <button type="button" className={tab === "profile" ? "active" : undefined} autoFocus onClick={() => goTab("profile")}><NavIcon name="profile" />Account</button>
+            <button type="button" className={tab === "audit" ? "active" : undefined} onClick={() => goTab("audit")}><NavIcon name="audit" />Audit log</button>
             <button type="button" className={tab === "shop" ? "active" : undefined} onClick={() => goTab("shop")}><NavIcon name="shop" />Shop</button>
             <button type="button" onClick={() => { setMoreOpen(false); onSignOut(); }}><NavIcon name="signout" />Sign out</button>
           </div>
@@ -846,6 +849,40 @@ function splitAddress(combined) {
 }
 function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+}
+
+// Customers tab: how patients reach you (per location) plus the links to the staff kiosk and the patient page.
+function CustomersTab({ tenant, locations, staffAppUrl, customerLink, onSaved }) {
+  return (
+    <div className="stack">
+      <div className="card stack" style={{ background: "var(--accent-weak)" }}>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Staff Kiosk link</span>
+          <code style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere" }}>{staffAppUrl}</code>
+        </div>
+        <div className="muted small">
+          Staff sign in with their own email address and a code sent to it. Add them in the Staff tab.
+        </div>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Patient page link</span>
+          <div className="row wrap">
+            <code className="grow" style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere", minWidth: 200 }}>{customerLink}</code>
+            <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
+          </div>
+        </div>
+        <div className="muted small">Open this to see what patients see on the web page. Useful for testing your setup.</div>
+      </div>
+
+
+      {locations.length === 0 && <div className="card muted">Add a location first, then choose how patients join it.</div>}
+      {locations.map((loc) => (
+        <div key={loc.id} className="stack">
+          {locations.length > 1 && <h2 className="chan-loc">{loc.name}</h2>}
+          <ChannelSettings key={loc.id} loc={loc} tenant={tenant} onSaved={onSaved} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // "How patients join" — which channels a location offers, per the ChannelAdmin design.
@@ -1329,24 +1366,6 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
           )}
         </div>
       )}
-
-      <div className="card stack" style={{ background: "var(--accent-weak)" }}>
-        <div className="stack" style={{ gap: 4 }}>
-          <span className="small">Staff Kiosk link</span>
-          <code style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere" }}>{staffAppUrl}</code>
-        </div>
-        <div className="muted small">
-          Staff sign in with their own email address and a code sent to it. Add them in the Staff tab.
-        </div>
-        <div className="stack" style={{ gap: 4 }}>
-          <span className="small">Customer link</span>
-          <div className="row wrap">
-            <code className="grow" style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere", minWidth: 200 }}>{customerLink}</code>
-            <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
-          </div>
-        </div>
-        <div className="muted small">This is what a real customer link would open, once WhatsApp is wired up for real — useful for testing your setup now.</div>
-      </div>
 
       <div className="card stack">
         <h2>Licenses ({visibleLicenses.length})</h2>
