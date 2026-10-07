@@ -275,3 +275,5 @@ legend { padding: 0; }
 .room-box-input.invalid { border-color: #B3261E; }
 .room-warn { color: #B3261E; margin: -6px 0 10px; }
 @media (min-width: 768px) { .room-box { flex: 0 1 280px; margin-left: auto; } }
+
+@media (min-width: 768px) { .work-bar-col, .work-bar-col + .room-warn { max-width: 760px; margin-left: auto; margin-right: auto; } .work-bar-col { margin-bottom: 14px; } }
