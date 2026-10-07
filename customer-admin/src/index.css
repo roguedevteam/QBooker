@@ -468,3 +468,13 @@ select, .input {
 .svc-tab[aria-selected="true"] { min-height: 52px; margin-bottom: 0; }
 .svc-tab-chev { margin-left: auto; opacity: .85; flex: none; }
 @media (min-width: 768px) { .svc-tabs { gap: 6px; } .svc-tab-chev { margin-left: 4px; } }
+
+/* No strip background: white outlined buttons, selected one filled */
+.svc-tabs { background: transparent; padding-top: 0; padding-bottom: 0; gap: 8px; margin: 0; padding-left: 0; padding-right: 0; }
+.svc-tabs.is-collapsed { padding-bottom: 0; }
+.svc-tab:not([aria-selected="true"]) { background: #fff; border: 2px solid var(--blue, #1D5C8A); color: var(--blue, #1D5C8A); min-height: 48px; }
+.svc-tab:not([aria-selected="true"]):hover { background: #EAF2F8; color: var(--blue, #1D5C8A); }
+.svc-tab[aria-selected="true"] { background: var(--blue, #1D5C8A); color: #fff; border: 2px solid var(--blue, #1D5C8A); border-top: 4px solid var(--accent, #C8690D); min-height: 48px; }
+.svc-tab:focus-visible { outline: 3px solid var(--accent, #C8690D); outline-offset: 2px; }
+.svc-tab[aria-selected="true"]:focus-visible { outline-color: var(--accent, #C8690D); }
+@media (min-width: 768px) { .svc-tabs { padding: 0; } }
