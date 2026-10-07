@@ -255,3 +255,7 @@ legend { padding: 0; }
 .step-head-navy { border-left: 4px solid var(--navy); padding-left: 10px; }
 .step-head-amber { border-left: 4px solid var(--primary); padding-left: 10px; }
 .phone .step-head { border-left: 0; padding-left: 0; }
+
+.pill { font-size: 13px; font-weight: 600; padding: 4px 10px; background: #EEEEE9; color: var(--muted); white-space: nowrap; position: relative; }
+.pill-warn { background: #FBEFD9; color: #7A4306; }
+.start .opt-main { font-size: 18px; }

@@ -135,7 +135,9 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   if (!started) {
     const waitingCount = (id) => tickets.filter((t) => t.service_id === id && isWaiting(t, nowMin)).length;
     const toggle = (id, on) => setServiceIds((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id)));
+    const canStart = serviceIds.length > 0 && room.trim().length > 0;
     const start = () => {
+      if (!canStart) return;
       savePref(ROOM_KEY, room.trim());
       savePref(SERVICES_KEY, serviceIds);
       savePref(ROLES_KEY, roles);
@@ -148,6 +150,11 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
           <h1 className="h-big">Where are you working today?</h1>
           {locationName && <p className="muted loc-line">{locationName}{onChangeLocation && <> · <button type="button" className="link-btn inline" onClick={onChangeLocation}>Change location</button></>}</p>}
         </div>
+        <div>
+          <label className="field-label lg" htmlFor="room-setup">Room or desk</label>
+          <input id="room-setup" required aria-required="true" className="input input-lg" placeholder="e.g. Room 2" value={room} maxLength={60} autoComplete="off" onChange={(e) => setRoom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && canStart) start(); }} />
+          <div className="field-hint">Patients are told to come here when you call them.</div>
+        </div>
         <fieldset>
           <legend className="field-label lg">{locServices.length > 1 ? "Service (tick every service you are covering)" : "Service"}</legend>
           <div className="opts">
@@ -159,7 +166,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                   <label className="opt opt-lg">
                     <input type="checkbox" checked={on} onChange={(e) => toggle(s.id, e.target.checked)} />
                     <span className="box" aria-hidden="true" />
-                    <span className="opt-main">{s.name}<span className="opt-sub">{n === 0 ? "Nobody waiting" : `${n} waiting`}</span></span>
+                    <span className="opt-main">{s.name}</span>
+                    <span className={`pill${n ? " pill-warn" : ""}`}>{n === 0 ? "Nobody waiting" : `${n} waiting`}</span>
                   </label>
                   {on && s.mode === "hybrid" && (
                     <fieldset className="role-pick">
@@ -180,14 +188,9 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
             {locServices.length === 0 && <div className="help-card">No services are set up at this location yet. Ask your manager.</div>}
           </div>
         </fieldset>
-        <div>
-          <label className="field-label lg" htmlFor="room-setup">Room or desk <span className="optional">(optional)</span></label>
-          <input id="room-setup" className="input input-lg" placeholder="e.g. Room 2" value={room} maxLength={60} autoComplete="off" onChange={(e) => setRoom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && serviceIds.length) start(); }} />
-          <div className="field-hint">Patients are told to come here when you call them.</div>
-        </div>
         <div className="start-foot">
-          <button className="btn-big btn-fill" disabled={serviceIds.length === 0} aria-describedby={serviceIds.length === 0 ? "start-hint" : undefined} onClick={start}>Start</button>
-          <div id="start-hint" className="field-hint center">{serviceIds.length === 0 ? "Tick at least one service to start." : "We'll remember this on this device for next time."}</div>
+          <button className="btn-big btn-fill" disabled={!canStart} aria-describedby={!canStart ? "start-hint" : undefined} onClick={start}>Start</button>
+          <div id="start-hint" className="field-hint center">{!room.trim() ? "Enter your room or desk to start." : serviceIds.length === 0 ? "Tick at least one service to start." : "We'll remember this on this device for next time."}</div>
         </div>
         <div><button className="btn-outline" onClick={onSignOut}>Sign out</button></div>
       </main>
@@ -409,11 +412,11 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
         {busy && <span id="signout-hint" className="sr-only">{signOutHint}</span>}
       </div>
       {editRoom && (
-        <form className="room-edit" onSubmit={(e) => { e.preventDefault(); setEditRoom(false); }}>
-          <label className="field-label" htmlFor="room-edit">Room or desk <span className="optional">(optional)</span></label>
+        <form className="room-edit" onSubmit={(e) => { e.preventDefault(); if (room.trim()) setEditRoom(false); }}>
+          <label className="field-label" htmlFor="room-edit">Room or desk</label>
           <div className="room-edit-row">
-            <input id="room-edit" className="input" placeholder="e.g. Room 2" value={room} maxLength={60} autoFocus autoComplete="off" onChange={(e) => saveRoom(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setEditRoom(false); }} />
-            <button type="submit" className="btn-sec">Done</button>
+            <input id="room-edit" className="input" placeholder="e.g. Room 2" value={room} maxLength={60} autoFocus autoComplete="off" onChange={(e) => saveRoom(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape" && room.trim()) setEditRoom(false); }} />
+            <button type="submit" className="btn-sec" disabled={!room.trim()}>Done</button>
           </div>
         </form>
       )}
