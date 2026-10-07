@@ -825,7 +825,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
             <div>
               <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Add your locations</h2>
               <p className="su-hint">
-                Locations are free and unlimited — they're just how customers and staff get routed to the right place.
+                Locations are free and unlimited — they're just how patients and staff get routed to the right place.
                 Name each one now; each name must be unique. You'll pick services and licenses next.
               </p>
             </div>
@@ -942,13 +942,13 @@ function Signup({ onDone, setError, onBackToLanding }) {
                 active={paymentMethod === "invoice"}
                 onClick={() => setPaymentMethod("invoice")}
                 title="Invoice"
-                desc="Your account can be fully configured straight away, but staff kiosk and customer WhatsApp won't be enabled until payment is received."
+                desc="Your account can be fully configured straight away, but staff kiosk and patient WhatsApp won't be enabled until payment is received."
               />
               <PaymentOption
                 active={paymentMethod === "later"}
                 onClick={() => setPaymentMethod("later")}
                 title="Pay later"
-                desc="Get set up and explore the system now — staff kiosk and customer WhatsApp switch on once we've sorted payment with you."
+                desc="Get set up and explore the system now — staff kiosk and patient WhatsApp switch on once we've sorted payment with you."
               />
             </fieldset>
             {paymentMethod === "invoice" && (
