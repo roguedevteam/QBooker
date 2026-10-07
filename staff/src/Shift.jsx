@@ -234,8 +234,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   }
 
   const stepHead = (n, title, hint, tone, id) => (
-    <div className="step-head">
-      <span className={`step-num ${tone}`} aria-hidden="true">{n}</span>
+    <div className={`step-head step-head-${tone}`}>
       <div>
         <h2 className="step-title" id={id}>{title}</h2>
         <p className="step-hint">{hint}</p>
@@ -391,9 +390,9 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   );
 
   const tabs = [
-    ["now", "1 With you", mine[0]?.ticket_number || "none"],
-    ...(mine.length > 0 ? [] : [["waiting", "2 Waiting", String(waitingList.length)]]),
-    ["seen", `${mine.length > 0 ? 2 : 3} Seen`, String(seen.length)],
+    ["now", "With you", mine[0]?.ticket_number || "none"],
+    ...(mine.length > 0 ? [] : [["waiting", "Waiting", String(waitingList.length)]]),
+    ["seen", "Seen", String(seen.length)],
   ];
   const shownTab = mine.length > 0 && tab === "waiting" ? "now" : tab;
   const wideToday = isWide && view === "today";

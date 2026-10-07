@@ -251,3 +251,7 @@ legend { padding: 0; }
 .wrow-actions { display: flex; gap: 8px; align-items: center; }
 .wrow .call-small { min-height: 44px; width: auto; padding: 0 18px; }
 .wrow .route-select { min-height: 44px; width: auto; max-width: 150px; }
+
+.step-head-navy { border-left: 4px solid var(--navy); padding-left: 10px; }
+.step-head-amber { border-left: 4px solid var(--primary); padding-left: 10px; }
+.phone .step-head { border-left: 0; padding-left: 0; }
