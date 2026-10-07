@@ -47,6 +47,7 @@ export default function App() {
 
 function Patient({ tenantId }) {
   const [businessName, setBusinessName] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
   const [notFound, setNotFound] = useState(false);
   const [messages, setMessages] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -73,6 +74,7 @@ function Patient({ tenantId }) {
         const [info, l, sv] = await Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)]);
         if (cancelled) return;
         setBusinessName(info.businessName);
+        setWebsiteUrl(info.websiteUrl || "");
         setLocations(l.locations);
         setServices(sv.services);
         // Which location did the patient arrive at? The QR link carries the location code (?c=)
@@ -145,7 +147,10 @@ function Patient({ tenantId }) {
     setCurrentLoc(locId || null);
     const list = services.filter((s) => s.location_id === locId);
     const location = locations.find((l) => l.id === locId);
-    if (list.length === 0) { bot("There aren't any services set up here yet."); return; }
+    // Nothing to offer: welcome them to this location and point to the business website.
+    const siteLink = (websiteUrl || location?.website_url) ? [{ label: "Visit our website", variant: "secondary", action: "website", payload: websiteUrl || location.website_url }] : [];
+    const welcomeHere = () => setMessages((m) => m.map((x, i) => (i === 0 ? { ...x, text: `Welcome to ${location?.name || businessName}.` } : x))); // replaces the opening welcome so it names the location
+    if (list.length === 0) { welcomeHere(); bot("Nothing is available here today.", siteLink); return; }
     const checks = await Promise.all(list.map(async (s) => {
       try {
         const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
@@ -165,9 +170,8 @@ function Patient({ tenantId }) {
         if (reason === "outside_license_window") text = "This service's license doesn't cover today's date — please contact the business directly.";
         else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
       }
-      const opts = [];
-      if (location?.website_url) opts.push({ label: "See opening hours", variant: "secondary", action: "website", payload: location.website_url });
-      bot(text, opts);
+      welcomeHere();
+      bot(text, siteLink);
       return;
     }
     if (live.length === 1) { await chooseService(live[0].service, live[0].r, false); return; }

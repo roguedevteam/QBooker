@@ -58,7 +58,7 @@ async function getQueueInfo(ticket) {
 
 // Only what a customer needs to see — never exposes email, access code, pricing, etc.
 router.get("/:tenantId/info", (req, res) => {
-  res.json({ businessName: req.tenant.business_name, status: req.tenant.status });
+  res.json({ businessName: req.tenant.business_name, status: req.tenant.status, websiteUrl: req.tenant.website_url || null });
 });
 
 // The location code is intentionally NOT returned here: when a location is "onsite only" it is
