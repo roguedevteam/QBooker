@@ -392,9 +392,10 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
 
   const tabs = [
     ["now", "1 With you", mine[0]?.ticket_number || "none"],
-    ["waiting", "2 Waiting", String(waitingList.length)],
-    ["seen", "3 Seen", String(seen.length)],
+    ...(mine.length > 0 ? [] : [["waiting", "2 Waiting", String(waitingList.length)]]),
+    ["seen", `${mine.length > 0 ? 2 : 3} Seen`, String(seen.length)],
   ];
+  const shownTab = mine.length > 0 && tab === "waiting" ? "now" : tab;
   const wideToday = isWide && view === "today";
 
   return (
@@ -441,7 +442,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
         {isWide && !wideToday && (
           <div className="board">
             {nowCol}
-            {waitingCol}
+            {mine.length === 0 && waitingCol}
           </div>
         )}
 
@@ -449,15 +450,15 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
           <div className="phone">
             <div className="tabs" role="tablist" aria-label="Steps">
               {tabs.map(([k, label, sub]) => (
-                <button key={k} type="button" role="tab" id={`tab-${k}`} aria-selected={tab === k} aria-controls={`panel-${k}`} className={`tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>
+                <button key={k} type="button" role="tab" id={`tab-${k}`} aria-selected={shownTab === k} aria-controls={`panel-${k}`} className={`tab${shownTab === k ? " on" : ""}`} onClick={() => setTab(k)}>
                   <span>{label}</span><span className="mono tab-sub">{sub}</span>
                 </button>
               ))}
             </div>
-            <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-              {tab === "waiting" && waitingCol}
-              {tab === "now" && nowCol}
-              {tab === "seen" && seenCol}
+            <div role="tabpanel" id={`panel-${shownTab}`} aria-labelledby={`tab-${shownTab}`}>
+              {shownTab === "waiting" && waitingCol}
+              {shownTab === "now" && nowCol}
+              {shownTab === "seen" && seenCol}
             </div>
           </div>
         )}
