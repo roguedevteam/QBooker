@@ -1660,6 +1660,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   const [panel, setPanel] = useState(startExpanded ? "hours" : null); // null | "hours" | "licences"
   const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
+  const [assignTrigger, setAssignTrigger] = useState(null); // { licId, n } — opens that licence's date picker in the Licences panel
   const [licenses, setLicenses] = useState([]);
   const [licensesLoaded, setLicensesLoaded] = useState(false);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
@@ -1682,6 +1683,12 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   function openPanel(name) {
     if (name === "licences") setLicMounted(true);
     setPanel((cur) => (cur === name ? null : name));
+  }
+  const firstAvailable = licenses.find((l) => l.status === "available");
+  function startAssign(licId) {
+    setLicMounted(true);
+    setPanel("licences"); // open only, never toggle closed
+    setAssignTrigger((t) => ({ licId, n: (t?.n || 0) + 1 }));
   }
   function startBuy() {
     setLicMounted(true);
@@ -1719,6 +1726,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
       </div>
       <div className="svc-actions">
         {showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>}
+        {licensesLoaded && firstAvailable && <button type="button" className="btn" onClick={() => startAssign(firstAvailable.id)}>Assign dates</button>}
         {showLicencesBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
         <div className="svc-buy">
           <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
@@ -1738,7 +1746,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
           <ServiceLicensesPanel
             service={service} allServices={allServices || []} setError={setError} locationName={locationName}
             onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
-            tenant={tenant} buyTrigger={buyTrigger} showBuyButton={false}
+            tenant={tenant} buyTrigger={buyTrigger} assignTrigger={assignTrigger} showBuyButton={false}
           />
         </div>
       )}
@@ -1755,7 +1763,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, hideHeader = false, onBought, locationName }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, assignTrigger, showBuyButton = true, hideHeader = false, onBought, locationName }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -1775,6 +1783,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   // "Buy a license" lives in ServiceEditor's header (to the left of its Actions ⋯ menu);
   // it bumps buyTrigger to open the plan picker here.
   useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); } }, [buyTrigger]);
+
+  useEffect(() => {
+    if (assignTrigger) { setSchedulingId(assignTrigger.licId); setStartDate(todayIso()); }
+  }, [assignTrigger]);
 
   function selectedPrice() {
     if (!pricing) return 0;
