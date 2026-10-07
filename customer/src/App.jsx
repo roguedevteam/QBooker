@@ -133,14 +133,15 @@ function Patient({ tenantId }) {
     }));
     if (run !== runRef.current) return;
     // Every location shows up, but only the ones with something open right now can be tapped.
-    bot("Which location are you at?", checks.map(({ location, open }) => ({
+    const anyOpen = checks.some((c) => c.open);
+    bot(anyOpen ? "Which location are you at?" : "We're not open right now — nothing is available today. Please check back during opening hours.", [...checks.map(({ location, open }) => ({
       label: location.name,
       sub: open ? "Open now" : "Not available",
       variant: "secondary",
       action: open ? "loc" : null,
       payload: location.id,
       disabled: !open,
-    })));
+    })), ...websiteOpts(null)]);
   }
 
   // Only services that are open right now are offered. Exactly one open service: skip the picker.
