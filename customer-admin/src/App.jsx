@@ -1081,16 +1081,10 @@ function StaffTab({ staffAppUrl, setError }) {
         </div>
       </div>
 
-      <div className="card stack">
-        <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div className="stack grow" style={{ gap: 2, minWidth: 220 }}>
-            <strong>Staff</strong>
-            <span className="muted small">
-              Add everyone who needs to call customers forward. They sign in to the staff portal with their email address and a code sent to it.
-            </span>
-          </div>
-          {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add staff member</button>}
-        </div>
+      <div className="staff-top">
+        {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add staff member</button>}
+      </div>
+      <div className={adding ? "card stack" : undefined}>
         {adding && (
           <div className="stack">
             <div className="form-grid">
@@ -1376,27 +1370,27 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
             const unpaidLater = lic.paid === false && lic.payment_method === "later";
             const canRefund = (lic.status === "available" || lic.status === "scheduled") && Number(lic.price) > 0 && !accountUnpaid && !unpaidLater;
             return (
-              <div key={lic.id} className="lic-card">
-                <div className="lic-main">
+              <div key={lic.id} className="lic-row">
+                <div className="lic-row-main">
+                  <div className="lic-row-top">
+                    <strong>{lic.service_name}</strong>
+                    <span className="lic-plan">{lic.plan_label}</span>
+                  </div>
+                  <div className="muted small">
+                    {lic.start_date && <>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)} · </>}
+                    {Number(lic.price) > 0 ? priceText(lic.price) : "Free"}
+                  </div>
+                </div>
+                <div className="lic-row-badges">
                   <span className={`badge badge-${meta.color}`}>{meta.label}</span>
-                  <strong style={{ fontSize: 15 }}>{lic.service_name}</strong>
-                  <span>{lic.plan_label}</span>
-                  {unpaidLater && <span className="badge badge-red">Unpaid — pay later</span>}
+                  {unpaidLater && <span className="badge badge-red">Unpaid</span>}
                 </div>
-                <div className="muted small">
-                  {lic.start_date && <>{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)} · </>}
-                  {Number(lic.price) > 0 ? priceText(lic.price) : "Free"}
-                </div>
-                <div className="lic-actions">
-                  {unpaidLater && (
-                    <>
-                      <button className="btn" onClick={() => payLater(lic, "card")}>Pay by card</button>
-                      <button className="btn-outline" onClick={() => payLater(lic, "invoice")}>Pay by invoice</button>
-                    </>
-                  )}
-                  {canRefund && <button className="btn-outline" onClick={() => refund(lic)}>Refund</button>}
-                  <button className="btn-outline" onClick={() => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address)}>Print receipt</button>
-                </div>
+                <MoreMenu label={`Actions for ${lic.service_name} licence`} items={[
+                  unpaidLater && { label: "Pay by card", onClick: () => payLater(lic, "card") },
+                  unpaidLater && { label: "Pay by invoice", onClick: () => payLater(lic, "invoice") },
+                  canRefund && { label: "Refund", onClick: () => refund(lic), danger: true },
+                  { label: "Print receipt", onClick: () => printLicenseReceipt(lic, lic.service_name, tenant.business_name, tenant.company_address) },
+                ]} />
               </div>
             );
           })}

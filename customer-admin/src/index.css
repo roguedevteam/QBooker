@@ -392,3 +392,13 @@ select, .input {
 .chan-status-ok { color: #1F5A2E; }
 .chan-status-error { color: var(--error); }
 
+
+.staff-top { display: flex; justify-content: flex-end; }
+.staff-top:empty { display: none; }
+.lic-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.lic-row:first-child { border-top: 0; }
+.lic-row-main { flex: 1; min-width: 0; }
+.lic-row-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.lic-plan { color: var(--muted, #5F615B); font-size: 14px; }
+.lic-row-badges { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex: none; }
+@media (max-width: 480px) { .lic-row { flex-wrap: wrap; } .lic-row-main { flex-basis: calc(100% - 54px); } .lic-row-badges { order: 3; justify-content: flex-start; flex-basis: 100%; margin-top: -4px; } }
