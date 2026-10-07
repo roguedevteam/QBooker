@@ -220,6 +220,7 @@ function Landing({ onStart, simulatedBadge }) {
           </div>
           <p style={{ margin: "-12px 0 24px" }}><a href="#hybrid" className="lp-link">See how the hybrid queue works</a></p>
           <ul className="lp-checks">
+            <li>Pay by invoice with a purchase order, or by card</li>
             <li>Unlimited locations, staff users and patients</li>
             <li>No patient data or clinical records stored</li>
             <li>UK-based servers and support</li>
