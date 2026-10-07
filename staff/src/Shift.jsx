@@ -49,6 +49,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   const [editRoom, setEditRoom] = useState(false);
   const [note, setNote] = useState("");
   const [showAllSeen, setShowAllSeen] = useState(false);
+  const [licensed, setLicensed] = useState({}); // serviceId -> true | false (outside its licence window today)
   const date = todayIso();
   const isWide = useMedia("(min-width: 768px)");
   const prefsLoaded = useRef(false);
@@ -71,6 +72,25 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
 
   const locServices = services.filter((s) => s.location_id === locationId);
   const locationName = locations.find((l) => l.id === locationId)?.name;
+
+  // Which services are licensed today? Only those can be routed to. (The services list already leaves
+  // out archived ones; "today" says outside_license_window for the unlicensed.)
+  const svcKey = locServices.map((x) => x.id).join(",");
+  useEffect(() => {
+    if (!svcKey) return undefined;
+    let dead = false;
+    const check = () => locServices.forEach((x) => {
+      api.getToday(x.id, nowMinutes())
+        .then((r) => { if (!dead) setLicensed((p) => (p[x.id] === (r.reason !== "outside_license_window") ? p : { ...p, [x.id]: r.reason !== "outside_license_window" })); })
+        .catch(() => { if (!dead) setLicensed((p) => (p[x.id] === undefined ? { ...p, [x.id]: true } : p)); });
+    });
+    check();
+    const id = setInterval(check, 5 * 60 * 1000);
+    return () => { dead = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svcKey]);
+  // Other services at this location a patient can be sent to: active, licensed, not archived.
+  const routeTargets = (serviceId) => locServices.filter((x) => x.id !== serviceId && !x.archived && licensed[x.id] === true);
 
   // Start of shift: pre-tick what this person covered last time (or the only service there is).
   useEffect(() => {
@@ -185,9 +205,21 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   function saveRoom(v) { setRoom(v); savePref(ROOM_KEY, v.trim()); }
 
   const waitingList = myTickets.filter((t) => isWaiting(t, nowMin) && coveredByRole(t)).sort((a, b) => waitingSince(a) - waitingSince(b));
-  const seen = myTickets.filter((t) => t.status === "completed").sort((a, b) => new Date(b.finished_at || b.called_at || b.created_at) - new Date(a.finished_at || a.called_at || a.created_at));
-  const waits = seen.filter((t) => t.type !== "booked" && t.called_at).map((t) => (new Date(t.called_at) - new Date(t.created_at)) / 60000);
+  // Everyone dealt with today: completed, no-show, cancelled, expired, plus anyone still being served
+  // (the full list the pre-redesign "Completed and closed today" table showed). Newest first.
+  const seenAt = (t) => new Date(t.finished_at || t.called_at || t.created_at);
+  const seen = myTickets.filter((t) => !(t.status === "waiting" || t.status === "booked")).sort((a, b) => seenAt(b) - seenAt(a));
+  const waits = seen.filter((t) => t.status === "completed" && t.type !== "booked" && t.called_at).map((t) => (new Date(t.called_at) - new Date(t.created_at)) / 60000);
   const avgWait = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length) : null;
+  const nDone = seen.filter((t) => t.status === "completed").length;
+  const nNoShow = seen.filter((t) => t.status === "no_show").length;
+  const nCancelled = seen.filter((t) => t.status === "cancelled").length;
+  const seenSummary = seen.length === 0 ? "Nobody seen yet today" : [
+    `${nDone} seen`,
+    nNoShow ? `${nNoShow} no-show${nNoShow === 1 ? "" : "s"}` : null,
+    nCancelled ? `${nCancelled} cancelled` : null,
+    avgWait != null ? `average wait ${avgWait} min` : null,
+  ].filter(Boolean).join(" · ");
   const multi = serviceIds.length > 1;
   const svcName = (id) => services.find((x) => x.id === id)?.name || "";
   const covered = locServices.filter((s) => serviceIds.includes(s.id));
@@ -211,13 +243,19 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
     </div>
   );
 
+  async function routeTo(t, newServiceId) {
+    const target = locServices.find((x) => x.id === newServiceId);
+    setNote("");
+    await doAction(() => api.routeTicket(t.id, { newServiceId, clockMinutes: nowMinutes() }), () => { setPanel(null); setNote(`Sent ${t.ticket_number} to ${target?.name || "another service"}.`); });
+  }
   const waitingCol = (
     <section className="step" aria-labelledby="step-waiting">
-      {stepHead(1, "Waiting", "Tap Call on the highlighted patient", "navy", "step-waiting")}
+      {stepHead(1, "Waiting", "Call the highlighted patient, or route them", "navy", "step-waiting")}
       {waitingList.length === 0 && <div className="empty-card">Nobody is waiting right now.</div>}
       <div className="cards" role="list">
         {waitingList.map((t, i) => {
           const first = i === 0;
+          const targets = routeTargets(t.service_id);
           const wm = t.type === "booked" ? null : minutesSince(t.created_at, clock);
           return (
             <div key={t.id} role="listitem" className={`pcard${first ? " pcard-next" : ""}`}>
@@ -232,14 +270,18 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                   : <>Waiting {wm} min</>}
                 {multi && <> · {svcName(t.service_id)}</>}
               </div>
-              {first ? (
-                <>
-                  <button className="btn-big btn-fill call-btn" disabled={!canCall} aria-describedby={busy ? "call-note" : undefined} onClick={() => callTicket(t)}>Call this patient</button>
-                  {busy && <div id="call-note" className="field-hint nomargin">Finish the patient with you first.</div>}
-                </>
-              ) : (
-                <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>
-              )}
+              <div className="pcard-actions">
+                {first
+                  ? <button className="btn-big btn-fill call-btn" disabled={!canCall} aria-describedby={busy ? "call-note" : undefined} onClick={() => callTicket(t)}>Call this patient</button>
+                  : <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>}
+                {targets.length > 0 && (
+                  <select className="route-select" value="" disabled={!canCall} aria-label="Route this patient to another service" onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
+                    <option value="">Route to…</option>
+                    {targets.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                )}
+              </div>
+              {first && busy && <div id="call-note" className="field-hint nomargin">Finish the patient with you first.</div>}
             </div>
           );
         })}
@@ -258,7 +300,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
         </div>
       )}
       {mine.map((t) => {
-        const others = locServices.filter((x) => x.id !== t.service_id);
+        const others = routeTargets(t.service_id);
         return (
           <div key={t.id} className="scard">
             <div className="scard-num mono">{t.ticket_number}</div>
@@ -270,12 +312,17 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
             {panel === null && (
               <>
                 <button className="btn-sec" disabled={calling} onClick={async () => { try { await api.callAgain(t.id, { roomLabel }); setNote(`Called ${t.ticket_number} again.`); } catch (err) { setError(err.message); } }}>Call again</button>
-                <button className="btn-sec" disabled={calling} aria-haspopup="true" onClick={() => setPanel("away")}>Didn't arrive</button>
-                {others.length > 0 && <button className="btn-sec" disabled={calling} aria-haspopup="true" onClick={() => setPanel("route")}>Send to another service</button>}
+                <button className="btn-sec" disabled={calling} aria-haspopup="true" onClick={() => setPanel("away")}>No show</button>
+                {others.length > 0 && (
+                  <select className="route-select route-now" value="" disabled={calling} aria-label={`Route ${t.ticket_number} to another service`} onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
+                    <option value="">Route to…</option>
+                    {others.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                )}
               </>
             )}
             {panel === "away" && (
-              <div className="sub-panel" role="group" aria-label="They didn't arrive">
+              <div className="sub-panel" role="group" aria-label="No show">
                 <div className="sub-title">What should happen to {t.ticket_number}?</div>
                 <button className="btn-sec" disabled={calling} onClick={() => doAction(() => api.returnToQueue(t.id, { clockMinutes: nowMinutes() }), () => setPanel(null))}>Put them back in the queue</button>
                 <button className="btn-sec btn-warn" disabled={calling} onClick={() => doAction(() => api.noShowTicket(t.id), () => setPanel(null))}>They left: mark as no-show</button>
@@ -283,39 +330,57 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                 <button className="link-btn" onClick={() => setPanel(null)}>Go back</button>
               </div>
             )}
-            {panel === "route" && (
-              <div className="sub-panel" role="group" aria-label="Send to another service">
-                <div className="sub-title">Send {t.ticket_number} to:</div>
-                {others.map((x) => (
-                  <button key={x.id} className="btn-sec" disabled={calling} onClick={() => doAction(() => api.routeTicket(t.id, { newServiceId: x.id, clockMinutes: nowMinutes() }), () => setPanel(null))}>{x.name}</button>
-                ))}
-                <button className="link-btn" onClick={() => setPanel(null)}>Go back</button>
-              </div>
-            )}
           </div>
         );
       })}
-      <div className="sr-only" role="status" aria-live="polite">{note}</div>
-      {note && <div className="field-ok" aria-hidden="true">{note}</div>}
     </section>
   );
 
   const shownSeen = showAllSeen ? seen : seen.slice(0, 8);
-  const seenCol = (
-    <section className="step" aria-labelledby="step-seen">
-      {stepHead(3, "Seen today", seen.length === 0 ? "Nobody seen yet today" : `${seen.length} ${seen.length === 1 ? "patient" : "patients"}${avgWait != null ? ` · average wait ${avgWait} min` : ""}`, "navy", "step-seen")}
+  const statusBadge = (t) => {
+    const [tone, label] = t.status === "completed" ? ["green", "Completed"] : t.status === "no_show" ? ["red", "No-show"] : t.status === "cancelled" ? ["red", "Cancelled"] : t.status === "serving" ? ["amber", "With staff now"] : t.status === "expired" ? ["red", "Expired"] : ["grey", t.status];
+    return <span className={`badge badge-${tone}`}>{label}</span>;
+  };
+  const seenList = (
+    <>
       {seen.length === 0 ? <div className="empty-card">Patients you finish will appear here.</div> : (
         <div className="seen-list" role="list">
-          {shownSeen.map((t) => (
-            <div key={t.id} role="listitem" className="seen-row">
-              <span className="mono tn-s">{t.ticket_number}</span>
-              <span className="seen-name">{multi ? svcName(t.service_id) : t.type === "booked" ? "Appointment" : "Walk-in"}{t.closed_by_system ? " · closed by system" : ""}</span>
-              <span className="seen-time">{t.finished_at ? formatClock(t.finished_at) : "—"}</span>
-            </div>
-          ))}
+          {shownSeen.map((t) => {
+            const waitMin = t.type !== "booked" && t.called_at ? Math.max(0, Math.round((new Date(t.called_at) - new Date(t.created_at)) / 60000)) : null;
+            return (
+              <div key={t.id} role="listitem" className="seen-row">
+                <div className="seen-top">
+                  <span className="mono tn-s">{t.ticket_number}</span>
+                  {statusBadge(t)}
+                  <span className="seen-kind">{t.type === "booked" ? "Appointment" : "Walk-in"}{multi ? ` · ${svcName(t.service_id)}` : ""}</span>
+                </div>
+                <dl className="seen-facts">
+                  <div><dt>{t.type === "booked" ? "Booked for" : "Joined"}</dt><dd>{t.type === "booked" ? formatTime(t.slot_time) : formatClock(t.created_at)}</dd></div>
+                  <div><dt>Called</dt><dd>{t.called_at ? formatClock(t.called_at) : "—"}</dd></div>
+                  <div><dt>Finished</dt><dd>{t.closed_by_system ? <span className="badge badge-amber">System closed</span> : t.finished_at ? formatClock(t.finished_at) : t.status === "serving" ? "In progress" : "—"}</dd></div>
+                  <div><dt>Waited</dt><dd>{waitMin != null ? `${waitMin} min` : "—"}</dd></div>
+                  <div><dt>Served by</dt><dd>{t.called_by_name || "—"}</dd></div>
+                  <div><dt>Room</dt><dd>{t.called_room || "—"}</dd></div>
+                </dl>
+              </div>
+            );
+          })}
         </div>
       )}
       {seen.length > 8 && <div><button className="link-btn" onClick={() => setShowAllSeen((v) => !v)}>{showAllSeen ? "Show fewer" : `Show all ${seen.length}`}</button></div>}
+    </>
+  );
+  const seenCol = (
+    <section className="step" aria-labelledby="step-seen">
+      {stepHead(3, "Seen today", seenSummary, "navy", "step-seen")}
+      {seenList}
+    </section>
+  );
+  const seenCard = (
+    <section className="td-card seen-card" aria-labelledby="seen-today-h">
+      <h3 className="td-h3" id="seen-today-h">Seen today</h3>
+      <p className="step-hint">{seenSummary}</p>
+      {seenList}
     </section>
   );
 
@@ -357,15 +422,21 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
           </div>
         )}
 
-        {wideToday && <div className="today-wrap"><TodayPanel embedded services={covered.map((x) => ({ id: x.id, name: x.name }))} /></div>}
+        <div className="sr-only" role="status" aria-live="polite">{note}</div>
+        {note && <div className="field-ok note-line" aria-hidden="true">{note}</div>}
+
+        {wideToday && (
+          <div className="today-grid">
+            <div className="today-wrap"><TodayPanel embedded services={covered.map((x) => ({ id: x.id, name: x.name }))} /></div>
+            {seenCard}
+          </div>
+        )}
 
         {isWide && !wideToday && (
           <div className="board">
             {waitingCol}
             <div className="arrow" aria-hidden="true"><Chevron /></div>
             {nowCol}
-            <div className="arrow" aria-hidden="true"><Chevron /></div>
-            {seenCol}
           </div>
         )}
 
