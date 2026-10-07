@@ -331,8 +331,8 @@ select, .input {
 
 /* Location name as an editable page title */
 .loc-name-wrap { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-.loc-name-input { font: inherit; font-size: 22px; font-weight: 600; color: var(--ink, #1B1D1F); background: transparent; border: 1px solid transparent; border-bottom-color: var(--line, #CFCFC8); padding: 6px 8px; min-height: 44px; min-width: 0; flex: 1; box-sizing: border-box; border-radius: 0; }
-.loc-name-input:hover { background: #fff; border-color: var(--line, #CFCFC8); }
+.loc-name-input { font: inherit; font-size: 22px; font-weight: 600; color: var(--ink, #1B1D1F); background: #fff; border: 1px solid var(--line, #CFCFC8); padding: 0 10px; min-height: 44px; min-width: 0; flex: 1; box-sizing: border-box; border-radius: 0; }
+.loc-name-input:hover { border-color: #8A8C85; }
 .loc-name-input:focus { background: #fff; border-color: var(--blue, #1D5C8A); outline: 2px solid var(--blue, #1D5C8A); outline-offset: 0; }
 .loc-name-status { font-size: 13px; color: var(--muted, #5F615B); min-width: 56px; }
 
