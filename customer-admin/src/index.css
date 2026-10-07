@@ -478,3 +478,6 @@ select, .input {
 .svc-tab:focus-visible { outline: 3px solid var(--accent, #C8690D); outline-offset: 2px; }
 .svc-tab[aria-selected="true"]:focus-visible { outline-color: var(--accent, #C8690D); }
 @media (min-width: 768px) { .svc-tabs { padding: 0; } }
+
+.loc-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.link-copy-btn { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }

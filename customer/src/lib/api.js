@@ -39,6 +39,7 @@ export const api = {
   // Login-free ticket access: the unguessable token in the URL is the only credential.
   getPublicTicket: (token) => requestOrNetwork(`/api/public/ticket/${encodeURIComponent(token)}`),
   leavePublicTicket: (token) => requestOrNetwork(`/api/public/ticket/${encodeURIComponent(token)}/leave`, { method: "POST" }),
+  checkInPublic: (token) => requestOrNetwork(`/api/public/ticket/${encodeURIComponent(token)}/check-in`, { method: "POST" }),
   whatsappIntent: (token) => requestOrNetwork(`/api/public/ticket/${encodeURIComponent(token)}/whatsapp-intent`, { method: "POST" }),
   checkIn: (tenantId, ticketId) => request(`/api/public/tenant/${tenantId}/tickets/${ticketId}/check-in`, { method: "POST" }),
   cancelTicket: (tenantId, ticketId) => request(`/api/public/tenant/${tenantId}/tickets/${ticketId}/cancel`, { method: "POST" }),

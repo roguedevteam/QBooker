@@ -43,6 +43,14 @@ function CheckIcon({ size = 14 }) {
     </svg>
   );
 }
+function LinkIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4l-1 1" />
+      <path d="M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1-1" />
+    </svg>
+  );
+}
 function CopyButton({ value, label = "Copy", showText = false }) {
   const [copied, setCopied] = useState(false);
   if (!value) return null;
@@ -375,8 +383,8 @@ function PendingPaymentBanner({ tenant }) {
 }
 
 const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", customers: "Patients", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
-const SIDE_TABS = ["dashboard", "locations", "customers", "staff", "profile", "audit", "shop"];
-const PHONE_TABS = ["dashboard", "locations", "customers", "staff"];
+const SIDE_TABS = ["dashboard", "locations", "staff", "profile", "audit", "shop"];
+const PHONE_TABS = ["dashboard", "locations", "staff"];
 
 function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, setError }) {
   const [tab, setTab] = useState("dashboard");
@@ -388,6 +396,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
   const [services, setServices] = useState([]);
   const [addingServiceFor, setAddingServiceFor] = useState(null);
   const [addingLocation, setAddingLocation] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
@@ -549,8 +558,15 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
           ) : (
             <h1>{TAB_TITLES[tab]}</h1>
           )}
-          {tab === "locations" && !openLoc && !addingLocation && (
-            <button type="button" className="btn add-loc-btn" onClick={() => setAddingLocation(true)}>+ Add location</button>
+          {tab === "locations" && !openLoc && (
+            <div className="loc-head-actions">
+              <button type="button" className="btn-outline icon-btn link-copy-btn" aria-label={linkCopied ? "Patient page link copied" : "Copy the patient page link"} title={linkCopied ? "Copied" : "Copy patient page link"}
+                onClick={() => { try { navigator.clipboard?.writeText(customerLink); } catch { /* ignore */ } setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); }}>
+                {linkCopied ? <CheckIcon /> : <LinkIcon />}
+              </button>
+              {!addingLocation && <button type="button" className="btn add-loc-btn" onClick={() => setAddingLocation(true)}>+ Add location</button>}
+              <span className="sr-only" role="status" aria-live="polite">{linkCopied ? "Patient page link copied" : ""}</span>
+            </div>
           )}
         </div>
 
@@ -679,9 +695,6 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
 
       {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
           until "shop" is added back to the tab list above. */}
-      {tab === "customers" && (
-        <CustomersTab tenant={tenant} locations={visibleLocations} customerLink={customerLink} onTenantChange={onTenantChange} />
-      )}
       {tab === "staff" && <StaffTab staffAppUrl={STAFF_APP_URL} setError={setError} />}
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
 
@@ -897,100 +910,35 @@ function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
 }
 
-// Customers tab: how patients reach you (one account-wide setting) plus the patient page link.
-// The staff kiosk link lives on the Staff tab.
-function CustomersTab({ tenant, locations, customerLink, onTenantChange }) {
-  return (
-    <div className="stack">
-      <div className="card stack" style={{ background: "var(--accent-weak)" }}>
-        <div className="stack" style={{ gap: 4 }}>
-          <span className="small">Patient page link</span>
-          <div className="row wrap">
-            <code className="grow" style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere", minWidth: 200 }}>{customerLink}</code>
-            <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(customerLink); }}>Copy</button>
-          </div>
-        </div>
-        <div className="muted small">Open this to see what patients see on the web page. Useful for testing your setup.</div>
-      </div>
-
-      <ChannelSettings tenant={tenant} previewCode={locations[0]?.code} onTenantChange={onTenantChange} />
-    </div>
-  );
-}
-
-// "How patients join" — which channels a location offers, per the ChannelAdmin design.
-// The location code (also the WhatsApp code) is what the QR carries, and what "only joinable
-// from the clinic" checks. It does not check where the patient physically is.
-const CHANNEL_CHOICES = [
-  { value: "whatsapp", title: "WhatsApp only", text: "Patients message your number. WhatsApp message charges apply." },
-  { value: "web", title: "Web page only", text: "Looks like a chat, opens in the browser. No message charges." },
-  { value: "both", title: "Both", text: "Patients choose. Most will use the web page, so you pay for fewer messages.", recommended: true },
-];
-
-function ChannelSettings({ tenant, previewCode, onTenantChange }) {
-  const saved = { mode: tenant.channel_mode || "both", offer: tenant.whatsapp_updates_offer !== false, onsite: !!tenant.onsite_only };
-  const [mode, setMode] = useState(saved.mode);
-  const [offer, setOffer] = useState(saved.offer);
-  const [onsite, setOnsite] = useState(saved.onsite);
-  const [status, setStatus] = useState({ kind: "idle", text: "" }); // idle | saving | ok | error
-  const dirty = mode !== saved.mode || offer !== saved.offer || onsite !== saved.onsite;
-  const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
-  const previewHref = `${CUSTOMER_APP_URL}/?t=${tenant.id}${previewCode ? `&c=${encodeURIComponent(previewCode)}` : ""}`;
-
-  async function save() {
-    setStatus({ kind: "saving", text: "Saving…" });
+// "Only joinable from the clinic": one account-wide switch, saved as soon as it is flipped.
+// The QR code carries a hidden location code; with this on, joining the live queue needs it.
+// It checks the code, not where the phone physically is.
+function OnSiteSetting({ tenant, onTenantChange }) {
+  const [on, setOn] = useState(!!tenant.onsite_only);
+  const [status, setStatus] = useState("");
+  async function flip() {
+    const next = !on;
+    setOn(next); setStatus("Saving…");
     try {
-      const r = await api.updateMe({ channelMode: mode, whatsappUpdatesOffer: offer, onsiteOnly: onsite });
+      const r = await api.updateMe({ onsiteOnly: next });
       onTenantChange?.(r.tenant);
-      setStatus({ kind: "ok", text: "Saved. Patients see the new setting straight away." });
+      setStatus("Saved");
     } catch (err) {
-      setStatus({ kind: "error", text: `Not saved: ${err.message}` });
+      setOn(!next); setStatus(`Not saved: ${err.message}`);
     }
   }
-
   return (
-    <section className="card stack chan" aria-labelledby="chan-h" style={{ gap: 14 }}>
-      <h2 id="chan-h" className="chan-h">How patients join</h2>
-      <p className="muted chan-lede">This applies to all your locations. One QR code and location code works for every option. Patients pick on their phone, or you can limit it.</p>
-
-      <fieldset className="chan-group">
-        <legend className="sr-only">How patients join</legend>
-        {CHANNEL_CHOICES.map((c) => (
-          <label key={c.value} className={`chan-opt${mode === c.value ? " is-on" : ""}`}>
-            <input type="radio" name="channel" value={c.value} checked={mode === c.value} onChange={() => { setMode(c.value); setStatus({ kind: "idle", text: "" }); }} />
-            <span className="chan-radio" aria-hidden="true" />
-            <span className="chan-opt-body">
-              <span className="chan-opt-title"><strong>{c.title}</strong>{c.recommended && <span className="badge badge-green">Recommended</span>}</span>
-              <span className="chan-opt-text">{c.text}</span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
-
-      <div className={`chan-row${mode === "whatsapp" ? " is-disabled" : ""}`}>
-        <span className="chan-row-text" id={"offer-l"}>
-          <strong>Offer WhatsApp updates to web users</strong>
-          <span className="small muted">A button to be messaged when nearly up{mode === "whatsapp" ? " (not used when WhatsApp only)" : ""}</span>
-        </span>
-        <button type="button" role="switch" aria-checked={offer && mode !== "whatsapp"} aria-labelledby={"offer-l"} disabled={mode === "whatsapp"}
-          className={`chan-switch${offer && mode !== "whatsapp" ? " is-on" : ""}`} onClick={() => { setOffer(!offer); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
-      </div>
-
+    <div className="card stack chan" style={{ gap: 10 }}>
+      <h2 className="chan-h">Joining the queue</h2>
       <div className="chan-row">
-        <span className="chan-row-text" id={"onsite-l"}>
+        <span className="chan-row-text" id="onsite-l">
           <strong>Only joinable from the clinic</strong>
-          <span className="small muted">Patients must scan the QR code at reception or enter the location code shown there. Stops people joining the queue from home by accident. It checks the code, not where the phone is.</span>
+          <span className="small muted">Patients must scan the QR code at the clinic to join the queue, so nobody joins from home by accident. It checks the code, not where the phone is.</span>
         </span>
-        <button type="button" role="switch" aria-checked={onsite} aria-labelledby={"onsite-l"}
-          className={`chan-switch${onsite ? " is-on" : ""}`} onClick={() => { setOnsite(!onsite); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
+        <button type="button" role="switch" aria-checked={on} aria-labelledby="onsite-l" className={`chan-switch${on ? " is-on" : ""}`} onClick={flip}><span className="chan-knob" /></button>
       </div>
-
-      <div className="chan-actions">
-        <button type="button" className="btn btn-accent" disabled={!dirty || status.kind === "saving"} onClick={save}>{status.kind === "saving" ? "Saving…" : "Save"}</button>
-        <a className="btn-outline" href={previewHref} target="_blank" rel="noopener noreferrer">Preview</a>
-      </div>
-      <div className={`chan-status chan-status-${status.kind}`} role={status.kind === "error" ? "alert" : "status"} aria-live="polite">{status.kind === "saving" ? "" : status.text}</div>
-    </section>
+      <div className="small muted" role="status" aria-live="polite">{status}</div>
+    </div>
   );
 }
 
@@ -1414,6 +1362,8 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
           )}
         </div>
       )}
+
+      <OnSiteSetting tenant={tenant} onTenantChange={onTenantChange} />
 
       <div className="card stack">
         <h2>Licenses ({visibleLicenses.length})</h2>

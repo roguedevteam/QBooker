@@ -68,7 +68,7 @@ router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
     // Join settings are account-wide (on tenants); the response keeps its per-location shape so the
     // customer app is unchanged.
-    `select l.id, l.name, l.website_url, te.channel_mode, te.whatsapp_updates_offer, te.onsite_only from locations l
+    `select l.id, l.name, l.website_url, 'web' as channel_mode, true as whatsapp_updates_offer, te.onsite_only from locations l
      join tenants te on te.id = l.tenant_id
      where l.tenant_id=$1 and l.archived=false order by l.created_at`,
     [req.tenant.id]
@@ -187,10 +187,7 @@ router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 *
     return res.status(409).json({ error: "We're not taking bookings today." });
   }
 
-  // Account-wide web-channel rules (req.tenant); only the on-site code is per location.
-  if (req.tenant.channel_mode === "whatsapp") {
-    return res.status(403).json({ error: "This clinic takes joins through WhatsApp only. Please use WhatsApp, or ask at reception.", reason: "channel_whatsapp_only" });
-  }
+  // Web is the channel for every patient; only the on-site code is per location.
   // On-site check: only for joining the live queue (a booking made in advance from home is fine).
   // The code must match this location's code (the one in the QR link / on the poster). It is a
   // shared secret, not proof of presence — there is no geofencing.
@@ -295,10 +292,21 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
     locationName: t.location_name,
     businessName: t.business_name,
     calledRoom: state === "called" ? (t.called_room || null) : null,
-    whatsappUpdatesOffer: !!t.whatsapp_updates_offer,
+    arrived: !!t.arrived_at,
+    whatsappUpdatesOffer: true, // every patient can opt in to WhatsApp updates
     whatsappUpdatesRequested: !!t.whatsapp_updates_requested,
     updatedAt: new Date().toISOString(),
   });
+}));
+
+// A booked patient taps "I've arrived": staff then see them as checked in.
+publicTicketRouter.post("/:token/check-in", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
+  const t = req.ticketRow;
+  if (t.type !== "booked" || t.status !== "booked") return res.status(409).json({ error: "This booking can't be checked in." });
+  await query(`update tickets set arrived_at=coalesce(arrived_at, now()) where id=$1`, [t.id]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+    [t.tenant_id, `Ticket ${t.ticket_number} checked in for ${t.service_name || "service"}`]);
+  res.json({ ok: true, arrived: true });
 }));
 
 publicTicketRouter.post("/:token/leave", asyncHandler(loadByToken), asyncHandler(async (req, res) => {

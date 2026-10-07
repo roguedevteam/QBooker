@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "./lib/api.js";
 import { alertPref } from "./lib/storage.js";
+import Shell, { Bubble, POWERED_BY } from "./Shell.jsx";
 
 const POLL_MS = 10000;
+
+// The WhatsApp business number isn't connected yet. Set VITE_WHATSAPP_NUMBER (digits only, with
+// country code, e.g. 447700900123) once it exists; until then the button only records the request.
+const WA_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER || "").replace(/\D/g, "");
+const waHref = (text) => (WA_NUMBER ? `https://wa.me/${WA_NUMBER}${text ? `?text=${encodeURIComponent(text)}` : ""}` : null);
 
 function formatTime(min) {
   let h = Math.floor(min / 60); const m = min % 60;
@@ -29,27 +35,34 @@ function beep(ctx) {
 }
 function vibrate(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch { /* ignore */ } }
 
-export default function Returning({ token, justJoined, onSeen, onEnded, onRestart }) {
+export default function Returning({ token, onSeen, onEnded, onRestart }) {
   const [data, setData] = useState(null);          // last good response
   const [problem, setProblem] = useState(null);    // "unknown" | "offline" | null
   const [lastOk, setLastOk] = useState(null);
   const [now, setNow] = useState(Date.now());
-  const [maxAhead, setMaxAhead] = useState(0);
   const [alertOn, setAlertOn] = useState(() => alertPref.get());
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const [waBusy, setWaBusy] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [checkedIn, setCheckedIn] = useState(false);
+  const [checkError, setCheckError] = useState("");
   const [waNoted, setWaNoted] = useState(false);
   const audioRef = useRef(null);
   const prevState = useRef(null);
   const endedReported = useRef(false);
 
+  async function checkIn() {
+    setCheckBusy(true); setCheckError("");
+    try { await api.checkInPublic(token); setCheckedIn(true); poll(); }
+    catch (err) { setCheckError(err.message || "We couldn't check you in. Please tell reception you're here."); }
+    finally { setCheckBusy(false); }
+  }
   const poll = useCallback(async () => {
     try {
       const r = await api.getPublicTicket(token);
       setData(r); setProblem(null); setLastOk(Date.now());
-      if (r.peopleAhead != null) setMaxAhead((m) => Math.max(m, r.peopleAhead));
       onSeen?.();
       if (r.state !== "waiting" && r.state !== "called" && !endedReported.current) { endedReported.current = true; onEnded?.(r.state); }
     } catch (err) {
@@ -123,49 +136,40 @@ export default function Returning({ token, justJoined, onSeen, onEnded, onRestar
     } finally { setLeaving(false); }
   }
 
-  async function wantWhatsApp() {
+  function wantWhatsApp() {
+    // Open WhatsApp first (inside the tap, so popup blockers allow it), then record the request.
+    const href = waHref(`Ticket ${data?.ticketNumber || ""}`.trim());
+    if (href) window.open(href, "_blank", "noopener,noreferrer");
     setWaBusy(true);
-    try { await api.whatsappIntent(token); setWaNoted(true); setData((d) => ({ ...d, whatsappUpdatesRequested: true })); }
-    catch { /* non-critical */ }
-    finally { setWaBusy(false); }
+    api.whatsappIntent(token)
+      .then(() => { setWaNoted(true); setData((d) => ({ ...d, whatsappUpdatesRequested: true })); })
+      .catch(() => { /* non-critical */ })
+      .finally(() => setWaBusy(false));
   }
 
   const ago = lastOk ? Math.max(0, Math.round((now - lastOk) / 1000)) : null;
   const agoText = ago == null ? "" : ago < 8 ? "updated just now" : ago < 60 ? `updated ${ago}s ago` : `updated ${Math.round(ago / 60)} min ago`;
   const live = !problem && !!lastOk;
-
-  const header = (
-    <header className="ret-head">
-      <div className="ret-head-title">{data?.businessName || "QBooker"}</div>
-      {data && (state === "waiting" || state === "called") && (
-        <span className={`live${live ? "" : " is-off"}`} role="status"><span className="live-dot" aria-hidden="true" />{live ? "Live" : "Reconnecting"}</span>
-      )}
-    </header>
+  const title = data?.businessName || "QBooker";
+  const frame = (subtitle, footer, children, listProps) => (
+    <Shell title={title} subtitle={subtitle} footer={footer} top listProps={listProps}>{children}</Shell>
+  );
+  const startAgainBtn = (
+    <div className="choices"><button type="button" className="choice choice-primary" onClick={onRestart}><span className="choice-label">Start again</span></button></div>
   );
 
   // ---- Unknown / not loaded yet
   if (problem === "unknown") {
-    return (
-      <div className="ret">{header}
-        <main className="ret-main">
-          <section className="ret-card ret-end" role="alert">
-            <h1 className="ret-end-title">We can't find your ticket</h1>
-            <p>We can't find your ticket. Scan the QR code at reception again.</p>
-            <button type="button" className="gate-btn gate-btn-fill" onClick={onRestart}>Start again</button>
-          </section>
-        </main>
-      </div>
-    );
+    return frame("Ticket not found", POWERED_BY, <>
+      <Bubble>We can't find your ticket. Scan the QR code at reception again.</Bubble>
+      {startAgainBtn}
+    </>, { role: "alert" });
   }
   if (!data) {
-    return (
-      <div className="ret">{header}
-        <main className="ret-main">
-          <p className="muted" role="status">{problem === "offline" ? "We can't reach the clinic right now. Trying again…" : "Finding your ticket…"}</p>
-          {problem === "offline" && <button type="button" className="btn-outline" onClick={poll}>Try again</button>}
-        </main>
-      </div>
-    );
+    return frame("Finding your ticket", POWERED_BY, <>
+      <Bubble>{problem === "offline" ? "We can't reach the clinic right now. Trying again…" : "Finding your ticket…"}</Bubble>
+      {problem === "offline" && <div className="choices"><button type="button" className="choice choice-secondary" onClick={poll}><span className="choice-label">Try again</span></button></div>}
+    </>, { role: "status" });
   }
 
   // ---- Ended states
@@ -175,99 +179,104 @@ export default function Returning({ token, justJoined, onSeen, onEnded, onRestar
       closed: ["Your visit is finished", "This ticket has ended. Thank you for waiting."],
       expired: ["This ticket has expired", "It was for an earlier day. Scan the QR code at reception to join again."],
     }[state];
-    return (
-      <div className="ret">{header}
-        <main className="ret-main">
-          <section className="ret-card ret-end" role="status">
-            <div className="ret-sub">{data.serviceName} · {data.ticketNumber}</div>
-            <h1 className="ret-end-title">{copy[0]}</h1>
-            <p>{copy[1]}</p>
-            <button type="button" className="gate-btn gate-btn-fill" onClick={onRestart}>Start again</button>
-          </section>
-        </main>
-      </div>
-    );
+    return frame(copy[0], POWERED_BY, <>
+      <Bubble><strong>{copy[0]}.</strong> {copy[1]}</Bubble>
+      {startAgainBtn}
+    </>, { role: "status" });
   }
 
   const called = state === "called";
+  const booked = data.type === "booked";
   const ahead = data.peopleAhead;
-  const done = Math.max(0, maxAhead - (ahead ?? 0));
-  const segs = [];
-  for (let i = 0; i < Math.min(maxAhead, 7); i++) segs.push(i < (maxAhead > 7 ? Math.round((done / maxAhead) * 7) : done) ? "done" : "ahead");
-  segs.push("you");
+  const mins = data.estimatedMinutes;
+  const minsToGo = booked && typeof data.slotTime === "number" ? data.slotTime - (new Date(now).getHours() * 60 + new Date(now).getMinutes()) : null;
+  const soon = minsToGo != null && minsToGo > 0 && minsToGo <= 15;
+  const subtitle = called ? "It's your turn" : booked ? "Your appointment" : "You're in the queue";
+  const waNotedNow = data.whatsappUpdatesRequested || waNoted;
 
-  return (
-    <div className="ret">{header}
-      <main className="ret-main">
-        <div className="ret-sub">{justJoined ? "We saved your place on this phone." : "Welcome back. We saved your place on this phone."}</div>
-
-        {called ? (
-          <section className="ret-card ret-called" role="alert" aria-live="assertive">
-            <div className="ret-sub">Your ticket · {data.serviceName}</div>
-            <div className="ret-num mono">{data.ticketNumber}</div>
-            <h1 className="ret-called-title">You're being called.</h1>
-            <p className="ret-called-room">{data.calledRoom ? <>Go to <strong>{data.calledRoom}</strong></> : "Please go to the desk, or ask a member of staff."}</p>
-          </section>
+  const card = called ? (
+    <section className="ticket ticket-called" role="alert" aria-live="assertive" aria-label={`Ticket ${data.ticketNumber}`}>
+      <div className="ticket-body">
+        <div className="ticket-sub">Your ticket · {data.serviceName}</div>
+        <div className="ticket-called-num mono">{data.ticketNumber}</div>
+        <h2 className="called-title">{data.calledRoom ? <>Please go to <span className="called-room">{data.calledRoom}</span></> : "Please go to the desk"}</h2>
+        <p className="ticket-text">{data.calledRoom ? "Please make your way there now." : "Please make your way there now, or ask a member of staff."}</p>
+      </div>
+    </section>
+  ) : (
+    <section className="ticket" aria-live="polite" aria-label={`Ticket ${data.ticketNumber}`}>
+      <div className="ticket-band">
+        <span className="ticket-band-label">Your ticket · {data.serviceName}</span>
+        <span className="ticket-band-num mono">{data.ticketNumber}</span>
+      </div>
+      <div className="ticket-body">
+        {booked ? (
+          <div className="ticket-pos"><span className="pos-num mono">{typeof data.slotTime === "number" ? formatTime(data.slotTime) : "Today"}</span>{typeof data.slotTime === "number" && <span className="pos-label">today</span>}</div>
+        ) : ahead == null ? (
+          <div className="pos-label">You're in the queue</div>
         ) : (
-          <section className="ret-card" aria-live="polite">
-            <div className="ret-sub">Your ticket · {data.serviceName}</div>
-            <div className="ret-num mono">{data.ticketNumber}</div>
-            {data.type === "booked" ? (
-              <div className="ret-ahead">Booked for {typeof data.slotTime === "number" ? formatTime(data.slotTime) : "today"}</div>
-            ) : (
-              <div className="ret-ahead">{ahead == null ? "You're in the queue" : ahead === 0 ? "You're next" : `${ahead} ${ahead === 1 ? "person" : "people"} ahead of you`}</div>
-            )}
-            <div className="ret-meta">
-              {data.estimatedMinutes != null && data.type !== "booked" ? `About ${data.estimatedMinutes} minutes` : data.locationName}
-              {agoText && ` · ${agoText}`}
-            </div>
-            {data.type !== "booked" && ahead != null && (
-              <>
-                <div className="segs" role="progressbar" aria-label="Progress to your turn" aria-valuemin={0} aria-valuemax={maxAhead || 1} aria-valuenow={done}>
-                  {segs.map((k, i) => <span key={i} className={`seg seg-${k}`} />)}
-                </div>
-                <div className="ret-legend">{done > 0 ? `${done} seen · ` : ""}{ahead} ahead · You</div>
-              </>
-            )}
-          </section>
+          <div className="ticket-pos"><span className="pos-num mono">{ahead + 1}</span><span className="pos-label">in line</span></div>
         )}
-
-        {!called && data.whatsappUpdatesOffer && (
-          data.whatsappUpdatesRequested || waNoted ? (
-            <div className="ret-wa" role="status">
-              <strong>Noted.</strong> You asked for WhatsApp updates, but they aren't switched on yet. Please keep this page open to see when you're called.
-            </div>
-          ) : (
-            <div className="ret-wa">
-              <div><strong>Want to leave the page?</strong> We'll message you on WhatsApp when you're nearly up.</div>
-              <button type="button" className="gate-btn gate-btn-fill gate-btn-sm" disabled={waBusy} onClick={wantWhatsApp}>Message me on WhatsApp</button>
-            </div>
-          )
-        )}
-
-        <div className="ret-switch">
-          <span id="alert-label" className="ret-switch-label">Sound and vibrate when I'm called</span>
-          <button type="button" role="switch" aria-checked={alertOn} aria-labelledby="alert-label" className={`switch${alertOn ? " is-on" : ""}`} onClick={toggleAlert}><span className="switch-knob" /></button>
+        <p className="ticket-text">
+          {booked
+            ? "Please arrive a few minutes early and take a seat. "
+            : mins != null && ahead != null ? (ahead === 0 || mins < 1 ? "You're next. " : `About ${mins} minutes. `) : ""}
+          {!booked && "Take a seat. "}
+          This updates by itself, and your number shows here when it's your turn.
+        </p>
+        <div className={`live-line${live ? "" : " is-off"}`} role="status">
+          <span className="live-dot" aria-hidden="true" />
+          {live ? `Live · ${agoText}` : problem === "offline" ? `Reconnecting · ${agoText || "last update unavailable"}` : "Connecting…"}
         </div>
-        {alertOn && <div className="ret-fine">Keep this page open. Some phones won't sound or vibrate while the screen is off.</div>}
-
-        {problem === "offline" && <div className="ret-offline" role="status">Can't refresh right now. Showing the last update. We'll keep trying.</div>}
-
-        {!called && (confirmLeave ? (
-          <div className="ret-confirm" role="alertdialog" aria-labelledby="leave-q">
-            <div id="leave-q"><strong>Leave the queue?</strong> You'll lose your place.</div>
-            {leaveError && <div className="ret-error" role="alert">{leaveError}</div>}
-            <div className="ret-confirm-btns">
-              <button type="button" className="gate-btn gate-btn-danger-fill gate-btn-sm" disabled={leaving} onClick={leave}>{leaving ? "Leaving…" : "Yes, leave"}</button>
-              <button type="button" className="gate-btn gate-btn-outline gate-btn-sm" disabled={leaving} onClick={() => { setConfirmLeave(false); setLeaveError(""); }}>Keep my place</button>
-            </div>
-          </div>
-        ) : (
-          <button type="button" className="ret-leave" onClick={() => setConfirmLeave(true)}>Leave the queue</button>
-        ))}
-
-        <div className="ret-fine">Lost this page? Scan the QR code at reception again on this phone and we'll find your ticket.</div>
-      </main>
-    </div>
+      </div>
+    </section>
   );
+
+  return frame(subtitle, called ? POWERED_BY : "Saved on this phone. Come back to this page any time to see your place.", <>
+    {card}
+
+    {!called && booked && (data.arrived || checkedIn ? (
+      <Bubble><strong>You're checked in.</strong> The clinic knows you're here. Take a seat.</Bubble>
+    ) : (
+      <>
+        <Bubble>Here already? Let the clinic know you've arrived.</Bubble>
+        {checkError && <div className="ret-error" role="alert">{checkError}</div>}
+        <div className="choices"><button type="button" className="choice choice-primary" disabled={checkBusy} onClick={checkIn}><span className="choice-label">{checkBusy ? "Checking in…" : "I've arrived"}</span></button></div>
+      </>
+    ))}
+
+    {!called && soon && <Bubble>Your appointment is in {minsToGo} minute{minsToGo === 1 ? "" : "s"}.</Bubble>}
+
+    {!called && (waNotedNow ? (
+      <Bubble><strong>Noted.</strong> You asked for WhatsApp updates, but they aren't switched on yet. Please keep this page open to see when you're called.</Bubble>
+    ) : (
+      <>
+        <Bubble>Want a message when you're nearly up? Then you can put your phone away.</Bubble>
+        <div className="choices"><button type="button" className="choice choice-secondary" disabled={waBusy} onClick={wantWhatsApp}><span className="choice-label">Get updates on WhatsApp</span></button></div>
+      </>
+    ))}
+
+    <div className="ret-switch">
+      <span id="alert-label" className="ret-switch-label">Sound and vibrate when I'm called</span>
+      <button type="button" role="switch" aria-checked={alertOn} aria-labelledby="alert-label" className={`switch${alertOn ? " is-on" : ""}`} onClick={toggleAlert}><span className="switch-knob" /></button>
+    </div>
+    {alertOn && <div className="ret-fine">Keep this page open. Some phones won't sound or vibrate while the screen is off.</div>}
+
+    {problem === "offline" && <div className="ret-offline" role="status">Can't refresh right now. Showing the last update. We'll keep trying.</div>}
+
+    {!called && (confirmLeave ? (
+      <div className="leave-confirm" role="alertdialog" aria-labelledby="leave-q">
+        <Bubble><span id="leave-q"><strong>{booked ? "Cancel your appointment?" : "Leave the queue?"}</strong> {booked ? "You'll lose your slot." : "You'll lose your place."}</span></Bubble>
+        {leaveError && <div className="ret-error" role="alert">{leaveError}</div>}
+        <div className="choices">
+          <button type="button" className="choice choice-danger" disabled={leaving} onClick={leave}><span className="choice-label">{leaving ? "Leaving…" : "Yes, leave"}</span></button>
+          <button type="button" className="choice choice-secondary" disabled={leaving} onClick={() => { setConfirmLeave(false); setLeaveError(""); }}><span className="choice-label">Keep my place</span></button>
+        </div>
+      </div>
+    ) : (
+      <button type="button" className="leave-link" onClick={() => setConfirmLeave(true)}>{booked ? "Cancel my appointment" : "Leave the queue"}</button>
+    ))}
+
+    <p className="ret-fine">Lost this page? Scan the QR code at reception again on this phone and we'll find your ticket.</p>
+  </>);
 }

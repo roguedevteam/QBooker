@@ -1,9 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "./lib/api.js";
 import { todayIso, refreshClock } from "./lib/clock.js";
 import { getSavedToken, saveToken, clearSavedToken, setUrlToken, urlParam, getDeviceId } from "./lib/storage.js";
-import { ChannelLanding, WhatsAppOnly } from "./Gate.jsx";
 import Returning from "./Returning.jsx";
+import Shell, { Bubble, Choices, POWERED_BY } from "./Shell.jsx";
 
 function nowMinutes() {
   const d = new Date();
@@ -42,40 +42,29 @@ export default function App() {
     );
   }
 
-  return <CustomerWhatsApp tenantId={tenantId} />;
+  return <Patient tenantId={tenantId} />;
 }
 
-function CustomerWhatsApp({ tenantId }) {
-  const [error, setError] = useState("");
+function Patient({ tenantId }) {
   const [businessName, setBusinessName] = useState("");
   const [notFound, setNotFound] = useState(false);
   const [messages, setMessages] = useState([]);
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [options, setOptions] = useState([]);
-  const [watchedTicket, setWatchedTicket] = useState(null); // { id, ticketNumber, type, slotTime }
-  const [ticketStatus, setTicketStatus] = useState(null);
-  const [queueInfo, setQueueInfo] = useState(null); // { position, estimatedMinutes } — walk-ins only
-  const [cancelling, setCancelling] = useState(false);
-  const [arrived, setArrived] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
-  const [serviceName, setServiceName] = useState(""); // header subtitle only (display)
-  const [pickedIdx, setPickedIdx] = useState(null); // visual "selected" state for the tapped option
-  const [liveToken, setLiveToken] = useState(() => urlParam("k") || getSavedToken(tenantId) || ""); // set => Returning screen
-  const [justJoined, setJustJoined] = useState(false);
-  const [gate, setGate] = useState(null); // { locId, mode } while the "how to join" screen is up
+  const [serviceName, setServiceName] = useState(""); // header subtitle
+  const [currentLoc, setCurrentLoc] = useState(null);
+  const [liveToken, setLiveToken] = useState(() => urlParam("k") || getSavedToken(tenantId) || ""); // set => live ticket screen
   const [placeNotFound, setPlaceNotFound] = useState(false); // ?l= location link that doesn't match an active location
   const [startLoc, setStartLoc] = useState(undefined); // undefined = config not loaded yet; null = ask which location
-  const [codePrompt, setCodePrompt] = useState(null); // { svcId, message } — on-site code needed to join
+  const [codePrompt, setCodePrompt] = useState(null); // { svcId } — on-site code needed to join
   const [codeInput, setCodeInput] = useState("");
   const [joining, setJoining] = useState(false);
   const onsiteCodeRef = useRef(urlParam("c").trim().toUpperCase()); // from the QR link, or typed in
-  // Location-scoped link (?l= with no ?s=): only that location's services are offered; a lone service is entered directly.
+  // Location-scoped link (?l= with no ?s=): only that location's services are offered.
   const scopedLocRef = useRef(urlParam("s") ? "" : urlParam("l").trim());
-  const chosenRef = useRef(new Set()); // locations where the patient already passed the landing screen
-  const scrollRef = useRef(null);
-  const lastStatusRef = useRef(null);
-  const reminderSentRef = useRef(false);
+  const runRef = useRef(0); // bumped on every (re)start so stale async work doesn't post into a new conversation
+  const manyServicesRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,213 +93,179 @@ function CustomerWhatsApp({ tenantId }) {
     return () => { cancelled = true; };
   }, [tenantId]);
 
-  // Runs once the config is in state (showServices reads it): greet, then apply the location's
-  // channel mode — landing screen for "both", WhatsApp-only page for "whatsapp", straight in for "web".
+  // Runs once the config is in state (the flow reads it).
   useEffect(() => {
     if (startLoc === undefined || placeNotFound) return;
     beginChat(startLoc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startLoc]);
 
+  function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text, at: Date.now() }]); setOptions(opts || []); }
+  function user(text) { setMessages((m) => [...m, { from: "user", text, at: Date.now() }]); setOptions([]); }
+  const startAgain = [{ label: "Start again", action: "restart" }];
+
   function beginChat(locId) {
+    runRef.current += 1;
     const where = locations.find((l) => l.id === locId)?.name;
-    setMessages([{ from: "bot", text: `Hello! Welcome to ${businessName}${where && locations.length > 1 ? ` — ${where}` : ""}. What would you like to do?` }]);
+    setMessages([{ from: "bot", text: `Welcome to ${businessName}${where && locations.length > 1 ? ` — ${where}` : ""}.`, at: Date.now() }]);
     setOptions([]);
-    if (locId) enterLocation(locId);
-    else handle("greet");
+    setCodePrompt(null);
+    setServiceName("");
+    setCurrentLoc(null);
+    if (locId) showServices(locId);
+    else if (locations.length > 1) showLocations();
+    else showServices(locations[0]?.id);
   }
 
-  function enterLocation(locId) {
-    const loc = locations.find((l) => l.id === locId);
-    const mode = loc?.channel_mode || "both";
-    if (mode === "web" || chosenRef.current.has(locId)) { chosenRef.current.add(locId); return showServices(locId, true); }
-    setGate({ locId, mode }); // "both" -> landing, "whatsapp" -> WhatsApp-only page
+  async function showLocations() {
+    const run = runRef.current;
+    const checks = await Promise.all(locations.map(async (l) => {
+      const locServices = services.filter((s) => s.location_id === l.id);
+      if (locServices.length === 0) return { location: l, open: false };
+      const results = await Promise.all(locServices.map((s) =>
+        api.getAvailability(tenantId, s.id, todayIso(), nowMinutes()).catch(() => ({ open: false }))
+      ));
+      return { location: l, open: results.some((r) => r.open) };
+    }));
+    if (run !== runRef.current) return;
+    // Every location shows up, but only the ones with something open right now can be tapped.
+    bot("Which location are you at?", checks.map(({ location, open }) => ({
+      label: location.name,
+      sub: open ? "Open now" : "Not available",
+      variant: "secondary",
+      action: open ? "loc" : null,
+      payload: location.id,
+      disabled: !open,
+    })));
   }
 
-  // Polls for "it's your turn" — the staff kiosk and this app are fully separate apps with
-  // no other shared channel, so this is how a customer actually finds out they've been called.
-  // Also keeps the live queue position (walk-ins) fresh and fires a one-off reminder as a
-  // booked slot approaches — again, there's no other channel to push either of those through.
-  useEffect(() => {
-    if (!watchedTicket) return;
-    reminderSentRef.current = false;
-    setArrived(false);
-    const id = setInterval(async () => {
+  // Only services that are open right now are offered. Exactly one open service: skip the picker.
+  async function showServices(locId) {
+    const run = runRef.current;
+    setCurrentLoc(locId || null);
+    const list = services.filter((s) => s.location_id === locId);
+    const location = locations.find((l) => l.id === locId);
+    if (list.length === 0) { bot("There aren't any services set up here yet."); return; }
+    const checks = await Promise.all(list.map(async (s) => {
       try {
-        const r = await api.getTicketStatus(tenantId, watchedTicket.id);
-        setTicketStatus(r.status);
-        setQueueInfo(r.queue || null);
-        setArrived(!!r.arrived);
-        if ((r.status === "serving" || r.status === "completed") && lastStatusRef.current !== "serving" && lastStatusRef.current !== "completed") {
-          bot(`📍 ${r.message || "It's your turn! Please head to the desk."}`, [{ label: "Start again", action: "restart" }]);
-        }
-        lastStatusRef.current = r.status;
+        const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
+        return { service: s, open: r.open, reason: r.reason, r };
       } catch {
-        // ignore transient errors, try again next tick
+        return { service: s, open: false, reason: "error" };
       }
-      if (watchedTicket.type === "booked" && typeof watchedTicket.slotTime === "number" && !reminderSentRef.current) {
-        const mins = nowMinutes();
-        const minsToGo = watchedTicket.slotTime - mins;
-        if (minsToGo > 0 && minsToGo <= 15) {
-          reminderSentRef.current = true;
-          bot(`⏰ Reminder: your appointment is in ${minsToGo} minute${minsToGo === 1 ? "" : "s"}.`, [{ label: "Start again", action: "restart" }]);
-        }
+    }));
+    if (run !== runRef.current) return;
+    const live = checks.filter((c) => c.open);
+    manyServicesRef.current = live.length > 1;
+    if (live.length === 0) {
+      const reasons = new Set(checks.map((c) => c.reason));
+      let text = "We're not open right now — nothing here is available today. Please check back during opening hours.";
+      if (reasons.size === 1) {
+        const reason = [...reasons][0];
+        if (reason === "outside_license_window") text = "This service's license doesn't cover today's date — please contact the business directly.";
+        else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
       }
-    }, 6000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedTicket, tenantId]);
+      const opts = [];
+      if (location?.website_url) opts.push({ label: "See opening hours", variant: "secondary", action: "website", payload: location.website_url });
+      bot(text, opts);
+      return;
+    }
+    if (live.length === 1) { await chooseService(live[0].service, live[0].r, false); return; }
+    bot("Which service do you need today?", live.map((c) => ({ label: c.service.name, variant: "secondary", action: "svc", payload: c.service.id })));
+  }
 
-  useEffect(() => { setPickedIdx(null); }, [options]);
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, options]);
-
-  async function checkInNow() {
-    if (!watchedTicket) return;
-    setCheckingIn(true);
-    try {
-      await api.checkIn(tenantId, watchedTicket.id);
-      setArrived(true);
-      bot("✅ You're checked in. Please take a seat — we'll call you at your appointment time, or sooner if we can.", [{ label: "Start again", action: "restart" }]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCheckingIn(false);
+  async function chooseService(svc, avail, echo) {
+    const run = runRef.current;
+    setServiceName(svc.name);
+    if (echo) user(svc.name);
+    const another = manyServicesRef.current ? [{ label: "Choose another service", variant: "secondary", action: "restart" }] : [];
+    let r = avail;
+    if (!r) {
+      try { r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes()); }
+      catch (err) { if (run === runRef.current) bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" }))); return; }
+      if (run !== runRef.current) return;
+    }
+    if (!r.open) {
+      bot(r.reason === "outside_license_window" ? "We're not taking bookings today." : `${svc.name} isn't available right now.`, another);
+      return;
+    }
+    const canQueue = !!r.walkIn?.available;
+    const slots = r.bookableSlots || [];
+    const joinOpt = { label: "Join the queue now", variant: "primary", action: "join", payload: svc.id };
+    if (canQueue && slots.length > 0) {
+      bot("How would you like to be seen?", [joinOpt, { label: "Book an appointment", sub: "Pick a time today or later", variant: "secondary", action: "bookmenu", payload: { serviceId: svc.id, slots } }]);
+    } else if (canQueue) {
+      bot("Ready to join the queue?", [joinOpt]);
+    } else if (slots.length > 0) {
+      showSlots(svc.id, slots);
+    } else {
+      bot(`${svc.name} is fully booked for the rest of today.`, another);
     }
   }
 
-  async function cancelMyTicket() {
-    if (!watchedTicket) return;
-    setCancelling(true);
-    try {
-      await api.cancelTicket(tenantId, watchedTicket.id);
-      bot(`Your ${watchedTicket.type === "booked" ? "booking" : "spot in the queue"} has been cancelled — come back any time.`, [{ label: "Start again", action: "restart" }]);
-      lastStatusRef.current = "cancelled";
-      setWatchedTicket(null);
-      setTicketStatus(null);
-      setQueueInfo(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCancelling(false);
-    }
+  // Planners see a 2-hour window starting 2 hours from now; other times are one tap away.
+  function showSlots(serviceId, slots) {
+    const winStart = nowMinutes() + 120;
+    let shown = slots.filter((t) => t >= winStart && t < winStart + 120);
+    if (shown.length === 0) shown = slots.filter((t) => t >= winStart).slice(0, 3);
+    if (shown.length === 0) shown = slots.slice(0, 3);
+    shown = shown.slice(0, 8);
+    const opts = shown.map((t) => ({ label: `${formatTime(t)} today`, variant: "secondary", action: "book", payload: { serviceId, slotTime: t } }));
+    const rest = slots.filter((t) => !shown.includes(t));
+    if (rest.length > 0) opts.push({ label: "Choose another time", variant: "secondary", action: "times", payload: { serviceId, slots: rest } });
+    bot("Pick a time that suits you:", opts);
   }
-
-  function bot(text, opts, ticket) { setMessages((m) => [...m, { from: "bot", text, ticket }]); setOptions(opts || []); }
-  function user(text) { setMessages((m) => [...m, { from: "user", text }]); }
 
   async function handle(action, payload) {
-    if (action === "greet") {
-      setServiceName("");
-      if (scopedLocRef.current) {
-        await showServices(scopedLocRef.current);
-      } else if (locations.length > 1) {
-        const checks = await Promise.all(locations.map(async (l) => {
-          const locServices = services.filter((s) => s.location_id === l.id);
-          if (locServices.length === 0) return { location: l, open: false };
-          const results = await Promise.all(locServices.map((s) =>
-            api.getAvailability(tenantId, s.id, todayIso(), nowMinutes()).catch(() => ({ open: false }))
-          ));
-          return { location: l, open: results.some((r) => r.open) };
-        }));
-        // Every location shows up, even ones with nothing to join right now — but only the
-        // ones with something open right now are actually clickable.
-        bot("Which location?", checks.map(({ location, open }) => ({
-          label: open ? `${location.name} — open now` : `${location.name} — not available`,
-          action: open ? "loc" : null,
-          payload: location.id,
-          disabled: !open,
-        })));
-      } else {
-        await showServices(locations[0]?.id);
-      }
-    } else if (action === "loc") {
+    if (action === "loc") {
       user(locations.find((l) => l.id === payload)?.name);
-      await enterLocation(payload);
+      await showServices(payload);
     } else if (action === "svc") {
-      const svc = services.find((s) => s.id === payload);
-      setServiceName(svc.name);
-      user(svc.name);
-      try {
-        const r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes());
-        if (!r.open) {
-          bot(r.reason === "outside_license_window" ? "We're not taking bookings today." : `${svc.name} isn't available right now.`, [{ label: "Choose another service", action: "greet" }]);
-          return;
-        }
-        const opts = [];
-        if (r.walkIn?.available) opts.push({ label: "Join the queue now", action: "join", payload: svc.id });
-        const slots = r.bookableSlots || [];
-        // Walk-ins join now; planners see a 2-hour window starting 2 hours from now. Other times are one tap away.
-        const winStart = nowMinutes() + 120;
-        let shown = slots.filter((t) => t >= winStart && t < winStart + 120);
-        if (shown.length === 0) shown = slots.filter((t) => t >= winStart).slice(0, 3);
-        if (shown.length === 0 && !r.walkIn?.available) shown = slots.slice(0, 3);
-        const maxShown = r.walkIn?.available ? 7 : 8;
-        shown = shown.slice(0, maxShown);
-        shown.forEach((t) => opts.push({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: svc.id, slotTime: t } }));
-        const rest = slots.filter((t) => !shown.includes(t));
-        if (rest.length > 0) opts.push({ label: "Choose another time", action: "times", payload: { serviceId: svc.id, slots: rest } });
-        if (opts.length === 0) bot(`${svc.name} is fully booked for the rest of today.`, [{ label: "Choose another service", action: "greet" }]);
-        else bot("Here's what's available:", opts);
-      } catch (err) { setError(err.message); }
+      await chooseService(services.find((s) => s.id === payload), null, true);
+    } else if (action === "bookmenu") {
+      user("Book an appointment");
+      showSlots(payload.serviceId, payload.slots);
     } else if (action === "times") {
       user("Choose another time");
       const { serviceId, slots } = payload;
-      const size = 60;
       const groupsBy = (sz) => { const m = new Map(); slots.forEach((t) => { const k = Math.floor(t / sz); m.set(k, [...(m.get(k) || []), t]); }); return m; };
-      let groups = groupsBy(size);
-      let sz = size;
+      let sz = 60;
+      let groups = groupsBy(sz);
       if ([...groups.values()].some((g) => g.length > 9)) { sz = 30; groups = groupsBy(sz); }
       const blocks = [...groups.entries()];
-      const slotOpts = (list) => list.map((t) => ({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId, slotTime: t } }));
+      const slotOpts = (list) => list.map((t) => ({ label: `${formatTime(t)} today`, variant: "secondary", action: "book", payload: { serviceId, slotTime: t } }));
       if (blocks.length === 1 || slots.length <= 9) bot("Pick a time:", slotOpts(slots.slice(0, 9)));
-      else bot("Which part of the day suits you?", blocks.slice(0, 9).map(([k, g]) => ({ label: `${formatTime(k * sz)} – ${formatTime(k * sz + sz - 1)} (${g.length} free)`, action: "timeblock", payload: { serviceId, slots: g } })));
+      else bot("Which part of the day suits you?", blocks.slice(0, 9).map(([k, g]) => ({ label: `${formatTime(k * sz)} – ${formatTime(k * sz + sz - 1)}`, sub: `${g.length} free`, variant: "secondary", action: "timeblock", payload: { serviceId, slots: g } })));
     } else if (action === "timeblock") {
       user("Choose a time block");
-      bot("Pick a time:", payload.slots.slice(0, 9).map((t) => ({ label: `Book ${formatTime(t)} today`, action: "book", payload: { serviceId: payload.serviceId, slotTime: t } })));
+      bot("Pick a time:", payload.slots.slice(0, 9).map((t) => ({ label: `${formatTime(t)} today`, variant: "secondary", action: "book", payload: { serviceId: payload.serviceId, slotTime: t } })));
     } else if (action === "join") {
       const svc = services.find((s) => s.id === payload);
       const loc = locations.find((l) => l.id === svc.location_id);
-      user("Join the queue");
+      user("Join the queue now");
       // "Only joinable from the clinic": the QR link carries the location code; without it, ask for it.
       if (loc?.onsite_only && !onsiteCodeRef.current) { askForCode(svc.id); return; }
       await doJoin(svc);
-    } else if (action === "wa") {
-      user("Message me on WhatsApp");
-      try { await api.whatsappIntent(payload); } catch { /* recorded best-effort */ }
-      bot("Thanks, we've noted that. WhatsApp updates aren't switched on yet, so please keep this page open. We'll show your number here when you're called.", [{ label: "Open my live ticket", action: "keep", payload }]);
-    } else if (action === "keep") {
-      user(payload.label || "Open my live ticket");
-      setJustJoined(true);
-      setLiveToken(payload.token || payload);
     } else if (action === "book") {
       const svc = services.find((s) => s.id === payload.serviceId);
+      user(`${formatTime(payload.slotTime)} today`);
       try {
         const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime, deviceId: getDeviceId() });
-        bot("You're booked ✅\nWe'll message you here when it's your turn.", [{ label: "Start again", action: "restart" }], {
-          number: r.ticket.ticket_number,
-          position: null,
-          eta: `${formatTime(payload.slotTime)} today`,
-          etaLabel: "Appointment",
-          service: svc.name,
-        });
-        lastStatusRef.current = "booked";
-        setTicketStatus("booked");
-        setQueueInfo(null);
-        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "booked", slotTime: payload.slotTime });
-      } catch (err) { bot(`Sorry — ${err.message}`, [{ label: "Choose another service", action: "greet" }]); }
+        openTicket(r.publicToken);
+      } catch (err) { bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" }))); }
     } else if (action === "website") {
       window.open(payload, "_blank", "noopener");
     } else if (action === "restart") {
-      setWatchedTicket(null);
-      setTicketStatus(null);
-      setQueueInfo(null);
-      lastStatusRef.current = null;
-      setServiceName("");
       beginChat(startLoc ?? null);
     }
+  }
+
+  // Hand over to the live ticket screen; the token is the only thing needed to find the ticket again.
+  function openTicket(token) {
+    if (!token) { bot("Sorry — something went wrong saving your ticket. Please ask at reception.", startAgain.map((o) => ({ ...o, variant: "secondary" }))); return; }
+    saveToken(tenantId, token); // so reopening this page on this phone finds the ticket
+    setUrlToken(token);
+    setLiveToken(token);
   }
 
   function askForCode(svcId, message) {
@@ -320,87 +275,18 @@ function CustomerWhatsApp({ tenantId }) {
   }
 
   async function doJoin(svc, code = onsiteCodeRef.current) {
-    const loc = locations.find((l) => l.id === svc.location_id);
     setJoining(true);
     try {
       const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null, deviceId: getDeviceId(), onsiteCode: code || undefined });
-      const token = r.publicToken;
-      const ahead = r.queue ? r.queue.position - 1 : null;
-      bot("You're in the queue ✅", [], {
-        number: r.ticket.ticket_number,
-        ahead,
-        eta: r.queue && r.queue.estimatedMinutes != null ? `About ${r.queue.estimatedMinutes} min` : null,
-        service: svc.name,
-      });
-      lastStatusRef.current = "waiting";
-      if (token) {
-        saveToken(tenantId, token); // so reopening this page on this phone finds the ticket
-        setUrlToken(token);
-        if (loc?.whatsapp_updates_offer) {
-          bot("Want a WhatsApp message when you're nearly up? Then you can leave the page.", [
-            { label: "Message me on WhatsApp", action: "wa", payload: token },
-            { label: "No thanks, I'll keep this page open", action: "keep", payload: { token, label: "No thanks, I'll keep this page open" } },
-          ]);
-        } else {
-          bot("Take a seat. We'll show your number on this page when you're called.", [{ label: "Watch my place in the queue", action: "keep", payload: { token, label: "Watch my place in the queue" } }]);
-        }
-        setMessages((m) => [...m, { from: "note", text: "Saved on this phone. Come back to this page any time to see your place." }]);
-      } else {
-        // Older server without public tickets: fall back to the in-chat status bar.
-        setTicketStatus("waiting"); setQueueInfo(r.queue || null);
-        setWatchedTicket({ id: r.ticket.id, ticketNumber: r.ticket.ticket_number, type: "walk_in" });
-        setOptions([{ label: "Start again", action: "restart" }]);
-      }
+      openTicket(r.publicToken);
     } catch (err) {
       if (err.reason === "onsite_code_required" || err.reason === "onsite_code_invalid") {
         onsiteCodeRef.current = "";
         askForCode(svc.id, err.message);
       } else {
-        bot(`Sorry — ${err.message}`, [{ label: "Choose another service", action: "greet" }]);
+        bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" })));
       }
     } finally { setJoining(false); }
-  }
-
-  // Only shows services that are actually open right now — closed/out-of-hours ones never
-  // appear as options at all, rather than letting the customer pick one only to be told no.
-  async function showServices(locId, autoEnter = false) {
-    const list = services.filter((s) => s.location_id === locId);
-    const location = locations.find((l) => l.id === locId);
-    if (list.length === 0) {
-      bot("There aren't any services set up here yet.");
-      return;
-    }
-    // Location QR with exactly one active service: skip the picker.
-    if (autoEnter && scopedLocRef.current === locId && list.length === 1) { await handle("svc", list[0].id); return; }
-    let checks;
-    try {
-      checks = await Promise.all(list.map(async (s) => {
-        try {
-          const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
-          return { service: s, open: r.open, reason: r.reason };
-        } catch {
-          return { service: s, open: false, reason: "error" };
-        }
-      }));
-    } catch (err) {
-      setError(err.message);
-      return;
-    }
-    const liveServices = checks.filter((c) => c.open).map((c) => c.service);
-    if (liveServices.length === 0) {
-      const reasons = new Set(checks.map((c) => c.reason));
-      let text = "We're not open right now — nothing here is available today. Please check back during opening hours.";
-      if (reasons.size === 1) {
-        const reason = [...reasons][0];
-        if (reason === "outside_license_window") text = "This service's license doesn't cover today's date — please contact the business directly.";
-        else if (reason === "paused") text = "We're temporarily paused right now — please try again shortly.";
-      }
-      const opts = [];
-      if (location?.website_url) opts.push({ label: "See opening hours", action: "website", payload: location.website_url });
-      bot(text, opts);
-      return;
-    }
-    bot("Which service would you like today?", liveServices.map((s) => ({ label: s.name, action: "svc", payload: s.id })));
   }
 
   if (notFound) {
@@ -415,129 +301,45 @@ function CustomerWhatsApp({ tenantId }) {
     return (
       <Returning
         token={liveToken}
-        justJoined={justJoined}
         onSeen={() => { saveToken(tenantId, liveToken); setUrlToken(liveToken); }}
         onEnded={() => { clearSavedToken(tenantId); }}
-        onRestart={() => { clearSavedToken(tenantId); setUrlToken(""); setLiveToken(""); setJustJoined(false); beginChat(startLoc ?? null); }}
+        onRestart={() => { clearSavedToken(tenantId); setUrlToken(""); setLiveToken(""); beginChat(startLoc ?? null); }}
       />
     );
   }
 
-  if (gate) {
-    const gateLoc = locations.find((l) => l.id === gate.locId);
-    const locServices = services.filter((s) => s.location_id === gate.locId);
-    const title = locServices.length === 1 ? locServices[0].name : (gateLoc?.name || businessName);
-    if (gate.mode === "whatsapp") {
-      return <WhatsAppOnly businessName={businessName} title={title} code={onsiteCodeRef.current} onBack={locations.length > 1 ? () => { setGate(null); handle("greet"); } : null} />;
-    }
-    return (
-      <ChannelLanding
-        businessName={businessName} title={title} code={onsiteCodeRef.current}
-        onContinue={() => { chosenRef.current.add(gate.locId); setGate(null); showServices(gate.locId, true); }}
-      />
-    );
-  }
-
-  const showStatus = watchedTicket && (ticketStatus === "waiting" || ticketStatus === "booked");
-
+  const locName = locations.length > 1 ? locations.find((l) => l.id === currentLoc)?.name : "";
   return (
-    <div className="app">
-      <header className="chat-head">
-        <span className="chat-avatar" aria-hidden="true">{(businessName || "Q").trim().charAt(0).toUpperCase()}</span>
-        <div className="chat-head-text">
-          <h1 className="chat-title">{businessName || "QBooker"}</h1>
-          <p className="chat-sub">{serviceName || "Queue & bookings"}</p>
-        </div>
-      </header>
-      {error && (
-        <div className="chat-error" role="alert">
-          <span>{error}</span>
-          <button className="btn-outline" onClick={() => setError("")}>Dismiss</button>
-        </div>
+    <Shell
+      title={locName || businessName || "QBooker"}
+      subtitle={serviceName || "Join or book online"}
+      footer={POWERED_BY}
+      scrollKey={`${messages.length}-${options.length}-${!!codePrompt}`}
+      listProps={{ role: "log", "aria-live": "polite", "aria-label": "Conversation" }}
+    >
+      {messages.length === 0 && <p className="muted loading" role="status">Loading…</p>}
+      {messages.map((m, i) => <Bubble key={i} from={m.from} at={m.at}>{m.text}</Bubble>)}
+      {codePrompt ? (
+        <form
+          className="code-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const code = codeInput.trim().toUpperCase();
+            if (!code) return;
+            onsiteCodeRef.current = code;
+            const svc = services.find((x) => x.id === codePrompt.svcId);
+            setCodePrompt(null);
+            if (svc) doJoin(svc, code);
+          }}
+        >
+          <label htmlFor="onsite-code" className="code-label">Location code (shown at reception)</label>
+          <input id="onsite-code" className="input mono" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} placeholder="QB-XXXXXX" autoComplete="off" autoCapitalize="characters" spellCheck="false" />
+          <button className="choice choice-primary" type="submit" disabled={!codeInput.trim() || joining}><span className="choice-label">Join the queue now</span></button>
+          <button className="choice choice-secondary" type="button" onClick={() => beginChat(startLoc ?? null)}><span className="choice-label">Back</span></button>
+        </form>
+      ) : (
+        <Choices options={options} busy={joining} onPick={(o) => { if (!o.disabled) handle(o.action, o.payload); }} />
       )}
-      <div className="chat-scroll" ref={scrollRef}>
-        <div className="chat-list" role="log" aria-live="polite" aria-label="Conversation">
-          {messages.map((m, i) => (
-            <div key={i} className={`msg msg-${m.from}`}>
-              {m.from === "note" ? <div className="chat-note">{m.text}</div> : <div className="bubble">{m.text}</div>}
-              {m.ticket && (
-                <div className="ticket" aria-label={`Ticket ${m.ticket.number}`}>
-                  <div className="ticket-top">
-                    <span className="ticket-label">Your ticket{m.ticket.service ? ` · ${m.ticket.service}` : ""}</span>
-                    <span className="ticket-num mono">{m.ticket.number}</span>
-                  </div>
-                  <dl className="ticket-meta">
-                    {m.ticket.ahead != null && (
-                      <div><dt>People ahead</dt><dd>{m.ticket.ahead}</dd></div>
-                    )}
-                    {m.ticket.eta && (
-                      <div><dt>{m.ticket.etaLabel || "Estimated wait"}</dt><dd>{m.ticket.eta}</dd></div>
-                    )}
-                  </dl>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <footer className="chat-foot">
-        {codePrompt && (
-          <form
-            className="code-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const code = codeInput.trim().toUpperCase();
-              if (!code) return;
-              onsiteCodeRef.current = code;
-              const svc = services.find((x) => x.id === codePrompt.svcId);
-              setCodePrompt(null);
-              if (svc) doJoin(svc, code);
-            }}
-          >
-            <label htmlFor="onsite-code" className="code-label">Location code (shown at reception)</label>
-            <input id="onsite-code" className="input mono" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} placeholder="QB-XXXXXX" autoComplete="off" autoCapitalize="characters" spellCheck="false" />
-            <button className="btn btn-accent" type="submit" disabled={!codeInput.trim() || joining}>Join the queue</button>
-            <button className="btn-outline" type="button" onClick={() => { setCodePrompt(null); handle("greet"); }}>Back</button>
-          </form>
-        )}
-        {options.length > 0 && (
-          <div className="replies" role="group" aria-label="Reply options">
-            {options.map((o, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`reply${pickedIdx === i ? " is-picked" : ""}${o.action === "restart" ? " reply-quiet" : ""}`}
-                disabled={o.disabled}
-                aria-pressed={pickedIdx === i}
-                onClick={() => { if (!o.disabled) { setPickedIdx(i); handle(o.action, o.payload); } }}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {showStatus && (
-          <div className="status-bar">
-            <p className="status-text">
-              {watchedTicket.type === "walk_in" && queueInfo && (
-                <>You're <strong>#{queueInfo.position}</strong> in line{queueInfo.estimatedMinutes != null && ` — about ${queueInfo.estimatedMinutes} min`}</>
-              )}
-              {watchedTicket.type === "walk_in" && !queueInfo && <>You're in the queue</>}
-              {watchedTicket.type === "booked" && <>Booked for <strong>{formatTime(watchedTicket.slotTime)}</strong> today</>}
-            </p>
-            <div className="status-actions">
-              {watchedTicket.type === "booked" && (arrived
-                ? <span className="badge badge-green checked">✓ Checked in</span>
-                : <button className="btn btn-accent btn-checkin" disabled={checkingIn} onClick={checkInNow}>{checkingIn ? "Checking in…" : "Check in"}</button>)}
-              <button className="btn-outline danger" disabled={cancelling} onClick={cancelMyTicket}>
-                {cancelling ? "Cancelling…" : "Cancel"}
-              </button>
-            </div>
-          </div>
-        )}
-      </footer>
-    </div>
+    </Shell>
   );
 }
