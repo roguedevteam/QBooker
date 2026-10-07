@@ -1796,6 +1796,11 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                   </label>
                   <span className="muted small">Ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
+                  {startDate === todayIso() && (
+                    <div className="notice-info" role="note" style={{ background: "#EEF5FA", border: "1px solid #BBD3E4", padding: "10px 12px", fontSize: 14, lineHeight: "20px", maxWidth: 420 }}>
+                      Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.
+                    </div>
+                  )}
                   <div className="form-actions">
                     <button className="btn" onClick={() => schedule(lic)}>Confirm</button>
                     <button className="btn-outline" onClick={() => setSchedulingId(null)}>Cancel</button>
