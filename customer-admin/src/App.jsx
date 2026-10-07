@@ -9,6 +9,9 @@ function nowMinutes() {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 }
+function formatClock(min) {
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+}
 function formatTime(min) {
   let h = Math.floor(min / 60);
   const m = min % 60;
@@ -234,7 +237,7 @@ function buildCalendarWeeks(firstOfMonthStr) {
 
 const GRID_HOURS = [];
 for (let h = 7 * 60; h < 20 * 60; h += 30) GRID_HOURS.push(h);
-const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // Shared logo mark — a steel-blue tile with an amber "notch", plus the wordmark.
 function Logo({ size = 24, dark = false }) {
@@ -1657,15 +1660,18 @@ function licenseSummary(licenses) {
 }
 
 function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, locationCode, autoBuy, onAutoBuyHandled, startExpanded = false, statusInHeader = false }) {
-  const [panel, setPanel] = useState(startExpanded ? "hours" : null); // null | "hours" | "licences"
+  // "default" opens whichever tab suits the service's licences (resolved below); null = collapsed card.
+  const [panel, setPanel] = useState(startExpanded ? "default" : null); // null | "default" | "calendar" | "licences"
   const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
+  const [calMounted, setCalMounted] = useState(false); // same for the calendar, so the selected day survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
-  const [assignTrigger, setAssignTrigger] = useState(null); // { licId, n } — opens that licence's date picker in the Licences panel
+  const [buyingNow, setBuyingNow] = useState(false);
   const [licenses, setLicenses] = useState([]);
   const [licensesLoaded, setLicensesLoaded] = useState(false);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [focusDay, setFocusDay] = useState(null); // { date, n } — hours calendar should select this day
-  const hoursRef = useRef(null);
+  const calPanelRef = useRef(null);
+  const focusHandled = useRef(0);
 
   async function loadLicenses() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
@@ -1675,41 +1681,52 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
 
   const summary = licenseSummary(licenses);
   const hasActiveLicense = licenses.some((l) => l.status === "active");
-  // Hours only make sense while the service has a live or booked-in licence; Licences only once it has ever had one.
+  // Calendar only makes sense while the service has a live or booked-in licence; Licences only once it has ever had one.
   const everHadLicence = licenses.some((l) => l.status !== "refunded");
-  const showHoursBtn = licensesLoaded && licenses.some((l) => l.status === "active" || l.status === "scheduled");
-  const showLicencesBtn = licensesLoaded && everHadLicence;
-  useEffect(() => {
-    if (licensesLoaded && ((panel === "hours" && !showHoursBtn) || (panel === "licences" && !showLicencesBtn && !buyTrigger))) setPanel(null);
-  }, [licensesLoaded, showHoursBtn, showLicencesBtn]); // eslint-disable-line react-hooks/exhaustive-deps
-  function openPanel(name) {
-    if (name === "licences") setLicMounted(true);
-    setPanel((cur) => (cur === name ? null : name));
+  const hasLive = licenses.some((l) => l.status === "active" || l.status === "scheduled");
+  const toDateCount = licenses.filter((l) => l.status === "available").length; // bought but not yet given dates
+  const neverLicensed = licensesLoaded && !everHadLicence;
+  const tabs = !licensesLoaded ? [] : [hasLive && "calendar", everHadLicence && "licences"].filter(Boolean);
+  const defaultTab = hasLive ? "calendar" : everHadLicence ? "licences" : null;
+  const wanted = panel === "default" ? defaultTab : panel;
+  const shownTab = panel === null ? null : (wanted && tabs.includes(wanted) ? wanted : defaultTab);
+  const licencesVisible = shownTab === "licences" || (neverLicensed && panel !== null);
+  const calVisible = shownTab === "calendar";
+  useEffect(() => { if (licencesVisible) setLicMounted(true); }, [licencesVisible]);
+  useEffect(() => { if (calVisible) setCalMounted(true); }, [calVisible]);
+
+  function openTab(name) {
+    if (name === shownTab && !startExpanded) setPanel(null); // tapping the open tab on a multi-service location collapses the card again
+    else setPanel(name);
   }
-  const firstAvailable = licenses.find((l) => l.status === "available");
-  function startAssign(licId) {
-    setLicMounted(true);
-    setPanel("licences"); // open only, never toggle closed
-    setAssignTrigger((t) => ({ licId, n: (t?.n || 0) + 1 }));
+  function onTabKeyDown(e) {
+    const i = Math.max(0, tabs.indexOf(shownTab));
+    let n = null;
+    if (e.key === "ArrowRight") n = tabs[(i + 1) % tabs.length];
+    else if (e.key === "ArrowLeft") n = tabs[(i - 1 + tabs.length) % tabs.length];
+    else if (e.key === "Home") n = tabs[0];
+    else if (e.key === "End") n = tabs[tabs.length - 1];
+    if (n) { e.preventDefault(); setPanel(n); document.getElementById(`svc-${service.id}-tab-${n}`)?.focus(); }
   }
-  // After buying with a start date or confirming Assign/Change dates: close the buying UI, open Hours on the
+  // After buying with a start date or confirming Assign/Change dates: switch to the Calendar tab on the
   // first licensed day and bring it into view so hours can be set straight away.
   function showHoursFor(date) {
-    setPanel("hours");
+    setPanel("calendar");
     setFocusDay((f) => ({ date, n: (f?.n || 0) + 1 }));
     setCalendarRefresh((t) => t + 1);
   }
   useEffect(() => {
-    if (!focusDay || panel !== "hours") return;
+    if (!focusDay || !calVisible || focusHandled.current === focusDay.n) return;
+    focusHandled.current = focusDay.n;
     const t = setTimeout(() => {
-      const el = hoursRef.current;
+      const el = calPanelRef.current;
       if (!el) return;
       const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
       el.focus({ preventScroll: true });
     }, 50);
     return () => clearTimeout(t);
-  }, [focusDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focusDay, calVisible]);
   function startBuy() {
     setLicMounted(true);
     setPanel("licences");
@@ -1718,38 +1735,26 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   useEffect(() => { if (autoBuy) { startBuy(); onAutoBuyHandled?.(); } }, [autoBuy]); // eslint-disable-line react-hooks/exhaustive-deps
   const currentLic = currentLicenceOf(licenses);
   const modeText = service.mode === "queue" ? "Queue (walk-ins)" : service.mode === "appointment" ? `Appointments · ${service.slot_minutes} min slots` : `Queue and appointments · ${service.slot_minutes} min slots`;
+  const tabId = (n) => `svc-${service.id}-tab-${n}`;
+  const panelId = (n) => `svc-${service.id}-panel-${n}`;
+  const tabLabel = { calendar: "Calendar", licences: "Licences" };
   return (
     <div className="svc-card" style={service.archived ? { opacity: 0.6 } : undefined}>
       <div className="svc-head">
-        <div className="svc-title">
-          <ServiceNameField key={service.id} service={service} onSaved={onChange} setError={setError} />
-          <div className="svc-status">
-            {service.archived && <span className="badge badge-amber">Archived</span>}
-            {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
-            {!statusInHeader && <span className={`badge badge-${summary.color}`}>{summary.text}</span>}
-            {currentLic && !statusInHeader && <span className="muted small">{licenceDetailText(currentLic)}</span>}
-          </div>
-          <div className="muted small">{modeText}</div>
-        </div>
-        {service.mode === "queue" && hasActiveLicense && (
-          <button
-            type="button"
-            className={`btn-outline svc-pause${service.queue_paused ? " is-paused" : ""}`}
-            aria-pressed={!!service.queue_paused}
-            title="A live override on top of the scheduled hours — pause anytime without touching your calendar."
-            aria-label={service.queue_paused ? `Resume queue for ${service.name}` : `Pause queue for ${service.name}`}
-            onClick={async () => { try { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); } catch (err) { setError(err.message); } }}
-          >
-            {service.queue_paused ? "Resume queue" : "Pause queue"}
-          </button>
-        )}
-      </div>
-      <div className="svc-actions">
-        {showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>}
-        {licensesLoaded && firstAvailable && <button type="button" className="btn" onClick={() => startAssign(firstAvailable.id)}>Assign dates</button>}
-        {showLicencesBtn && !showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
-        <div className="svc-buy">
-          <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
+        <ServiceNameField key={service.id} service={service} onSaved={onChange} setError={setError} />
+        <div className="svc-head-actions">
+          {service.mode === "queue" && hasActiveLicense && (
+            <button
+              type="button"
+              className={`btn-outline svc-pause${service.queue_paused ? " is-paused" : ""}`}
+              aria-pressed={!!service.queue_paused}
+              title="A live override on top of the scheduled hours — pause anytime without touching your calendar."
+              aria-label={service.queue_paused ? `Resume queue for ${service.name}` : `Pause queue for ${service.name}`}
+              onClick={async () => { try { await api.updateService(service.id, { queuePaused: !service.queue_paused }); onChange(); } catch (err) { setError(err.message); } }}
+            >
+              {service.queue_paused ? "Resume queue" : "Pause queue"}
+            </button>
+          )}
           <button
             type="button" className="btn-outline icon-btn" aria-label="Archive service" title="Archive service"
             onClick={async () => {
@@ -1760,23 +1765,55 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
           ><ArchiveIcon size={20} /></button>
         </div>
       </div>
-      {showLicencesBtn && showHoursBtn && (
-        <button type="button" className="link-btn" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>
+      <div className="svc-status">
+        {service.archived && <span className="badge badge-amber">Archived</span>}
+        {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
+        {!statusInHeader && <span className={`badge badge-${summary.color}`}>{summary.text}</span>}
+        {currentLic && !statusInHeader && <span className="muted small">{licenceDetailText(currentLic)}</span>}
+        <span className="muted small">{modeText}</span>
+      </div>
+
+      {neverLicensed && !buyingNow && (
+        <div className="svc-empty" data-testid="never-licensed">
+          <h3>No licence yet</h3>
+          <p className="muted">Buy a licence to make this service bookable. Then choose its dates and set opening hours on a calendar.</p>
+          <button type="button" className="btn btn-accent" onClick={startBuy}>Buy a licence</button>
+        </div>
       )}
 
-      {licMounted && (
-        <div className="svc-panel" hidden={panel !== "licences"}>
+      {tabs.length > 0 && (
+        <div className="svc-tabs" role="tablist" aria-label={`${service.name} sections`} onKeyDown={onTabKeyDown}>
+          {tabs.map((n, i) => (
+            <button
+              key={n} type="button" role="tab" id={tabId(n)} aria-controls={panelId(n)}
+              aria-selected={shownTab === n}
+              tabIndex={shownTab === n || (shownTab === null && i === 0) ? 0 : -1}
+              className="svc-tab" onClick={() => openTab(n)}
+            >
+              {tabLabel[n]}
+              {n === "licences" && toDateCount > 0 && <span className="badge badge-amber">{toDateCount} to date</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(calMounted || calVisible) && tabs.includes("calendar") && (
+        <div className="svc-panel" role="tabpanel" id={panelId("calendar")} aria-labelledby={tabId("calendar")} ref={calPanelRef} tabIndex={-1} hidden={!calVisible}>
+          <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} focusDay={focusDay} />
+        </div>
+      )}
+      {(licMounted || licencesVisible) && (
+        <div
+          className="svc-panel" hidden={!licencesVisible}
+          {...(tabs.includes("licences") ? { role: "tabpanel", id: panelId("licences"), "aria-labelledby": tabId("licences") } : {})}
+        >
           <ServiceLicensesPanel
             service={service} allServices={allServices || []} setError={setError} locationName={locationName}
             onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
-            tenant={tenant} buyTrigger={buyTrigger} assignTrigger={assignTrigger} showBuyButton={false}
+            tenant={tenant} buyTrigger={buyTrigger} hideHeader buyAtBottom hideEmpty={neverLicensed}
+            onBuyingChange={setBuyingNow}
             onScheduled={showHoursFor}
           />
-        </div>
-      )}
-      {panel === "hours" && (
-        <div className="svc-panel" ref={hoursRef} tabIndex={-1} aria-label="Opening hours">
-          <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} focusDay={focusDay} />
         </div>
       )}
     </div>
@@ -1787,7 +1824,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, assignTrigger, showBuyButton = true, hideHeader = false, onBought, onScheduled, locationName }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, buyAtBottom = false, hideEmpty = false, onBuyingChange, hideHeader = false, onBought, onScheduled, locationName }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -1808,13 +1845,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const [movingId, setMovingId] = useState(null);
 
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
-  // "Buy a license" lives in ServiceEditor's header (to the left of its Actions ⋯ menu);
-  // it bumps buyTrigger to open the plan picker here.
+  // ServiceEditor's empty state (and the Wizard) bump buyTrigger to open the plan picker here.
   useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); } }, [buyTrigger]);
 
-  useEffect(() => {
-    if (assignTrigger) { setSchedulingId(assignTrigger.licId); setStartDate(todayIso()); }
-  }, [assignTrigger]);
+  useEffect(() => { onBuyingChange?.(buying); }, [buying]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectedPrice() {
     if (!pricing) return 0;
@@ -2053,44 +2087,47 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
         </div>
       )}
 
-      {visible.length === 0 && !buying && <div className="muted small">No licences yet — buy one to make this service bookable.</div>}
+      {visible.length === 0 && !buying && !hideEmpty && <div className="muted small">No licences yet — buy one to make this service bookable.</div>}
 
       <div>
         {visible.map((lic) => {
           const meta = LICENSE_STATUS_META[lic.status];
-          const showMenu = lic.status === "scheduled" || movingId === lic.id;
+          const showMenu = lic.status === "scheduled" || movingId === lic.id || (lic.status === "available" && otherServices.length > 0);
           return (
-            <div key={lic.id} className="lic-card">
-              <div className="lic-main">
-                <span className={`badge badge-${meta.color}`}>{meta.label}</span>
-                <strong style={{ fontSize: 15 }}>{lic.plan_label}</strong>
-                {lic.paid === false && lic.status !== "refunded" && <span className="badge badge-amber">Invoice — awaiting payment</span>}
+            <div key={lic.id} className="lic-line" data-testid="lic-line">
+              <div className="lic-line-main">
+                <div className="lic-line-top">
+                  <strong>{lic.plan_label}</strong>
+                  <span className={`badge badge-${meta.color}`}>{meta.label}</span>
+                  {lic.paid === false && lic.status !== "refunded" && <span className="badge badge-amber">Invoice — awaiting payment</span>}
+                </div>
+                <div className="muted small">
+                  {lic.start_date ? `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)} · ` : "No dates yet · "}
+                  {Number(lic.price) > 0 ? priceText(lic.price) : "Free"}
+                </div>
               </div>
-              {lic.start_date && <div className="muted small">{formatDateDisplay(lic.start_date)} to {formatDateDisplay(lic.end_date)}</div>}
-              <div className="lic-actions">
-                {lic.status === "available" && schedulingId !== lic.id && (
-                  <button className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
-                    Assign dates
-                  </button>
-                )}
-                {showMenu && (movingId === lic.id ? (
-                  <select aria-label="Move licence to another service" defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
-                    <option value="" disabled>Move to…</option>
-                    {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                ) : (
-                  <MoreMenu
-                    label="Licence actions"
-                    items={[
-                      lic.status === "scheduled" && { label: "Change dates", onClick: () => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); } },
-                      lic.status === "scheduled" && { label: "Unschedule", onClick: () => unschedule(lic) },
-                      lic.status === "available" && otherServices.length > 0 && { label: "Move License", onClick: () => setMovingId(lic.id) },
-                    ]}
-                  />
-                ))}
-              </div>
+              {showMenu && (movingId === lic.id ? (
+                <select aria-label="Move licence to another service" defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
+                  <option value="" disabled>Move to…</option>
+                  {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              ) : (
+                <MoreMenu
+                  label="Licence actions"
+                  items={[
+                    lic.status === "scheduled" && { label: "Change dates", onClick: () => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); } },
+                    lic.status === "scheduled" && { label: "Unschedule", onClick: () => unschedule(lic) },
+                    lic.status === "available" && otherServices.length > 0 && { label: "Move License", onClick: () => setMovingId(lic.id) },
+                  ]}
+                />
+              ))}
+              {lic.status === "available" && schedulingId !== lic.id && (
+                <button type="button" className="btn btn-accent lic-assign" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
+                  Assign dates
+                </button>
+              )}
               {schedulingId === lic.id && (
-                <div className="stack" style={{ gap: 8 }}>
+                <div className="stack lic-line-picker" style={{ gap: 8 }}>
                   <label className="field" style={{ maxWidth: 220 }}>
                     <span className="field-label">Start date</span>
                     <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -2111,6 +2148,10 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
           );
         })}
       </div>
+
+      {buyAtBottom && !buying && visible.length > 0 && (
+        <div><button type="button" className="btn-outline buy-more" onClick={() => { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); }}>Buy a licence</button></div>
+      )}
     </div>
   );
 }
@@ -2139,6 +2180,9 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   const [walkInStaffCount, setWalkInStaffCount] = useState(1);
   const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
   const [staffError, setStaffError] = useState(""); // server rejection of a staff/hours change, shown beside the staff controls
+  const [windowsLoaded, setWindowsLoaded] = useState(false);
+  const [rangeConfigs, setRangeConfigs] = useState(null); // date -> config from today to the end of the last licence window, for the "still need hours" count
+  const [rangeTick, setRangeTick] = useState(0);
 
   const paintingRef = useRef(false);
   const paintModeRef = useRef(true);
@@ -2168,6 +2212,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
       r.dailyConfig.forEach((d) => { map[d.date] = d; });
       setMonthConfigs(map);
       setWindows(r.windows || []);
+      setWindowsLoaded(true);
     } catch (err) { setError(err.message); }
   }
   useEffect(() => { loadMonth(calendarMonth); }, [calendarMonth]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2178,6 +2223,32 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
 
   function isWithinAnyWindow(d) {
     return windows.some((w) => d >= w.start && d <= w.end);
+  }
+  function windowStatusOn(d) {
+    const w = windows.find((x) => d >= x.start && d <= x.end);
+    return w ? (w.status === "scheduled" ? "scheduled" : "active") : null;
+  }
+  // Keep the whole-licence picture ("5 licensed days still need hours") in step with the windows and with every save.
+  const windowsKey = JSON.stringify(windows.map((w) => [w.start, w.end]));
+  useEffect(() => {
+    if (!windows.length) { setRangeConfigs(null); return; }
+    const t = todayIso();
+    const first = windows.map((w) => w.start).sort()[0];
+    const last = windows.map((w) => w.end).sort().slice(-1)[0];
+    const from = first > t ? first : t;
+    if (from > last) { setRangeConfigs({}); return; }
+    let cancelled = false;
+    api.getDailyConfig(service.id, from, last).then((r) => {
+      if (cancelled) return;
+      const map = {};
+      r.dailyConfig.forEach((d) => { map[d.date] = d; });
+      setRangeConfigs(map);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [windowsKey, refreshToken, rangeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  function putLocal(date, entry) {
+    setMonthConfigs((prev) => ({ ...prev, [date]: entry }));
+    setRangeConfigs((prev) => (prev ? { ...prev, [date]: entry } : prev));
   }
   const overallStart = windows.length ? windows.map((w) => w.start).sort()[0] : null;
   const overallEnd = windows.length ? windows.map((w) => w.end).sort().slice(-1)[0] : null;
@@ -2245,13 +2316,13 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     saveTimeoutRef.current = setTimeout(async () => {
       try {
         await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current, walkInStaffCount: walkInRef.current, nowMinutes: nowMinutes() });
-        setMonthConfigs((prev) => ({ ...prev, [dateToSave]: { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current, walkin_staff_count: walkInRef.current } }));
+        putLocal(dateToSave, { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current, walkin_staff_count: walkInRef.current });
         setSaveStatus("saved");
         savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
       } catch (err) {
         setError(err.message);
         setSaveStatus("error");
-        loadMonth(calendarMonth); // roll the grid back to what the server actually has
+        loadMonth(calendarMonth); setRangeTick((t) => t + 1); // roll the grid back to what the server actually has
       }
     }, 350);
   }
@@ -2292,14 +2363,14 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     setStaffError("");
     try {
       await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn, nowMinutes: nowMinutes() });
-      setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking, walkin_staff_count: nextWalkIn } }));
+      putLocal(selectedDate, { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking, walkin_staff_count: nextWalkIn });
       setSaveStatus("saved");
       if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
       savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
     } catch (err) {
       setStaffError(err.message);
       setSaveStatus("error");
-      loadMonth(calendarMonth); // reload the saved values so the inputs snap back to what the server has
+      loadMonth(calendarMonth); setRangeTick((t) => t + 1); // reload the saved values so the inputs snap back to what the server has
     }
   }
 
@@ -2328,13 +2399,13 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     const idx = weekdayIndex(selectedDate);
     const monday = addDaysIso(selectedDate, -idx);
     const targets = Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i)).filter((d) => d !== selectedDate && d > todayIso());
-    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); } catch (err) { setError(err.message); }
+    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
   async function copyToMonth() {
     const fm = firstOfMonth(selectedDate);
     const n = daysInMonthOf(fm);
     const targets = Array.from({ length: n }, (_, i) => addDaysIso(fm, i)).filter((d) => d !== selectedDate && d > todayIso());
-    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); } catch (err) { setError(err.message); }
+    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
   async function copyToWholePeriod() {
     if (!windows.length) return;
@@ -2344,165 +2415,213 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
       let guard = 0;
       while (d <= w.end && guard < 400) { if (d !== selectedDate && d > todayIso()) targets.push(d); d = addDaysIso(d, 1); guard++; }
     }
-    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); } catch (err) { setError(err.message); }
+    try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
 
   const calendarWeeks = buildCalendarWeeks(calendarMonth);
+  const today = todayIso();
 
+  if (!windowsLoaded) return <div className="muted small">Loading calendar…</div>;
   // Nothing to schedule hours against yet — don't show an empty calendar control.
   if (!windows.length) {
-    return <div className="muted" style={{ fontSize: 13 }}>No scheduled dates yet — assign a license to the calendar above to set opening hours.</div>;
+    return <div className="muted small">No scheduled dates yet — assign dates to a licence on the Licences tab to set opening hours.</div>;
   }
 
+  // Licensed days from today on that have no hours yet, across every licence window (not just the month on screen).
+  const needDays = [];
+  if (rangeConfigs) {
+    for (const w of windows) {
+      let d = w.start > today ? w.start : today;
+      let guard = 0;
+      while (d <= w.end && guard < 800) {
+        if (!(rangeConfigs[d]?.hours?.length) && !needDays.includes(d)) needDays.push(d);
+        d = addDaysIso(d, 1);
+        guard++;
+      }
+    }
+    needDays.sort();
+  }
+  let noteText = null;
+  if (rangeConfigs) {
+    if (needDays.length === 0) noteText = "Every licensed day has hours set.";
+    else {
+      const n = needDays.length;
+      const first = needDays[0];
+      const last = needDays[n - 1];
+      const range = n === 1 ? shortDate(first) : addDaysIso(first, n - 1) === last ? `${shortDate(first)} to ${shortDate(last)}` : `next: ${shortDate(first)}`;
+      noteText = `${n} licensed day${n === 1 ? "" : "s"} still need${n === 1 ? "s" : ""} hours (${range}).`;
+    }
+  }
+  const dayHeading = (d) => {
+    const parts = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).formatToParts(new Date(d + "T00:00:00Z"));
+    const g = (t) => parts.find((x) => x.type === t)?.value;
+    const label = `${g("weekday")} ${g("day")} ${g("month")}`;
+    return d === today ? `Today, ${label}` : d === addDaysIso(today, 1) ? `Tomorrow, ${label}` : label;
+  };
+
   return (
-    <div className="stack">
-      <div className="cal-layout">
-        <div className="cal-card">
-          <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-            <button className="btn-outline icon-btn" aria-label="Previous month" disabled={overallStart && calendarMonth <= firstOfMonth(overallStart)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
-            <strong style={{ fontSize: 14 }}>{monthLabel(calendarMonth)}</strong>
-            <button className="btn-outline icon-btn" aria-label="Next month" disabled={overallEnd && calendarMonth >= firstOfMonth(overallEnd)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
-          </div>
-          <table>
-            <thead><tr>{DAY_LETTERS.map((d, i) => <th key={i}>{d}</th>)}</tr></thead>
-            <tbody>
-              {calendarWeeks.map((week, wi) => (
-                <tr key={wi}>
-                  {week.map((d, di) => {
-                    if (!d) return <td key={di} />;
-                    const inWindow = isWithinAnyWindow(d);
-                    const past = isDatePastClient(d);
-                    const count = monthConfigs[d]?.hours?.length || 0;
-                    const isSelected = d === selectedDate;
-                    const isToday = d === todayIso();
-                    return (
-                      <td key={di}>
-                        <button
-                          type="button"
-                          className={`cal-day${isSelected ? " sel" : count > 0 ? " has" : ""}${isToday ? " today" : ""}`}
-                          onClick={() => inWindow && setSelectedDate(d)}
-                          disabled={!inWindow}
-                          aria-pressed={isSelected}
-                          aria-label={`${formatDateDisplay(d)}${isToday ? ", today" : ""}${!inWindow ? ", not covered by a licence" : ""}`}
-                          title={!inWindow ? "Not covered by a license for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
-                        >
-                          {Number(d.slice(8, 10))}
-                        </button>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="cal-layout">
+      <div className="cal-card">
+        <div className="cal-nav">
+          <button type="button" className="btn-outline icon-btn" aria-label="Previous month" disabled={overallStart && calendarMonth <= firstOfMonth(overallStart)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, -1))}>‹</button>
+          <strong className="cal-month" aria-live="polite">{monthLabel(calendarMonth)}</strong>
+          <button type="button" className="btn-outline icon-btn" aria-label="Next month" disabled={overallEnd && calendarMonth >= firstOfMonth(overallEnd)} onClick={() => setCalendarMonth(addMonthsIso(calendarMonth, 1))}>›</button>
         </div>
-
-        <div className="stack grow">
-          {selectedDate && (
-            <>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong style={{ fontSize: 14 }}>Hours for {formatDateDisplay(selectedDate)}</strong>
-                <span role="status" aria-live="polite">
-                  {saveStatus === "saving" && <span className="muted small">Saving…</span>}
-                  {saveStatus === "saved" && <span className="small" style={{ color: "#2F6F4E" }}>✓ Saved</span>}
-                  {saveStatus === "error" && <span className="small" style={{ color: "#B3261E" }}>Save failed</span>}
-                </span>
-              </div>
-              <div className="hour-grid">
-                {GRID_HOURS.map((h) => {
-                  const open = draftHours.includes(h);
-                  const editable = isBlockEditable(h);
-                  return (
-                    <button
-                      key={h}
-                      type="button"
-                      onMouseDown={() => beginPaint(h)}
-                      onMouseEnter={() => continuePaint(h)}
-                      onClick={(e) => { if (e.detail === 0 && editable) applyHour(h, !open); }} // keyboard activation only; pointer input is handled on mousedown so dragging can paint a range
-                      className={`hour-chip${open ? " open" : ""}`}
-                      aria-pressed={open}
-                      disabled={!editable}
-                      title={!editable && selectedIsToday ? "Already passed" : undefined}
-                    >
-                      {formatTime(h)}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {!selectedIsLive && (
-                <div className="wrap">
-                  <span className="muted small" style={{ minWidth: 68 }}>This day:</span>
-                  <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
-                  <button className="btn-outline" onClick={clearDay}>Clear day</button>
-                </div>
-              )}
-
-              <div className="staff-inputs">
-                <label className="muted small" htmlFor={`staff-${service.id}`} style={{ minWidth: 68 }}>Staff:</label>
-                <input
-                  id={`staff-${service.id}`}
-                  className="input"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  disabled={selectedIsPast}
-                  value={staffCount}
-                  onChange={(e) => {
-                    const nextStaff = Math.max(1, Number(e.target.value) || 1);
-                    const { booking: nextBooking, walkIn: nextWalkIn } = clampStaffSplit(nextStaff, bookingStaffCount, walkInStaffCount);
-                    saveNow({ staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
-                  }}
-                />
-                {service.mode === "hybrid" && (
-                  <>
-                    <label className="muted small" htmlFor={`book-${service.id}`}>On bookings:</label>
-                    <input
-                      id={`book-${service.id}`}
-                      className="input"
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      disabled={selectedIsPast}
-                      value={bookingStaffCount}
-                      onChange={(e) => {
-                        const nextBooking = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
-                        const nextWalkIn = Math.min(walkInStaffCount, staffCount - nextBooking);
-                        saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
-                      }}
-                    />
-                    <label className="muted small" htmlFor={`walk-${service.id}`}>On walk-ins:</label>
-                    <input
-                      id={`walk-${service.id}`}
-                      className="input"
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      disabled={selectedIsPast}
-                      value={walkInStaffCount}
-                      onChange={(e) => {
-                        const nextWalkIn = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
-                        const nextBooking = Math.min(bookingStaffCount, staffCount - nextWalkIn);
-                        saveNow({ walkInStaffCount: nextWalkIn, bookingStaffCount: nextBooking });
-                      }}
-                    />
-                  </>
-                )}
-              </div>
-              {staffError && <div className="staff-error" role="alert">{staffError}</div>}
-
-              {!selectedIsPast && (
-                <div className="wrap">
-                  <span className="muted small" style={{ minWidth: 68 }}>Copy to:</span>
-                  <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
-                  <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
-                  <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
-                </div>
-              )}
-
-            </>
-          )}
+        <div className="cal-heads" aria-hidden="true">{DAY_NAMES.map((d) => <div key={d}>{d}</div>)}</div>
+        <div className="cal-grid" role="group" aria-label={monthLabel(calendarMonth)}>
+          {calendarWeeks.flat().map((d, i) => {
+            if (!d) return <div key={`b${i}`} />;
+            const st = windowStatusOn(d);
+            const inWindow = !!st;
+            const past = isDatePastClient(d);
+            const count = monthConfigs[d]?.hours?.length || 0;
+            const isSelected = d === selectedDate;
+            const isToday = d === today;
+            const needs = inWindow && !past && count === 0;
+            const stateText = !inWindow ? "not licensed" : st === "scheduled" ? "scheduled licence" : "licensed";
+            return (
+              <button
+                key={d}
+                type="button"
+                className={`cal-day ${!inWindow ? "none" : st === "scheduled" ? "sch" : "lic"}${past ? " past" : ""}${isToday ? " today" : ""}${isSelected ? " sel" : ""}`}
+                onClick={() => inWindow && setSelectedDate(d)}
+                disabled={!inWindow}
+                aria-pressed={isSelected}
+                aria-label={`${formatDateDisplay(d)}${isToday ? ", today" : ""}, ${stateText}${inWindow ? (count > 0 ? ", hours set" : past ? ", no hours" : ", needs hours") : ""}`}
+                title={!inWindow ? "Not covered by a licence for this service" : past ? "In the past — view only" : isToday ? "Today — you can still set hours for the rest of the day" : `${count} half-hour block(s) open`}
+              >
+                {Number(d.slice(8, 10))}
+                {inWindow && count > 0 && <span className="cal-dot" aria-hidden="true" />}
+                {needs && <span className="cal-dot need" aria-hidden="true" />}
+              </button>
+            );
+          })}
         </div>
+        <div className="cal-legend" aria-label="Key">
+          <span><i className="sw lic" />Licensed</span>
+          <span><i className="sw sch" />Scheduled</span>
+          <span><i className="sw none" />No licence</span>
+          <span><i className="sw dot" />Hours set</span>
+          <span><i className="sw dot need" />Needs hours</span>
+        </div>
+        {noteText && <div className={`cal-note${needDays.length === 0 ? " ok" : ""}`} role="status" data-testid="cal-note">{noteText}</div>}
+      </div>
+
+      <div className="cal-day-card" data-testid="day-panel">
+        {selectedDate ? (
+          <>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <h3 className="cal-day-title">{dayHeading(selectedDate)}</h3>
+                <div className="muted small">
+                  {selectedIsPast ? "In the past — view only."
+                    : selectedIsToday ? "Earlier hours are locked. Tap the rest to open or close them."
+                    : "Tap blocks to open or close them, or drag across a range."}
+                </div>
+              </div>
+              <span role="status" aria-live="polite">
+                {saveStatus === "saving" && <span className="muted small">Saving…</span>}
+                {saveStatus === "saved" && <span className="small" style={{ color: "#2F6F4E" }}>✓ Saved</span>}
+                {saveStatus === "error" && <span className="small" style={{ color: "#B3261E" }}>Save failed</span>}
+              </span>
+            </div>
+
+            <div className="staff-inputs">
+              <span className="staff-field"><label className="muted small" htmlFor={`staff-${service.id}`}>Staff:</label>
+              <input
+                id={`staff-${service.id}`}
+                className="input"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                disabled={selectedIsPast}
+                value={staffCount}
+                onChange={(e) => {
+                  const nextStaff = Math.max(1, Number(e.target.value) || 1);
+                  const { booking: nextBooking, walkIn: nextWalkIn } = clampStaffSplit(nextStaff, bookingStaffCount, walkInStaffCount);
+                  saveNow({ staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                }}
+              /></span>
+              {service.mode === "hybrid" && (
+                <>
+                  <span className="staff-field"><label className="muted small" htmlFor={`book-${service.id}`}>On bookings:</label>
+                  <input
+                    id={`book-${service.id}`}
+                    className="input"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    disabled={selectedIsPast}
+                    value={bookingStaffCount}
+                    onChange={(e) => {
+                      const nextBooking = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                      const nextWalkIn = Math.min(walkInStaffCount, staffCount - nextBooking);
+                      saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                    }}
+                  /></span>
+                  <span className="staff-field"><label className="muted small" htmlFor={`walk-${service.id}`}>On walk-ins:</label>
+                  <input
+                    id={`walk-${service.id}`}
+                    className="input"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    disabled={selectedIsPast}
+                    value={walkInStaffCount}
+                    onChange={(e) => {
+                      const nextWalkIn = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                      const nextBooking = Math.min(bookingStaffCount, staffCount - nextWalkIn);
+                      saveNow({ walkInStaffCount: nextWalkIn, bookingStaffCount: nextBooking });
+                    }}
+                  /></span>
+                </>
+              )}
+            </div>
+            {staffError && <div className="staff-error" role="alert">{staffError}</div>}
+
+            <div className="hour-grid" role="group" aria-label={`Half-hour blocks for ${dayHeading(selectedDate)}`}>
+              {GRID_HOURS.map((h) => {
+                const open = draftHours.includes(h);
+                const editable = isBlockEditable(h);
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    onMouseDown={() => beginPaint(h)}
+                    onMouseEnter={() => continuePaint(h)}
+                    onClick={(e) => { if (e.detail === 0 && editable) applyHour(h, !open); }} // keyboard activation only; pointer input is handled on mousedown so dragging can paint a range
+                    className={`hour-chip mono${open ? " open" : ""}${!editable ? " locked" : ""}`}
+                    aria-pressed={open}
+                    aria-label={formatTime(h)}
+                    disabled={!editable}
+                    title={!editable && selectedIsToday ? "Already passed" : undefined}
+                  >
+                    {formatClock(h)}
+                  </button>
+                );
+              })}
+            </div>
+
+            {!selectedIsLive && (
+              <div className="wrap">
+                <span className="muted small" style={{ minWidth: 68 }}>This day:</span>
+                <button className="btn-outline" onClick={fillNineToFive}>Set 9–5</button>
+                <button className="btn-outline" onClick={clearDay}>Clear day</button>
+              </div>
+            )}
+
+            {!selectedIsPast && (
+              <div className="wrap">
+                <span className="muted small" style={{ minWidth: 68 }}>Copy to:</span>
+                <button className="btn-outline" onClick={copyToWeek}>Rest of week</button>
+                <button className="btn-outline" onClick={copyToMonth}>Rest of month</button>
+                <button className="btn-outline" onClick={copyToWholePeriod}>All licensed dates</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="muted small">Pick a licensed day on the calendar to set its hours.</div>
+        )}
       </div>
     </div>
   );

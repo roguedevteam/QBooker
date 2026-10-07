@@ -202,7 +202,6 @@ select, .input {
 .svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-actions > .btn, .svc-actions > .btn-outline { flex: 1 1 110px; }
 .btn-outline[aria-expanded="true"] { background: var(--brand-weak); border-color: var(--brand); color: var(--brand); }
-.svc-panel { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
 .details-card { background: var(--surface-card); border: 1px solid var(--line); }
 .details-card summary { min-height: 44px; display: flex; align-items: center; padding: 0 14px; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
 .details-card summary::-webkit-details-marker { display: none; }
@@ -277,28 +276,78 @@ select, .input {
 .payment-option-title { font-size: 15px; font-weight: 600; color: var(--ink); }
 .payment-option-desc { font-size: 13px; color: var(--muted); }
 
+/* ---- Service card: Calendar / Licences tabs ------------------------------------------- */
+.svc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.svc-head .svc-name-wrap { flex: 1 1 200px; min-width: 0; }
+.svc-head .loc-name-status { min-width: 0; }
+.svc-head-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+.svc-tabs { display: flex; border-bottom: 1px solid var(--line); gap: 0; margin: 0 -14px; padding: 0 14px; }
+.svc-tab { flex: 1; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 6px; background: none; border: 0; border-radius: 0; font-size: 15px; font-weight: 500; color: var(--muted); padding: 0 8px; }
+.svc-tab[aria-selected="true"] { font-weight: 700; color: var(--brand); box-shadow: inset 0 -3px 0 var(--brand); }
+.svc-tab:focus-visible { outline-offset: -3px; }
+@media (min-width: 768px) { .svc-tabs { gap: 24px; } .svc-tab { flex: none; padding: 0 2px; } }
+.svc-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border: 1px dashed var(--line-strong); background: var(--surface-page); padding: 16px; }
+.svc-empty h3 { font-size: 16px; }
+.svc-empty p { margin: 0; font-size: 14px; line-height: 20px; }
+.svc-empty .btn { min-height: 44px; }
+.svc-panel { border-top: 0; padding-top: 0; }
+.lic-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.lic-line:first-child { border-top: 0; padding-top: 0; }
+.lic-line-main { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lic-line-top { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; font-size: 15px; }
+.lic-assign { flex: 1 0 100%; min-height: 44px; }
+.lic-line-picker { flex: 1 0 100%; }
+.buy-more { min-height: 44px; }
+@media (min-width: 768px) { .lic-assign { flex: 0 0 auto; } }
+
 /* ---- Hours calendar -------------------------------------------------------------------- */
-.cal-card { background: var(--surface-card); border: 1px solid var(--line); padding: 8px; min-width: 0; }
-.cal-card table td, .cal-card table th { padding: 1px; text-align: center; }
-.cal-card th { font-size: 12px; }
-.cal-day { width: 100%; min-height: 44px; font-size: 14px; border-radius: 0; border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 0; }
-.cal-day.has { background: #DCEBF5; }
-.cal-day.sel { background: var(--brand); color: #fff; border-color: var(--brand); }
-.cal-day.today { border: 2px solid var(--ink); }
-.cal-day:disabled { color: #8C8E87; opacity: 0.55; cursor: default; }
-.hour-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; user-select: none; }
-.hour-chip { min-height: 44px; border-radius: 0; border: 1px solid var(--line); background: var(--surface-page); color: var(--ink); font-size: 13px; font-weight: 600; padding: 0 4px; touch-action: manipulation; }
+.cal-layout { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cal-card, .cal-day-card { background: var(--surface-card); border: 1px solid var(--line); padding: 12px; min-width: 0; }
+.cal-day-card { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.cal-day-title { font-size: 17px; line-height: 24px; }
+.cal-nav { display: flex; align-items: center; margin-bottom: 8px; }
+.cal-nav .icon-btn { width: 44px; padding: 0; font-size: 18px; }
+.cal-month { flex: 1; text-align: center; font-size: 16px; }
+.cal-heads, .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-heads { text-align: center; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.cal-day { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 44px; padding: 0; font-size: 15px; font-weight: 600; line-height: 1.2; border-radius: 0; border: 1px solid transparent; color: var(--navy); touch-action: manipulation; }
+.cal-day.lic { background: #DCE9F3; }
+.cal-day.sch { background: #F3F7FA; border: 1px dashed #6F9BBB; }
+.cal-day.none { background: repeating-linear-gradient(135deg, #F0F0EC, #F0F0EC 4px, #E7E7E2 4px, #E7E7E2 8px); color: #6B6D66; font-weight: 500; cursor: default; }
+.cal-day.past { opacity: 0.6; }
+.cal-day.today { outline: 3px solid var(--accent-strong); outline-offset: -1px; opacity: 1; }
+.cal-day.sel { background: var(--brand); border-color: var(--brand); color: #fff; opacity: 1; }
+.cal-day.sel.sch { border-style: solid; }
+.cal-dot { width: 6px; height: 6px; margin-top: 3px; background: var(--brand); }
+.cal-dot.need { background: var(--accent); }
+.cal-day.sel .cal-dot { background: #fff; }
+.cal-day.sel .cal-dot.need { background: #FFD8A8; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; }
+.cal-legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #3F413C; }
+.cal-legend .sw { display: inline-block; width: 14px; height: 14px; }
+.cal-legend .sw.lic { background: #DCE9F3; }
+.cal-legend .sw.sch { background: #F3F7FA; border: 1px dashed #6F9BBB; }
+.cal-legend .sw.none { background: repeating-linear-gradient(135deg, #F0F0EC, #F0F0EC 3px, #DADAD4 3px, #DADAD4 6px); }
+.cal-legend .sw.dot { width: 8px; height: 8px; background: var(--brand); margin: 0 3px; }
+.cal-legend .sw.dot.need { background: var(--accent); }
+.cal-note { margin-top: 10px; background: var(--warn-weak); padding: 8px 10px; font-size: 13px; line-height: 19px; }
+.cal-note.ok { background: #E1F0E4; color: #1F5A2E; }
+.hour-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; user-select: none; }
+.hour-chip { min-height: 44px; border-radius: 0; border: 1px solid #CFCFC8; background: #fff; color: #3F413C; font-size: 13px; font-weight: 600; padding: 0 4px; touch-action: manipulation; }
 .hour-chip.open { background: var(--brand); border-color: var(--brand); color: #fff; }
-.hour-chip:disabled { opacity: 0.5; cursor: default; }
-.cal-layout { display: flex; flex-direction: column; gap: 12px; }
+.hour-chip.locked { background: #E7E7E2; border-color: #E7E7E2; color: #6B6D66; cursor: default; }
+.hour-chip.locked.open { background: #B7CBDB; border-color: #B7CBDB; color: var(--navy); }
 .staff-inputs { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.staff-inputs { gap: 8px 16px; }
+.staff-field { display: inline-flex; align-items: center; gap: 8px; }
 .staff-inputs .input { width: 72px; }
-@media (min-width: 768px) {
-  .cal-layout { flex-direction: row; align-items: flex-start; gap: 16px; }
-  .cal-card { flex: none; width: 270px; }
-  .cal-day { min-height: 32px; }
-  .hour-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
-  .hour-chip { min-height: 32px; }
+/* Layout follows the width the card actually has (the sidebar eats ~300px on desktop), not the viewport. */
+.svc-panel { container-type: inline-size; }
+@container (min-width: 480px) { .hour-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); } }
+@container (min-width: 660px) {
+  .cal-layout { display: grid; grid-template-columns: minmax(300px, 7fr) minmax(0, 8fr); align-items: start; gap: 16px; }
+  .cal-card { padding: 16px; }
+  .cal-day-card { padding: 18px; }
 }
 
 /* Logo mark — shared with the other QBooker apps */
@@ -315,7 +364,7 @@ select, .input {
   .stat-num { font-size: 30px; }
   th, td { padding: 10px 8px; }
   .container, .narrow { padding: 16px; }
-  .staff-inputs .input { width: 84px; }
+  .staff-inputs .input { width: 72px; }
   .row.wrap-phone { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
@@ -337,14 +386,8 @@ select, .input {
 .loc-name-status { font-size: 13px; color: var(--muted, #5F615B); min-width: 56px; }
 
 /* Service header: name + pause control, then badges */
-.svc-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.svc-title { flex: 1 1 160px; min-width: 0; }
 .svc-pause { flex: none; min-height: 44px; }
 .svc-pause.is-paused { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
-.svc-buy { display: flex; gap: 8px; flex: 1 1 190px; min-width: 0; }
-.svc-buy > .btn { flex: 1 1 auto; min-height: 44px; }
-.svc-buy > .icon-btn { flex: none; min-width: 44px; min-height: 44px; }
-@media (min-width: 768px) { .svc-buy { flex: 0 0 auto; } .svc-buy > .btn { flex: 0 0 auto; } }
 .add-loc-btn { min-height: 44px; }
 
 /* Location top: name + status line */
@@ -358,7 +401,6 @@ select, .input {
 .svc-name-input { font: inherit; font-size: 17px; font-weight: 600; color: var(--ink, #1B1D1F); background: #fff; border: 1px solid var(--line, #CFCFC8); padding: 0 10px; min-height: 44px; min-width: 0; flex: 1; box-sizing: border-box; border-radius: 0; }
 .svc-name-input:hover { border-color: #8A8C85; }
 .svc-name-input:focus { border-color: var(--blue, #1D5C8A); outline: 2px solid var(--blue, #1D5C8A); outline-offset: 0; }
-.svc-title { display: flex; flex-direction: column; gap: 6px; }
 .svc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .svc-status:empty { display: none; }
 
@@ -408,4 +450,5 @@ select, .input {
 .link-btn { align-self: flex-start; background: none; border: 0; border-radius: 0; padding: 0 4px; margin-left: -4px; min-height: 44px; display: inline-flex; align-items: center; font: inherit; font-size: 14px; color: var(--blue, #1D5C8A); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .link-btn[aria-expanded="true"] { font-weight: 600; }
 .link-btn:focus-visible { outline: 2px solid var(--blue, #1D5C8A); outline-offset: 2px; }
+.svc-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .svc-panel:focus { outline: none; }
