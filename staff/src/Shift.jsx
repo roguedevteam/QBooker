@@ -250,49 +250,39 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   }
   const waitingCol = (
     <section className="step" aria-labelledby="step-waiting">
-      {stepHead(2, "Waiting", "Call the next patient, or route them", "navy", "step-waiting")}
-      {waitingList.length === 0
-        ? <div className="empty-card">Nobody is waiting right now.</div>
-        : (
-          <div className="call-next-top">
-            <button className="btn-big btn-fill call-btn" disabled={!canCall} aria-describedby={busy ? "call-note" : undefined} onClick={() => callTicket(waitingList[0])}>
-              Call next patient <span className="mono">{waitingList[0].ticket_number}</span>
-            </button>
-            {busy && <div id="call-note" className="field-hint nomargin">Finish the patient with you first.</div>}
-          </div>
-        )}
-      {waitingList.length > 0 && <p className="queue-list-h">In order, next patient first</p>}
-      <div className="cards" role="list">
-        {waitingList.map((t, i) => {
-          const first = i === 0;
-          const targets = routeTargets(t.service_id);
-          const wm = t.type === "booked" ? null : minutesSince(t.created_at, clock);
-          return (
-            <div key={t.id} role="listitem" className={`pcard${first ? " pcard-next" : ""}`}>
-              <div className="pcard-top">
-                <span className="tn mono">{t.ticket_number}</span>
-                {t.type === "booked" && <span className="badge badge-blue">Appointment</span>}
-                {first && <span className="badge badge-next">Next</span>}
+      {stepHead(2, "Waiting", "In order, next patient first", "navy", "step-waiting")}
+      {waitingList.length === 0 && <div className="empty-card">Nobody is waiting right now.</div>}
+      {waitingList.length > 0 && (
+        <div className="wlist" role="list">
+          {waitingList.map((t, i) => {
+            const targets = routeTargets(t.service_id);
+            const wm = t.type === "booked" ? null : minutesSince(t.created_at, clock);
+            return (
+              <div key={t.id} role="listitem" className={`wrow${i === 0 ? " wrow-next" : ""}`}>
+                <span className="wrow-tn mono">{t.ticket_number}</span>
+                <span className="wrow-info">
+                  <span className="wrow-main">
+                    {t.type === "booked"
+                      ? <>Appointment {formatTime(t.slot_time)}{t.arrived_at ? ` · in ${formatClock(t.arrived_at)}` : ""}</>
+                      : <>Walk-in · {wm} min</>}
+                    {i === 0 && <span className="badge badge-next">Next</span>}
+                  </span>
+                  {multi && <span className="wrow-svc">{svcName(t.service_id)}</span>}
+                </span>
+                <span className="wrow-actions">
+                  <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>
+                  {targets.length > 0 && (
+                    <select className="route-select" value="" disabled={!canCall} aria-label={`Route ${t.ticket_number} to another service`} onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
+                      <option value="">Route to…</option>
+                      {targets.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                  )}
+                </span>
               </div>
-              <div className="pcard-info">
-                {t.type === "booked"
-                  ? <>Booked {formatTime(t.slot_time)}{t.arrived_at ? ` · checked in ${formatClock(t.arrived_at)}` : ""}</>
-                  : <>Waiting {wm} min</>}
-                {multi && <> · {svcName(t.service_id)}</>}
-              </div>
-              <div className="pcard-actions">
-                <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>
-                {targets.length > 0 && (
-                  <select className="route-select" value="" disabled={!canCall} aria-label="Route this patient to another service" onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
-                    <option value="">Route to…</option>
-                    {targets.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </select>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
       <div><button className="link-btn" onClick={refreshTickets}>Refresh the list</button></div>
     </section>
   );

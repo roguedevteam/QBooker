@@ -219,7 +219,8 @@ legend { padding: 0; }
   .vt { min-height: 48px; padding: 0 28px; font-size: 16px; background: #fff; color: var(--blue); border: 2px solid var(--blue); }
   .vt + .vt { border-left: 0; }
   .vt.on { background: var(--blue); color: #fff; border-top: 4px solid var(--accent); font-weight: 700; }
-  .board { display: flex; flex-direction: column; gap: 20px; max-width: 760px; }
+  .board { display: flex; flex-direction: column; gap: 20px; max-width: 760px; margin: 0 auto; }
+  .view-toggle { justify-content: center; }
   .arrow { display: flex; align-items: flex-start; justify-content: center; color: #6B6D66; padding-top: 4px; }
   .arrow svg { width: 24px; height: 24px; }
   .step { gap: 12px; }
@@ -237,3 +238,16 @@ legend { padding: 0; }
 .call-next-top { margin-bottom: 4px; }
 .call-next-top .call-btn { min-height: 56px; font-size: 17px; width: 100%; }
 .queue-list-h { font-size: 14px; color: var(--muted); margin: 6px 0 0; }
+
+/* Compact waiting list */
+.wlist { background: #fff; border: 1px solid var(--line); }
+.wrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); min-height: 56px; flex-wrap: wrap; }
+.wrow:first-child { border-top: 0; }
+.wrow-next { background: #FBEFD9; border-left: 4px solid var(--primary); padding-left: 6px; }
+.wrow-tn { font-size: 17px; font-weight: 600; min-width: 56px; }
+.wrow-info { flex: 1 1 140px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.wrow-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wrow-svc { color: var(--muted); font-size: 13px; }
+.wrow-actions { display: flex; gap: 8px; align-items: center; }
+.wrow .call-small { min-height: 44px; width: auto; padding: 0 18px; }
+.wrow .route-select { min-height: 44px; width: auto; max-width: 150px; }
