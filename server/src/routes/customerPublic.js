@@ -66,7 +66,10 @@ router.get("/:tenantId/info", (req, res) => {
 // readable from a public API.
 router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
-    `select l.id, l.name, l.website_url, l.channel_mode, l.whatsapp_updates_offer, l.onsite_only from locations l
+    // Join settings are account-wide (on tenants); the response keeps its per-location shape so the
+    // customer app is unchanged.
+    `select l.id, l.name, l.website_url, te.channel_mode, te.whatsapp_updates_offer, te.onsite_only from locations l
+     join tenants te on te.id = l.tenant_id
      where l.tenant_id=$1 and l.archived=false order by l.created_at`,
     [req.tenant.id]
   );
@@ -184,15 +187,14 @@ router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 *
     return res.status(409).json({ error: "We're not taking bookings today." });
   }
 
-  // Location-level web-channel rules.
-  const location = (await query(`select * from locations where id=$1`, [service.location_id])).rows[0];
-  if (location?.channel_mode === "whatsapp") {
+  // Account-wide web-channel rules (req.tenant); only the on-site code is per location.
+  if (req.tenant.channel_mode === "whatsapp") {
     return res.status(403).json({ error: "This clinic takes joins through WhatsApp only. Please use WhatsApp, or ask at reception.", reason: "channel_whatsapp_only" });
   }
   // On-site check: only for joining the live queue (a booking made in advance from home is fine).
   // The code must match this location's code (the one in the QR link / on the poster). It is a
   // shared secret, not proof of presence — there is no geofencing.
-  if (location?.onsite_only && type === "walk_in") {
+  if (req.tenant.onsite_only && type === "walk_in") {
     const supplied = String(onsiteCode || "").trim().toUpperCase();
     const row = (await query(`select code from location_codes where location_id=$1`, [service.location_id])).rows[0];
     if (!supplied) {
@@ -253,7 +255,7 @@ publicTicketRouter.use(rateLimit({ windowMs: 60 * 1000, max: 90 }));
 async function loadByToken(req, res, next) {
   if (!TOKEN_RE.test(req.params.token)) return res.status(404).json({ error: "Ticket not found.", state: "unknown" });
   const row = (await query(
-    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, l.whatsapp_updates_offer, te.business_name
+    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, te.whatsapp_updates_offer, te.business_name
      from ticket_web_access a
      join tickets t on t.id = a.ticket_id
      join tenants te on te.id = t.tenant_id

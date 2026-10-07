@@ -634,7 +634,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
       {/* Shop tab is hidden for now (future feature) — ShopTab below is kept, just unreachable
           until "shop" is added back to the tab list above. */}
       {tab === "customers" && (
-        <CustomersTab tenant={tenant} locations={visibleLocations} staffAppUrl={STAFF_APP_URL} customerLink={customerLink} onSaved={refreshCore} />
+        <CustomersTab tenant={tenant} locations={visibleLocations} customerLink={customerLink} onTenantChange={onTenantChange} />
       )}
       {tab === "staff" && <StaffTab staffAppUrl={STAFF_APP_URL} setError={setError} />}
       {tab === "shop" && <ShopTab tenant={tenant} locations={locations} />}
@@ -851,18 +851,12 @@ function combineAddress(line1, line2, city, postcode) {
   return [line1, line2, city, postcode].map((s) => (s || "").trim()).filter(Boolean).join(", ");
 }
 
-// Customers tab: how patients reach you (per location) plus the links to the staff kiosk and the patient page.
-function CustomersTab({ tenant, locations, staffAppUrl, customerLink, onSaved }) {
+// Customers tab: how patients reach you (one account-wide setting) plus the patient page link.
+// The staff kiosk link lives on the Staff tab.
+function CustomersTab({ tenant, locations, customerLink, onTenantChange }) {
   return (
     <div className="stack">
       <div className="card stack" style={{ background: "var(--accent-weak)" }}>
-        <div className="stack" style={{ gap: 4 }}>
-          <span className="small">Staff Kiosk link</span>
-          <code style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere" }}>{staffAppUrl}</code>
-        </div>
-        <div className="muted small">
-          Staff sign in with their own email address and a code sent to it. Add them in the Staff tab.
-        </div>
         <div className="stack" style={{ gap: 4 }}>
           <span className="small">Patient page link</span>
           <div className="row wrap">
@@ -873,14 +867,7 @@ function CustomersTab({ tenant, locations, staffAppUrl, customerLink, onSaved })
         <div className="muted small">Open this to see what patients see on the web page. Useful for testing your setup.</div>
       </div>
 
-
-      {locations.length === 0 && <div className="card muted">Add a location first, then choose how patients join it.</div>}
-      {locations.map((loc) => (
-        <div key={loc.id} className="stack">
-          {locations.length > 1 && <h2 className="chan-loc">{loc.name}</h2>}
-          <ChannelSettings key={loc.id} loc={loc} tenant={tenant} onSaved={onSaved} />
-        </div>
-      ))}
+      <ChannelSettings tenant={tenant} previewCode={locations[0]?.code} onTenantChange={onTenantChange} />
     </div>
   );
 }
@@ -894,21 +881,21 @@ const CHANNEL_CHOICES = [
   { value: "both", title: "Both", text: "Patients choose. Most will use the web page, so you pay for fewer messages.", recommended: true },
 ];
 
-function ChannelSettings({ loc, tenant, onSaved }) {
-  const saved = { mode: loc.channel_mode || "both", offer: loc.whatsapp_updates_offer !== false, onsite: !!loc.onsite_only };
+function ChannelSettings({ tenant, previewCode, onTenantChange }) {
+  const saved = { mode: tenant.channel_mode || "both", offer: tenant.whatsapp_updates_offer !== false, onsite: !!tenant.onsite_only };
   const [mode, setMode] = useState(saved.mode);
   const [offer, setOffer] = useState(saved.offer);
   const [onsite, setOnsite] = useState(saved.onsite);
   const [status, setStatus] = useState({ kind: "idle", text: "" }); // idle | saving | ok | error
   const dirty = mode !== saved.mode || offer !== saved.offer || onsite !== saved.onsite;
   const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
-  const previewHref = `${CUSTOMER_APP_URL}/?t=${tenant.id}${loc.code ? `&c=${encodeURIComponent(loc.code)}` : ""}`;
+  const previewHref = `${CUSTOMER_APP_URL}/?t=${tenant.id}${previewCode ? `&c=${encodeURIComponent(previewCode)}` : ""}`;
 
   async function save() {
     setStatus({ kind: "saving", text: "Saving…" });
     try {
-      await api.updateLocation(loc.id, { channelMode: mode, whatsappUpdatesOffer: offer, onsiteOnly: onsite });
-      await onSaved?.();
+      const r = await api.updateMe({ channelMode: mode, whatsappUpdatesOffer: offer, onsiteOnly: onsite });
+      onTenantChange?.(r.tenant);
       setStatus({ kind: "ok", text: "Saved. Patients see the new setting straight away." });
     } catch (err) {
       setStatus({ kind: "error", text: `Not saved: ${err.message}` });
@@ -916,15 +903,15 @@ function ChannelSettings({ loc, tenant, onSaved }) {
   }
 
   return (
-    <section className="card stack chan" aria-labelledby={`chan-h-${loc.id}`} style={{ gap: 14 }}>
-      <h2 id={`chan-h-${loc.id}`} className="chan-h">How patients join</h2>
-      <p className="muted chan-lede">One QR code and location code works for every option. Patients pick on their phone, or you can limit it.</p>
+    <section className="card stack chan" aria-labelledby="chan-h" style={{ gap: 14 }}>
+      <h2 id="chan-h" className="chan-h">How patients join</h2>
+      <p className="muted chan-lede">This applies to all your locations. One QR code and location code works for every option. Patients pick on their phone, or you can limit it.</p>
 
       <fieldset className="chan-group">
-        <legend className="sr-only">How patients join {loc.name}</legend>
+        <legend className="sr-only">How patients join</legend>
         {CHANNEL_CHOICES.map((c) => (
           <label key={c.value} className={`chan-opt${mode === c.value ? " is-on" : ""}`}>
-            <input type="radio" name={`channel-${loc.id}`} value={c.value} checked={mode === c.value} onChange={() => { setMode(c.value); setStatus({ kind: "idle", text: "" }); }} />
+            <input type="radio" name="channel" value={c.value} checked={mode === c.value} onChange={() => { setMode(c.value); setStatus({ kind: "idle", text: "" }); }} />
             <span className="chan-radio" aria-hidden="true" />
             <span className="chan-opt-body">
               <span className="chan-opt-title"><strong>{c.title}</strong>{c.recommended && <span className="badge badge-green">Recommended</span>}</span>
@@ -935,20 +922,20 @@ function ChannelSettings({ loc, tenant, onSaved }) {
       </fieldset>
 
       <div className={`chan-row${mode === "whatsapp" ? " is-disabled" : ""}`}>
-        <span className="chan-row-text" id={`offer-l-${loc.id}`}>
+        <span className="chan-row-text" id={"offer-l"}>
           <strong>Offer WhatsApp updates to web users</strong>
           <span className="small muted">A button to be messaged when nearly up{mode === "whatsapp" ? " (not used when WhatsApp only)" : ""}</span>
         </span>
-        <button type="button" role="switch" aria-checked={offer && mode !== "whatsapp"} aria-labelledby={`offer-l-${loc.id}`} disabled={mode === "whatsapp"}
+        <button type="button" role="switch" aria-checked={offer && mode !== "whatsapp"} aria-labelledby={"offer-l"} disabled={mode === "whatsapp"}
           className={`chan-switch${offer && mode !== "whatsapp" ? " is-on" : ""}`} onClick={() => { setOffer(!offer); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
       </div>
 
       <div className="chan-row">
-        <span className="chan-row-text" id={`onsite-l-${loc.id}`}>
+        <span className="chan-row-text" id={"onsite-l"}>
           <strong>Only joinable from the clinic</strong>
-          <span className="small muted">Patients must scan the QR code at reception or enter your location code{loc.code ? ` (${loc.code})` : ""}. Stops people joining the queue from home by accident. It checks the code, not where the phone is.</span>
+          <span className="small muted">Patients must scan the QR code at reception or enter the location code shown there. Stops people joining the queue from home by accident. It checks the code, not where the phone is.</span>
         </span>
-        <button type="button" role="switch" aria-checked={onsite} aria-labelledby={`onsite-l-${loc.id}`}
+        <button type="button" role="switch" aria-checked={onsite} aria-labelledby={"onsite-l"}
           className={`chan-switch${onsite ? " is-on" : ""}`} onClick={() => { setOnsite(!onsite); setStatus({ kind: "idle", text: "" }); }}><span className="chan-knob" /></button>
       </div>
 
@@ -1080,13 +1067,26 @@ function StaffTab({ staffAppUrl, setError }) {
 
   return (
     <div className="stack" style={{ gap: 16 }}>
+      <div className="card stack" style={{ background: "var(--accent-weak)" }}>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Staff Kiosk link</span>
+          <div className="row wrap">
+            <code className="grow" style={{ fontSize: 13, background: "#fff", padding: "6px 8px", overflowWrap: "anywhere", minWidth: 200 }}>{staffAppUrl}</code>
+            <button className="btn-outline" onClick={() => { navigator.clipboard?.writeText(staffAppUrl); }}>Copy</button>
+            <a className="btn-outline" href={staffAppUrl} target="_blank" rel="noopener noreferrer">Open</a>
+          </div>
+        </div>
+        <div className="muted small">
+          Staff sign in with their own email address and a code sent to it. Add them below.
+        </div>
+      </div>
+
       <div className="card stack">
         <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div className="stack grow" style={{ gap: 2, minWidth: 220 }}>
             <strong>Staff</strong>
             <span className="muted small">
               Add everyone who needs to call customers forward. They sign in to the staff portal with their email address and a code sent to it.
-              {staffAppUrl && <> Staff portal: <a href={staffAppUrl} target="_blank" rel="noreferrer" style={{ overflowWrap: "anywhere" }}>{staffAppUrl}</a></>}
             </span>
           </div>
           {!adding && <button className="btn" onClick={() => setAdding(true)}>+ Add staff member</button>}
