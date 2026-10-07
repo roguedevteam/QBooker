@@ -881,6 +881,42 @@ function LocationNameField({ loc, onSaved, setError }) {
   );
 }
 
+// A service's name as an always-visible bordered text box that saves itself, like the location name.
+function ServiceNameField({ service, onSaved, setError }) {
+  const [value, setValue] = useState(service.name);
+  const [state, setState] = useState("idle");
+  const timer = useRef(null);
+  const last = useRef(service.name);
+  async function save(v) {
+    const name = v.trim();
+    if (!name || name === last.current) return;
+    setState("saving");
+    try {
+      await api.updateService(service.id, { name });
+      last.current = name;
+      setState("saved");
+      onSaved?.();
+      setTimeout(() => setState("idle"), 1500);
+    } catch (err) { setState("idle"); setError(err.message); }
+  }
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <div className="svc-name-wrap">
+      <label className="sr-only" htmlFor={`svcname-${service.id}`}>Service name</label>
+      <input
+        id={`svcname-${service.id}`}
+        className="svc-name-input"
+        value={value}
+        maxLength={80}
+        onChange={(e) => { setValue(e.target.value); clearTimeout(timer.current); const v = e.target.value; timer.current = setTimeout(() => save(v), 800); }}
+        onBlur={() => { clearTimeout(timer.current); if (!value.trim()) setValue(last.current); else save(value); }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      />
+      <span className="loc-name-status" aria-live="polite">{state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}</span>
+    </div>
+  );
+}
+
 // Named staff users. Each person signs in to the staff portal with their email plus a code sent to
 // it, and every ticket they call is recorded against their name.
 function StaffTab({ staffAppUrl, setError }) {
@@ -1565,7 +1601,13 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
     <div className="svc-card" style={service.archived ? { opacity: 0.6 } : undefined}>
       <div className="svc-head">
         <div className="svc-title">
-          <div className="loc-name">{service.name}</div>
+          <ServiceNameField key={service.id} service={service} onSaved={onChange} setError={setError} />
+          <div className="svc-status">
+            {service.archived && <span className="badge badge-amber">Archived</span>}
+            {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
+            {!statusInHeader && <span className={`badge badge-${summary.color}`}>{summary.text}</span>}
+            {currentLic && !statusInHeader && <span className="muted small">{licenceDetailText(currentLic)}</span>}
+          </div>
           <div className="muted small">{modeText}</div>
         </div>
         {service.mode === "queue" && hasActiveLicense && (
@@ -1581,18 +1623,6 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
           </button>
         )}
       </div>
-      {(service.archived || service.queue_paused || !statusInHeader) && (
-        <div className="row wrap">
-          {service.archived && <span className="badge badge-amber">Archived</span>}
-          {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
-          {!statusInHeader && <span className={`badge badge-${summary.color}`}>{summary.text}</span>}
-        </div>
-      )}
-
-      {currentLic && !statusInHeader && (
-        <div className="muted" style={{ fontSize: 14, lineHeight: "20px" }}>{licenceDetailText(currentLic)}</div>
-      )}
-
       <div className="svc-actions">
         {showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>}
         {showLicencesBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}

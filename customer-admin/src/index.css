@@ -353,3 +353,11 @@ select, .input {
 .loc-status .muted { line-height: 18px; }
 .staff-error { border: 1px solid var(--error); background: var(--error-weak); color: var(--error); padding: 8px 12px; font-size: 14px; line-height: 20px; }
 @media (max-width: 480px) { .loc-status { margin-left: 34px; } .loc-toolbar { gap: 6px; } }
+
+.svc-name-wrap { display: flex; align-items: center; gap: 8px; }
+.svc-name-input { font: inherit; font-size: 17px; font-weight: 600; color: var(--ink, #1B1D1F); background: #fff; border: 1px solid var(--line, #CFCFC8); padding: 0 10px; min-height: 44px; min-width: 0; flex: 1; box-sizing: border-box; border-radius: 0; }
+.svc-name-input:hover { border-color: #8A8C85; }
+.svc-name-input:focus { border-color: var(--blue, #1D5C8A); outline: 2px solid var(--blue, #1D5C8A); outline-offset: 0; }
+.svc-title { display: flex; flex-direction: column; gap: 6px; }
+.svc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.svc-status:empty { display: none; }
