@@ -76,6 +76,44 @@ function BackIcon({ size = 22 }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
   );
 }
+const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+// Shared printable QR page (service and location QR codes). All text is HTML-escaped.
+function openPrintableQR({ link, pageTitle, businessName, heading, cta, sub }) {
+  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&color=1D5C8A&data=${encodeURIComponent(link)}`;
+  const html = `<!doctype html><html><head><title>${escHtml(pageTitle)}</title>
+      <meta charset="utf-8" />
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:40px auto;color:#1B1D1F;text-align:center;}
+        .brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:28px;}
+        .brand .mark{width:26px;height:26px;background:#1D5C8A;position:relative;display:inline-block;}
+        .brand .mark::after{content:"";position:absolute;top:-4px;right:-4px;width:12px;height:12px;border-radius:50%;background:#C8690D;}
+        .brand .word{font-size:18px;font-weight:700;letter-spacing:-0.02em;}
+        .card{border:2px solid #1B1D1F;border-radius:14px;padding:32px;}
+        .biz{font-size:13px;color:#5F615B;margin-bottom:2px;}
+        .svc{font-size:20px;font-weight:700;margin-bottom:20px;}
+        img{display:block;margin:0 auto;}
+        .cta{font-size:15px;font-weight:600;margin-top:20px;}
+        .sub{font-size:12px;color:#5F615B;margin-top:6px;}
+        .foot{font-size:11px;color:#5F615B;margin-top:28px;}
+      </style>
+      </head><body>
+        <div class="brand"><span class="mark"></span><span class="word">QBooker</span></div>
+        <div class="card">
+          <div class="biz">${escHtml(businessName)}</div>
+          <div class="svc">${escHtml(heading)}</div>
+          <img src="${qrImg}" width="260" height="260" alt="QR code" />
+          <div class="cta">${escHtml(cta)}</div>
+          <div class="sub">${escHtml(sub)}</div>
+        </div>
+        <div class="foot">Powered by QBooker</div>
+      </body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (w) w.onload = () => w.print();
+}
+
 function QrIcon({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -575,6 +613,25 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                     </span>
                   )}
                   {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
+                  <button
+                    type="button"
+                    className="btn-outline icon-btn"
+                    aria-label="Print location QR code"
+                    title="Print location QR code"
+                    onClick={() => {
+                      const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
+                      openPrintableQR({
+                        link: `${CUSTOMER_APP_URL}/?t=${tenant.id}&l=${loc.id}${loc.code ? `&c=${encodeURIComponent(loc.code)}` : ""}`,
+                        pageTitle: `QR code — ${tenant?.business_name || ""} — ${loc.name}`,
+                        businessName: tenant?.business_name || "",
+                        heading: loc.name,
+                        cta: "Scan to join the queue or book. Choose your service.",
+                        sub: "No app to download.",
+                      });
+                    }}
+                  >
+                    <QrIcon />
+                  </button>
                   <button
                     type="button"
                     className="btn-outline icon-btn"
@@ -1655,39 +1712,14 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
     const CUSTOMER_APP_URL = import.meta.env.VITE_CUSTOMER_APP_URL || "http://localhost:5177";
     // The location code rides along in the QR so "Only joinable from the clinic" locations accept the scan.
     const link = `${CUSTOMER_APP_URL}/?t=${tenant.id}&s=${service.id}${locationCode ? `&c=${encodeURIComponent(locationCode)}` : ""}`;
-    const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&color=1D5C8A&data=${encodeURIComponent(link)}`;
-    const businessName = tenant?.business_name || "";
-    const html = `<!doctype html><html><head><title>QR code — ${service.name}</title>
-      <meta charset="utf-8" />
-      <style>
-        body{font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:40px auto;color:#1B1D1F;text-align:center;}
-        .brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:28px;}
-        .brand .mark{width:26px;height:26px;background:#1D5C8A;position:relative;display:inline-block;}
-        .brand .mark::after{content:"";position:absolute;top:-4px;right:-4px;width:12px;height:12px;border-radius:50%;background:#C8690D;}
-        .brand .word{font-size:18px;font-weight:700;letter-spacing:-0.02em;}
-        .card{border:2px solid #1B1D1F;border-radius:14px;padding:32px;}
-        .biz{font-size:13px;color:#5F615B;margin-bottom:2px;}
-        .svc{font-size:20px;font-weight:700;margin-bottom:20px;}
-        img{display:block;margin:0 auto;}
-        .cta{font-size:15px;font-weight:600;margin-top:20px;}
-        .sub{font-size:12px;color:#5F615B;margin-top:6px;}
-        .foot{font-size:11px;color:#5F615B;margin-top:28px;}
-      </style>
-      </head><body>
-        <div class="brand"><span class="mark"></span><span class="word">QBooker</span></div>
-        <div class="card">
-          <div class="biz">${businessName}</div>
-          <div class="svc">${service.name}</div>
-          <img src="${qrImg}" width="260" height="260" alt="QR code" />
-          <div class="cta">📱 Scan to message us on WhatsApp</div>
-          <div class="sub">Join the queue or book instantly — no app to download.</div>
-        </div>
-        <div class="foot">Powered by QBooker</div>
-      </body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, "_blank");
-    if (w) w.onload = () => w.print();
+    openPrintableQR({
+      link,
+      pageTitle: `QR code — ${service.name}`,
+      businessName: tenant?.business_name || "",
+      heading: service.name,
+      cta: "📱 Scan to message us on WhatsApp",
+      sub: "Join the queue or book instantly — no app to download.",
+    });
   }
 
   return (

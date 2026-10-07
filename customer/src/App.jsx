@@ -64,11 +64,14 @@ function CustomerWhatsApp({ tenantId }) {
   const [liveToken, setLiveToken] = useState(() => urlParam("k") || getSavedToken(tenantId) || ""); // set => Returning screen
   const [justJoined, setJustJoined] = useState(false);
   const [gate, setGate] = useState(null); // { locId, mode } while the "how to join" screen is up
+  const [placeNotFound, setPlaceNotFound] = useState(false); // ?l= location link that doesn't match an active location
   const [startLoc, setStartLoc] = useState(undefined); // undefined = config not loaded yet; null = ask which location
   const [codePrompt, setCodePrompt] = useState(null); // { svcId, message } — on-site code needed to join
   const [codeInput, setCodeInput] = useState("");
   const [joining, setJoining] = useState(false);
   const onsiteCodeRef = useRef(urlParam("c").trim().toUpperCase()); // from the QR link, or typed in
+  // Location-scoped link (?l= with no ?s=): only that location's services are offered; a lone service is entered directly.
+  const scopedLocRef = useRef(urlParam("s") ? "" : urlParam("l").trim());
   const chosenRef = useRef(new Set()); // locations where the patient already passed the landing screen
   const scrollRef = useRef(null);
   const lastStatusRef = useRef(null);
@@ -87,7 +90,10 @@ function CustomerWhatsApp({ tenantId }) {
         // and sometimes a service (?s=); a single-location business needs neither.
         let entry = null;
         const code = urlParam("c").trim();
-        if (code) {
+        if (scopedLocRef.current) {
+          if (l.locations.some((x) => x.id === scopedLocRef.current)) entry = scopedLocRef.current;
+          else { setPlaceNotFound(true); return; }
+        } else if (code) {
           try { const ci = await api.getCodeInfo(code); if (ci.tenantId === tenantId) entry = ci.locationId; } catch { /* unknown code: ignore */ }
         }
         if (!entry) { const sid = urlParam("s"); const svc = sv.services.find((x) => x.id === sid); if (svc) entry = svc.location_id; }
@@ -101,7 +107,7 @@ function CustomerWhatsApp({ tenantId }) {
   // Runs once the config is in state (showServices reads it): greet, then apply the location's
   // channel mode — landing screen for "both", WhatsApp-only page for "whatsapp", straight in for "web".
   useEffect(() => {
-    if (startLoc === undefined) return;
+    if (startLoc === undefined || placeNotFound) return;
     beginChat(startLoc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startLoc]);
@@ -117,7 +123,7 @@ function CustomerWhatsApp({ tenantId }) {
   function enterLocation(locId) {
     const loc = locations.find((l) => l.id === locId);
     const mode = loc?.channel_mode || "both";
-    if (mode === "web" || chosenRef.current.has(locId)) { chosenRef.current.add(locId); return showServices(locId); }
+    if (mode === "web" || chosenRef.current.has(locId)) { chosenRef.current.add(locId); return showServices(locId, true); }
     setGate({ locId, mode }); // "both" -> landing, "whatsapp" -> WhatsApp-only page
   }
 
@@ -198,7 +204,9 @@ function CustomerWhatsApp({ tenantId }) {
   async function handle(action, payload) {
     if (action === "greet") {
       setServiceName("");
-      if (locations.length > 1) {
+      if (scopedLocRef.current) {
+        await showServices(scopedLocRef.current);
+      } else if (locations.length > 1) {
         const checks = await Promise.all(locations.map(async (l) => {
           const locServices = services.filter((s) => s.location_id === l.id);
           if (locServices.length === 0) return { location: l, open: false };
@@ -355,13 +363,15 @@ function CustomerWhatsApp({ tenantId }) {
 
   // Only shows services that are actually open right now — closed/out-of-hours ones never
   // appear as options at all, rather than letting the customer pick one only to be told no.
-  async function showServices(locId) {
+  async function showServices(locId, autoEnter = false) {
     const list = services.filter((s) => s.location_id === locId);
     const location = locations.find((l) => l.id === locId);
     if (list.length === 0) {
       bot("There aren't any services set up here yet.");
       return;
     }
+    // Location QR with exactly one active service: skip the picker.
+    if (autoEnter && scopedLocRef.current === locId && list.length === 1) { await handle("svc", list[0].id); return; }
     let checks;
     try {
       checks = await Promise.all(list.map(async (s) => {
@@ -397,6 +407,10 @@ function CustomerWhatsApp({ tenantId }) {
     return <div className="narrow card screen-error" role="alert">We couldn't find that business. Check the link and try again.</div>;
   }
 
+  if (placeNotFound) {
+    return <div className="narrow card screen-error" role="alert">We can't find that place. Scan the QR code again.</div>;
+  }
+
   if (liveToken) {
     return (
       <Returning
@@ -419,7 +433,7 @@ function CustomerWhatsApp({ tenantId }) {
     return (
       <ChannelLanding
         businessName={businessName} title={title} code={onsiteCodeRef.current}
-        onContinue={() => { chosenRef.current.add(gate.locId); setGate(null); showServices(gate.locId); }}
+        onContinue={() => { chosenRef.current.add(gate.locId); setGate(null); showServices(gate.locId, true); }}
       />
     );
   }
