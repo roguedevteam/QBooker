@@ -74,6 +74,7 @@ export const api = {
   updateTicket: (id, patch) => request(`/api/tenant/tickets/${id}`, { method: "PATCH", body: patch }),
   deleteTicket: (id) => request(`/api/tenant/tickets/${id}`, { method: "DELETE" }),
 
+  getToday: (serviceId, clockMinutes) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}${clockMinutes != null ? `&clockMinutes=${clockMinutes}` : ""}`),
   getAuditLog: () => request("/api/tenant/audit-log"),
   getDashboardStats: (date) => request(`/api/tenant/dashboard/stats?date=${date}`),
 };

@@ -226,3 +226,6 @@ body:has(.kiosk-bar) .app-header { display: none; }
   .btn-call-next { min-height: 72px; font-size: 22px; }
   .panel-head { padding: 8px 14px; }
 }
+
+/* Today panel (collapsible, inside the right-hand column) */
+.today-wrap { padding: 12px; }

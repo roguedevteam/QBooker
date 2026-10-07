@@ -5,7 +5,7 @@ import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import {
-  getUpcomingBookableSlots, walkInStatusNow, currentHourBlock,
+  getUpcomingBookableSlots, walkInStatusNow, currentHourBlock, buildTodayRibbon,
 } from "../lib/scheduling.js";
 import { isDateFullyPast, addDays } from "../lib/plan.js";
 import { getToday } from "../lib/clock.js";
@@ -778,6 +778,49 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${service?.name || "service"}`]);
   res.json({ ok: true });
+}));
+
+// --- Today (day ribbon) -----------------------------------------------------------
+// Read-only snapshot of today for one service: per 30-minute block the staff on, booking and
+// walk-in capacity and how much is used. Open to staff as well as admins. The client may pass
+// clockMinutes (its local time, like the other routes); otherwise London time is used.
+router.get("/today", asyncHandler(async (req, res) => {
+  const { serviceId } = req.query;
+  if (!serviceId) return res.status(400).json({ error: "serviceId required." });
+  const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, req.tenant.id])).rows[0];
+  if (!service) return res.status(404).json({ error: "Service not found." });
+
+  const date = getToday();
+  let nowMinutes = Number(req.query.clockMinutes);
+  if (!Number.isFinite(nowMinutes) || nowMinutes < 0 || nowMinutes > 1439) {
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+    nowMinutes = Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
+  }
+  nowMinutes = Math.floor(nowMinutes);
+  const empty = (reason) => res.json({
+    date, serviceId: service.id, serviceName: service.name, mode: service.mode, open: false, reason,
+    blocks: [], nowMinutes, queueCount: 0, staffNow: 0, totals: { freeLeft: 0, bookedTotal: 0 },
+  });
+
+  if (service.archived || !(await isServiceLicensedOn(service.id, date))) return empty("outside_license_window");
+  const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
+  if (!day || !day.hours?.length) return empty("closed");
+
+  // Same mode mapping and defaults as /services/:id/availability.
+  const staffCount = day.staff_count ?? 2;
+  const bookingStaffCount = service.mode === "queue" ? 0 : service.mode === "appointment" ? staffCount : (day.booking_staff_count ?? 1);
+  const walkInStaffCount = service.mode === "queue" ? staffCount : service.mode === "appointment" ? 0 : (day.walkin_staff_count ?? Math.max(0, staffCount - bookingStaffCount));
+  const cfg = { slotMinutes: service.slot_minutes, staffCount, bookingStaffCount, walkInStaffCount, hours: day.hours };
+
+  const tix = (await query(
+    `select type, status, slot_time, hour_block from tickets
+     where tenant_id=$1 and service_id=$2 and visit_date=$3 and status != 'cancelled'`,
+    [req.tenant.id, service.id, date]
+  )).rows;
+  res.json({
+    date, serviceId: service.id, serviceName: service.name, mode: service.mode, open: true, reason: null,
+    slotMinutes: service.slot_minutes, ...buildTodayRibbon(cfg, tix, nowMinutes),
+  });
 }));
 
 // --- Availability (used by the Customer WhatsApp simulator) -----------------------

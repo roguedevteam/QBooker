@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api, setToken, hasToken } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import TodayPanel from "./TodayPanel.jsx";
 
 function nowMinutes() {
   const d = new Date();
@@ -161,6 +162,7 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
   const [serviceIds, setServiceIds] = useState([]);
   const [roles, setRoles] = useState({}); // serviceId -> "queue" | "appointments" | "both" (hybrid services only)
   const [showSeen, setShowSeen] = useState(false);
+  const [showToday, setShowToday] = useState(false);
   const [started, setStarted] = useState(false);
   const [room, setRoom] = useState("");
   const [calling, setCalling] = useState(false); // a call/close request is in flight
@@ -390,6 +392,18 @@ function StaffKiosk({ tenant, staff, locationId, setError, onSignOut }) {
                 </div>
               ))}
             </div>
+          </section>
+
+          <section className="panel">
+            <button type="button" className="done-toggle" onClick={() => setShowToday((v) => !v)} aria-expanded={showToday} aria-controls="today-panel">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><path d="M5 9l7 7 7-7" /></svg>
+              <span className="grow">Today: bookings and capacity</span>
+            </button>
+            {showToday && (
+              <div id="today-panel" className="today-wrap">
+                <TodayPanel embedded services={covered.map((x) => ({ id: x.id, name: x.name }))} />
+              </div>
+            )}
           </section>
 
           <section className="panel">

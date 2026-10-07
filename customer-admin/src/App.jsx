@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { priceText, exMoney, incVat, VAT_RATE } from "./lib/vat.js";
 import { api, setToken, hasToken } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import TodayPanel from "./TodayPanel.jsx";
 
 // --- Date & time helpers -----------------------------------------------------
 function nowMinutes() {
@@ -323,7 +324,7 @@ function PendingPaymentBanner({ tenant }) {
   );
 }
 
-const TAB_TITLES = { dashboard: "Home", locations: "Locations", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
+const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
 const SIDE_TABS = ["dashboard", "locations", "staff", "profile", "audit", "shop"];
 const PHONE_TABS = ["dashboard", "locations", "staff", "profile"];
 
@@ -356,6 +357,10 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
   const visibleServices = services.filter((s) => !s.archived);
   const archivedServices = services.filter((s) => s.archived);
   const visibleLocations = locations.filter((l) => !l.archived);
+  // Services offered in the Today panel: active ones at active locations, first service is the default.
+  const todayServices = visibleServices
+    .filter((sv) => visibleLocations.some((l) => l.id === sv.location_id))
+    .map((sv) => ({ id: sv.id, name: sv.name, locationName: visibleLocations.length > 1 ? visibleLocations.find((l) => l.id === sv.location_id)?.name : undefined }));
   const archivedLocations = locations.filter((l) => l.archived);
   async function refreshQueue() {
     try {
@@ -627,6 +632,8 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
               ))}
             </div>
           )}
+
+          {todayServices.length > 0 && <TodayPanel services={todayServices} />}
 
           {stats && (
             <section className="stack" style={{ gap: 8 }} aria-label="Today at a glance">

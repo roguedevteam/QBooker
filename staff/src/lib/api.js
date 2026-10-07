@@ -34,6 +34,7 @@ export const api = {
   getLocations: () => request("/api/tenant/locations"),
   getServices: () => request("/api/tenant/services"),
   getTickets: (date) => request(`/api/tenant/tickets?date=${date}`),
+  getToday: (serviceId, clockMinutes) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}${clockMinutes != null ? `&clockMinutes=${clockMinutes}` : ""}`),
 
   callNext: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/call-next`, { method: "POST", body: payload }),
   callTicket: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/call`, { method: "POST", body: payload }),

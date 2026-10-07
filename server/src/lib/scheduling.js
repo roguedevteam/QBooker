@@ -77,3 +77,39 @@ export function getUpcomingBookableSlots(cfg, bookedCountByTime, fromMin, limit 
     .filter((s) => s >= fromMin && (bookedCountByTime[s] || 0) < cfg.bookingStaffCount)
     .slice(0, limit);
 }
+
+// Day ribbon for the "Today" view. cfg as for the functions above; tickets = today's
+// non-cancelled tickets for the service: [{ type, status, slot_time, hour_block }].
+// Booked counts use the same rule as getUpcomingBookableSlots/availability (type 'booked',
+// status != 'cancelled', bucketed by slot_time); walk-ins are bucketed by hour_block.
+export function buildTodayRibbon(cfg, tickets, nowMinutes) {
+  const starts = getHourBlocks(cfg);
+  const bookingCapacity = bookableBudget(cfg);
+  const walkinCapacity = walkInBudget(cfg);
+  const blocks = starts.map((start) => ({
+    start, staff: cfg.staffCount, bookingCapacity, walkinCapacity, booked: 0, walkIn: 0,
+  }));
+  let queueCount = 0;
+  for (const t of tickets) {
+    if (t.type === "walk_in" && t.status === "waiting") queueCount++;
+    if (t.type === "booked") {
+      const b = blocks.find((x) => t.slot_time >= x.start && t.slot_time < x.start + BLOCK_MINUTES);
+      if (b) b.booked++;
+    } else if (t.type === "walk_in") {
+      const b = blocks.find((x) => x.start === t.hour_block);
+      if (b) b.walkIn++;
+    }
+  }
+  const nowBlock = blocks.find((b) => nowMinutes >= b.start && nowMinutes < b.start + BLOCK_MINUTES);
+  return {
+    blocks,
+    nowMinutes,
+    queueCount,
+    staffNow: nowBlock ? nowBlock.staff : 0,
+    totals: {
+      freeLeft: blocks.filter((b) => b.start + BLOCK_MINUTES > nowMinutes)
+        .reduce((n, b) => n + Math.max(0, b.bookingCapacity - b.booked), 0),
+      bookedTotal: blocks.reduce((n, b) => n + b.booked, 0),
+    },
+  };
+}
