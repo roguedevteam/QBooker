@@ -96,7 +96,7 @@ const SCENARIOS = [
 ];
 
 const PATIENT_ACTIONS = [
-  { name: "Join the queue", text: "Patients message your WhatsApp number and get a ticket, their place in line and an estimated wait." },
+  { name: "Join the queue", text: "Patients scan your QR code and get a ticket, their place in line and an estimated wait. Nothing to install." },
   { name: "Book a slot", text: "Pick a time later in the day and get a reminder shortly beforehand." },
   { name: "Check in", text: "Let your team know they've arrived, without queuing at a desk." },
   { name: "Cancel or reschedule", text: "One reply, no phone call. Easy enough that people actually do it." },
@@ -111,7 +111,7 @@ const MODES = [
 const SETUP_STEPS = [
   { name: "Create your account", text: "Your name, your business name and your email address." },
   { name: "Add your service", text: "Name it, choose queue, appointments or hybrid, and pick your two free days." },
-  { name: "Share your WhatsApp link", text: "Patients can start queuing straight away." },
+  { name: "Share your QR code or link", text: "Patients can start queuing straight away." },
 ];
 
 const TRUST_POINTS = [
@@ -122,13 +122,13 @@ const TRUST_POINTS = [
 ];
 
 const FAQS = [
-  { q: "Do patients need to install anything?", a: "No. Everything happens inside WhatsApp, which almost everyone already has." },
+  { q: "Do patients need to install anything?", a: "No. Patients use their phone's browser, and can add WhatsApp updates if they want them." },
   { q: "Is it safe to use in an NHS setting?", a: "QBooker doesn't capture or store patient data or clinical records. It's GDPR and Cyber Essentials compliant, with UK-based servers and a UK-based support team." },
   { q: "Can I use it for just one day?", a: "Yes. Licences are bought per service and can run for a day, a week, a month or any custom number of days, so a one-off clinic day costs a one-day licence." },
   { q: "What's the difference between queue, appointments and hybrid?", a: "A queue is walk-ins only, first come first served. Appointments are booked slots only. Hybrid runs both together in one service, so people on site can join the queue now while others reserve a slot for later." },
-  { q: "What if a patient doesn't use WhatsApp?", a: "They can still turn up as normal and your team adds them to the same queue by hand." },
+  { q: "Do patients need WhatsApp?", a: "No. The queue works in any phone browser, and WhatsApp updates are optional. Anyone without a smartphone can still turn up and your team adds them by hand." },
   { q: "Can I run more than one location?", a: "Yes. Each location gets its own sign-in code and queue, and staff only see their own." },
-  { q: "How long does setup take?", a: "Under 60 seconds to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 (£150 inc VAT)." },
+  { q: "How long does setup take?", a: "Under 2 minutes to create an account and add a service, and no training is needed. If you'd like help anyway, an engineer can join a one-hour call to set up your system and train your team for £125 (£150 inc VAT)." },
   { q: "Is there a contract?", a: "No long-term contract. Buy a licence for a day, week, month or custom period at a time. Annual licences are available on request." },
 ];
 
@@ -150,6 +150,38 @@ const TL_BOOKED = [
   { at: 75, label: "3pm" },
   { at: 87.5, label: "4pm", mine: true },
 ];
+
+function WhatsAppIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="#25D366" d="M12.04 2a9.9 9.9 0 0 0-8.5 14.95L2 22l5.2-1.5A9.9 9.9 0 1 0 12.04 2z" />
+      <path fill="#fff" d="M8.6 7.4c-.2-.4-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1 2.7c.1.2 1.8 2.8 4.4 3.8 2.2.9 2.600.7 3.100.7.500-.1 1.500-.6 1.700-1.200.2-.6.2-1.100.2-1.200-.1-.1-.2-.2-.5-.3l-1.600-.8c-.2-.1-.4-.1-.5.100l-.7.9c-.1.2-.3.200-.5.100-.3-.1-1-.4-1.900-1.200-.7-.6-1.200-1.400-1.300-1.600-.1-.2 0-.4.100-.5l.4-.4c.1-.1.2-.3.200-.4.100-.2 0-.3 0-.4z" />
+    </svg>
+  );
+}
+
+function ShotsSection() {
+  const shots = [
+    { src: "/shots/dashboard.png", w: 1280, h: 1060, title: "Your dashboard", text: "See the whole day at a glance: places booked, free slots and who is queuing, for all services or one at a time." },
+    { src: "/shots/staff.png", w: 1100, h: 760, title: "Your team's screen", text: "One button calls the next patient. Appointments that have checked in sit in the same list as walk-ins." },
+  ];
+  return (
+    <section id="screens" className="lp-section lp-band-card">
+      <div className="wide">
+        <h2 className="lp-h2">See it working</h2>
+        <p className="lp-lead" style={{ marginBottom: 40 }}>These are real screens from QBooker, not mock-ups.</p>
+        <div className="lp-shots">
+          {shots.map((x) => (
+            <figure key={x.src} className="lp-shot">
+              <img src={x.src} width={x.w} height={x.h} loading="lazy" alt={x.title} />
+              <figcaption><strong>{x.title}</strong><span>{x.text}</span></figcaption>
+            </figure>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function HybridTimeline() {
   return (
@@ -212,8 +244,8 @@ function Landing({ onStart, simulatedBadge }) {
       {/* HERO */}
       <section className="wide lp-hero">
         <div>
-          <h1 className="lp-h1">A WhatsApp queue for your clinic, live in under 60 seconds</h1>
-          <p className="lp-lead">QBooker is queue management for NHS and healthcare services that don't run every day. Patients join from WhatsApp, your team calls them forward, and there's no hardware to buy or install.</p>
+          <h1 className="lp-h1">A digital queue for your clinic, live in under 2 minutes</h1>
+          <p className="lp-lead">QBooker is queue management for NHS and healthcare services that don't run every day. Patients scan a QR code and join from their phone, with optional WhatsApp updates. Your team calls them forward, and there's no hardware to buy or install.</p>
           <div className="lp-actions">
             <button className="btn-accent lp-start" onClick={onStart}>Start free trial</button>
             <div className="lp-free"><strong>2 free days</strong><span>No card needed</span></div>
@@ -227,47 +259,24 @@ function Landing({ onStart, simulatedBadge }) {
           </ul>
         </div>
 
-        <div className="lp-hero-visual">
-          <div className="lp-chat" role="img" aria-label="Example WhatsApp conversation: a patient joins the blood tests queue and is told they are third in line, about 15 minutes.">
-            <div className="lp-chat-head" aria-hidden="true">
-              <span className="lp-avatar">R</span>
-              <div><strong>Riverside Blood Clinic</strong><span>Business account</span></div>
-            </div>
-            <div className="lp-chat-body" aria-hidden="true">
-              <div className="msg in">Welcome to Riverside Blood Clinic. Reply Hi to get a ticket or book a slot.</div>
-              <div className="msg out">Hi</div>
-              <div className="msg in">Which service would you like today?</div>
-              <div className="msg out">Blood tests</div>
-              <div className="msg in">You're checked in. Your ticket is BT-014. You're #3 in line, about 15 min.</div>
-            </div>
-          </div>
-          <div className="lp-ticket" aria-hidden="true">
-            <div className="lp-ticket-top">
-              <span>Blood tests, Room 2</span>
-              <span className="lp-live">Live</span>
-            </div>
-            <div className="lp-ticket-main">
-              <span className="muted">Now serving</span>
-              <span className="mono lp-ticket-no">BT-011</span>
-            </div>
-            <div className="lp-ticket-divider" />
-            <div className="lp-ticket-next">
-              <span className="mono">BT-012</span><span className="mono">BT-013</span><span className="mono">BT-014</span>
-            </div>
-          </div>
+        <div className="lp-hero-visual lp-hero-shot">
+          <img className="lp-phone" src="/shots/patient.png" width="390" height="780" alt="The patient's ticket screen: Riverside Blood Clinic, ticket BT-014, 3 in line, about 15 minutes, with a Get updates on WhatsApp button." />
+          <div className="lp-wa-badge"><WhatsAppIcon size={22} /><span>Optional WhatsApp updates</span></div>
         </div>
       </section>
 
       {/* FACTS */}
       <section className="lp-band-navy lp-facts-band">
         <div className="wide lp-facts">
-          <div><strong>Live in under 60 seconds</strong><p>Create an account, add a service and your queue is ready.</p></div>
+          <div><strong>Live in under 2 minutes</strong><p>Create an account, add a service and your queue is ready.</p></div>
           <div><strong>No hardware</strong><p>No kiosks, ticket printers or installation. Your team uses a web page.</p></div>
           <div><strong>No patient data stored</strong><p>QBooker doesn't capture patient records of any kind.</p></div>
           <div><strong>UK-based support</strong><p>UK servers and a UK support team.</p></div>
           <div><strong>Pay by service only</strong><p>Unlimited locations, staff users and patients. You only pay for each service you run.</p></div>
         </div>
       </section>
+
+      <ShotsSection />
 
       {/* WHO IT'S FOR */}
       <section id="who" className="lp-section">
@@ -337,7 +346,7 @@ function Landing({ onStart, simulatedBadge }) {
       {/* SETUP */}
       <section id="setup" className="lp-section">
         <div className="wide">
-          <h2 className="lp-h2">Live in under 60 seconds, with nothing to learn</h2>
+          <h2 className="lp-h2">Live in under 2 minutes, with nothing to learn</h2>
           <p className="lp-lead" style={{ marginBottom: 40 }}>QBooker is built so nobody needs training. Create an account, add a service and you're ready to go, with two free days and no card.</p>
           <div className="lp-steps">
             {SETUP_STEPS.map((s, i) => (
@@ -454,7 +463,7 @@ function Landing({ onStart, simulatedBadge }) {
         <div className="wide lp-footer-grid">
           <div>
             <Logo size={22} />
-            <p className="muted" style={{ fontSize: 14, maxWidth: 280, lineHeight: 1.6, marginTop: 12 }}>Queue management over WhatsApp for NHS and healthcare services.</p>
+            <p className="muted" style={{ fontSize: 14, maxWidth: 280, lineHeight: 1.6, marginTop: 12 }}>Queue management for NHS and healthcare services.</p>
           </div>
           <div className="stack" style={{ gap: 10 }}>
             <strong style={{ fontSize: 13 }}>Product</strong>
