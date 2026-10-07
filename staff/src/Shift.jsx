@@ -250,8 +250,18 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   }
   const waitingCol = (
     <section className="step" aria-labelledby="step-waiting">
-      {stepHead(1, "Waiting", "Call the highlighted patient, or route them", "navy", "step-waiting")}
-      {waitingList.length === 0 && <div className="empty-card">Nobody is waiting right now.</div>}
+      {stepHead(1, "Waiting", "Call the next patient, or route them", "navy", "step-waiting")}
+      {waitingList.length === 0
+        ? <div className="empty-card">Nobody is waiting right now.</div>
+        : (
+          <div className="call-next-top">
+            <button className="btn-big btn-fill call-btn" disabled={!canCall} aria-describedby={busy ? "call-note" : undefined} onClick={() => callTicket(waitingList[0])}>
+              Call next patient <span className="mono">{waitingList[0].ticket_number}</span>
+            </button>
+            {busy && <div id="call-note" className="field-hint nomargin">Finish the patient with you first.</div>}
+          </div>
+        )}
+      {waitingList.length > 0 && <p className="queue-list-h">In order, next patient first</p>}
       <div className="cards" role="list">
         {waitingList.map((t, i) => {
           const first = i === 0;
@@ -271,9 +281,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                 {multi && <> · {svcName(t.service_id)}</>}
               </div>
               <div className="pcard-actions">
-                {first
-                  ? <button className="btn-big btn-fill call-btn" disabled={!canCall} aria-describedby={busy ? "call-note" : undefined} onClick={() => callTicket(t)}>Call this patient</button>
-                  : <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>}
+                <button className="btn-sec call-small" disabled={!canCall} aria-label={`Call ${t.ticket_number}`} onClick={() => callTicket(t)}>Call</button>
                 {targets.length > 0 && (
                   <select className="route-select" value="" disabled={!canCall} aria-label="Route this patient to another service" onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
                     <option value="">Route to…</option>
@@ -281,7 +289,6 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                   </select>
                 )}
               </div>
-              {first && busy && <div id="call-note" className="field-hint nomargin">Finish the patient with you first.</div>}
             </div>
           );
         })}
