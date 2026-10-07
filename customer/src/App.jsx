@@ -105,6 +105,8 @@ function Patient({ tenantId }) {
   function bot(text, opts) { setMessages((m) => [...m, { from: "bot", text, at: Date.now() }]); setOptions(opts || []); }
   function user(text) { setMessages((m) => [...m, { from: "user", text, at: Date.now() }]); setOptions([]); }
   const startAgain = [{ label: "Start again", action: "restart" }];
+  // "Visit our website" (the business's site, where opening hours live), offered whenever a patient can't be seen today.
+  const websiteOpts = (loc) => (websiteUrl || loc?.website_url) ? [{ label: "Visit our website", sub: "See opening hours", variant: "secondary", action: "website", payload: websiteUrl || loc.website_url }] : [];
 
   function beginChat(locId) {
     runRef.current += 1;
@@ -148,7 +150,7 @@ function Patient({ tenantId }) {
     const list = services.filter((s) => s.location_id === locId);
     const location = locations.find((l) => l.id === locId);
     // Nothing to offer: welcome them to this location and point to the business website.
-    const siteLink = (websiteUrl || location?.website_url) ? [{ label: "Visit our website", variant: "secondary", action: "website", payload: websiteUrl || location.website_url }] : [];
+    const siteLink = websiteOpts(location);
     const welcomeHere = () => setMessages((m) => m.map((x, i) => (i === 0 ? { ...x, text: `Welcome to ${location?.name || businessName}.` } : x))); // replaces the opening welcome so it names the location
     if (list.length === 0) { welcomeHere(); bot("Nothing is available here today.", siteLink); return; }
     const checks = await Promise.all(list.map(async (s) => {
@@ -182,7 +184,7 @@ function Patient({ tenantId }) {
     const run = runRef.current;
     setServiceName(svc.name);
     if (echo) user(svc.name);
-    const another = manyServicesRef.current ? [{ label: "Choose another service", variant: "secondary", action: "restart" }] : [];
+    const another = [...(manyServicesRef.current ? [{ label: "Choose another service", variant: "secondary", action: "restart" }] : []), ...websiteOpts(locations.find((l) => l.id === (currentLoc || svc.location_id)))];
     let r = avail;
     if (!r) {
       try { r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes()); }
