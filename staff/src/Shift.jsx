@@ -250,7 +250,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   }
   const waitingCol = (
     <section className="step" aria-labelledby="step-waiting">
-      {stepHead(1, "Waiting", "Call the next patient, or route them", "navy", "step-waiting")}
+      {stepHead(2, "Waiting", "Call the next patient, or route them", "navy", "step-waiting")}
       {waitingList.length === 0
         ? <div className="empty-card">Nobody is waiting right now.</div>
         : (
@@ -299,7 +299,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
 
   const nowCol = (
     <section className="step" aria-labelledby="step-now">
-      {stepHead(2, "With you now", "Tap Finish when they leave", "amber", "step-now")}
+      {stepHead(1, "With you now", "Tap Finish when they leave", "amber", "step-now")}
       {mine.length === 0 && (
         <div className="empty-card calm">
           <strong>Nobody with you.</strong>
@@ -398,8 +398,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   );
 
   const tabs = [
-    ["waiting", "1 Waiting", String(waitingList.length)],
-    ["now", "2 With you", mine[0]?.ticket_number || "none"],
+    ["now", "1 With you", mine[0]?.ticket_number || "none"],
+    ["waiting", "2 Waiting", String(waitingList.length)],
     ["seen", "3 Seen", String(seen.length)],
   ];
   const wideToday = isWide && view === "today";
@@ -447,9 +447,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
 
         {isWide && !wideToday && (
           <div className="board">
-            {waitingCol}
-            <div className="arrow" aria-hidden="true"><Chevron /></div>
             {nowCol}
+            {waitingCol}
           </div>
         )}
 
