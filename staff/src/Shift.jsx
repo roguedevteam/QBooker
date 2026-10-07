@@ -318,6 +318,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
             {panel === null && (
               <>
                 <button className="btn-sec" disabled={calling} onClick={async () => { try { await api.callAgain(t.id, { roomLabel }); setNote(`Called ${t.ticket_number} again.`); } catch (err) { setError(err.message); } }}>Call again</button>
+                <button className="btn-sec" disabled={calling} onClick={() => doAction(() => api.returnToQueue(t.id, { clockMinutes: nowMinutes() }), () => setNote(`Put ${t.ticket_number} back in the queue.`))}>Return to queue</button>
                 <button className="btn-sec" disabled={calling} aria-haspopup="true" onClick={() => setPanel("away")}>No show</button>
                 {others.length > 0 && (
                   <select className="route-select route-now" value="" disabled={calling} aria-label={`Route ${t.ticket_number} to another service`} onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
@@ -330,7 +331,6 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
             {panel === "away" && (
               <div className="sub-panel" role="group" aria-label="No show">
                 <div className="sub-title">What should happen to {t.ticket_number}?</div>
-                <button className="btn-sec" disabled={calling} onClick={() => doAction(() => api.returnToQueue(t.id, { clockMinutes: nowMinutes() }), () => setPanel(null))}>Put them back in the queue</button>
                 <button className="btn-sec btn-warn" disabled={calling} onClick={() => doAction(() => api.noShowTicket(t.id), () => setPanel(null))}>They left: mark as no-show</button>
                 <button className="btn-sec btn-warn" disabled={calling} onClick={() => doAction(() => api.cancelTicket(t.id), () => setPanel(null))}>Cancel this ticket</button>
                 <button className="link-btn" onClick={() => setPanel(null)}>Go back</button>
