@@ -190,9 +190,6 @@ function Landing({ onStart, simulatedBadge }) {
 
   return (
     <div id="top" className="lp">
-      <div className="lp-promo">
-        <div className="wide"><strong>Two free days</strong> <span>No card needed</span> <span>Try us out</span></div>
-      </div>
       {/* NAV */}
       <header className="lp-nav">
         <div className="wide lp-nav-inner">
@@ -218,11 +215,12 @@ function Landing({ onStart, simulatedBadge }) {
           <h1 className="lp-h1">A WhatsApp queue for your clinic, live in under 60 seconds</h1>
           <p className="lp-lead">QBooker is queue management for NHS and healthcare services that don't run every day. Patients join from WhatsApp, your team calls them forward, and there's no hardware to buy or install.</p>
           <div className="lp-actions">
-            <button className="btn-accent" onClick={onStart}>Start free trial</button>
-            <a href="#hybrid" className="lp-link">See how the hybrid queue works</a>
+            <button className="btn-accent lp-start" onClick={onStart}>Start free trial</button>
+            <div className="lp-free"><strong>2 free days</strong><span>No card needed</span></div>
           </div>
+          <p style={{ margin: "-12px 0 24px" }}><a href="#hybrid" className="lp-link">See how the hybrid queue works</a></p>
           <ul className="lp-checks">
-            <li>Two free days to try it, with no card needed</li>
+            <li>Unlimited locations, staff users and patients</li>
             <li>No patient data or clinical records stored</li>
             <li>UK-based servers and support</li>
           </ul>
@@ -443,7 +441,10 @@ function Landing({ onStart, simulatedBadge }) {
             <h2 className="lp-h2" style={{ marginBottom: 10 }}>Ready to run your next clinic day without the paperwork?</h2>
             <p className="lp-lead">Two free days. No card needed.</p>
           </div>
-          <button className="btn-accent" onClick={onStart}>Start free trial</button>
+          <div className="lp-actions" style={{ margin: 0 }}>
+            <button className="btn-accent lp-start" onClick={onStart}>Start free trial</button>
+            <div className="lp-free lp-free-dark"><strong>2 free days</strong><span>No card needed</span></div>
+          </div>
         </div>
       </section>
 

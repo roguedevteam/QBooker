@@ -357,3 +357,11 @@ html { scroll-padding-top: 80px; }
   .lp-footer-grid .stack { gap: 0 !important; }
   .lp-footer-grid .stack a { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* Prominent free-trial callout next to the Start free trial button */
+.lp-start { padding: 16px 28px; font-size: 17px; }
+.lp-free { display: flex; flex-direction: column; border-left: 3px solid var(--accent); padding-left: 14px; line-height: 1.2; }
+.lp-free strong { font-size: 24px; font-weight: 700; color: var(--navy, #122B40); }
+.lp-free span { font-size: 15px; color: var(--muted, #5F615B); margin-top: 3px; }
+.lp-free-dark strong { color: #fff; }
+.lp-free-dark span { color: #D6E0E8; }
