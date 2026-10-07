@@ -527,10 +527,9 @@ router.get("/services/:id/daily-config", asyncHandler(async (req, res) => {
 }));
 
 // A day is "live" once it is today or earlier (date <= getToday()). Past days are rejected
-// outright. Today can still be edited, but only upwards: staff counts can never drop below what
-// is already in place, hours that have already started (before nowMinutes) are frozen, and an
-// hour block that already has non-cancelled tickets can't be removed. Anything else (more staff,
-// extra hours later in the day, removing an untouched upcoming hour) is fine.
+// outright. Today can still be edited: staff can always be increased, but only reduced while the
+// service has no bookings and nobody in the queue today; hours that have already started (before
+// nowMinutes) are frozen, and an hour block that already has non-cancelled tickets can't be removed.
 function isLiveDate(date) {
   return !!date && String(date).slice(0, 10) <= String(getToday()).slice(0, 10);
 }
@@ -558,10 +557,21 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(async (req, res
   if (isLiveDate(date)) {
     const existing = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
     if (existing) {
-      if (resolvedStaff < existing.staff_count
+      const reducing = resolvedStaff < existing.staff_count
         || resolvedBooking < (existing.booking_staff_count ?? 0)
-        || resolvedWalkIn < (existing.walkin_staff_count ?? 0)) {
-        return res.status(409).json({ error: "Staff can't be reduced once the day is live — you can only add more." });
+        || resolvedWalkIn < (existing.walkin_staff_count ?? 0);
+      if (reducing) {
+        // Increases are always fine. A decrease (total, booking or walk-in staff) is only allowed
+        // while nothing is committed against today's capacity: no non-cancelled bookings and nobody
+        // waiting or being served in the queue for this service.
+        const used = (await query(
+          `select count(*)::int as n from tickets where service_id=$1 and visit_date=$2
+             and ((type='booked' and status != 'cancelled') or (type='walk_in' and status in ('waiting','serving')))`,
+          [service.id, date]
+        )).rows[0].n;
+        if (used > 0) {
+          return res.status(409).json({ error: "Staff can't be reduced today because there are already bookings or customers in the queue for this service. You can still add more staff." });
+        }
       }
       const nowMinutes = Number.isFinite(Number(req.body.nowMinutes)) && Number(req.body.nowMinutes) >= 0 && Number(req.body.nowMinutes) <= 1439
         ? Math.floor(Number(req.body.nowMinutes)) : londonNowMinutes();

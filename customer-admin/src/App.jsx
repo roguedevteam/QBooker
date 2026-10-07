@@ -497,15 +497,18 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
       <main className="shell-main stack" style={{ gap: 16 }}>
         <div className="page-head">
           {openLoc ? (
-            <div className="subhead grow">
-              <button type="button" className="back-btn" aria-label="Back to locations" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); }}><BackIcon /></button>
-              <LocationNameField key={openLoc.id} loc={openLoc} onSaved={refreshCore} setError={setError} />
+            <div className="loc-top grow">
+              <div className="subhead">
+                <button type="button" className="back-btn" aria-label="Back to locations" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); }}><BackIcon /></button>
+                <LocationNameField key={openLoc.id} loc={openLoc} onSaved={refreshCore} setError={setError} />
+              </div>
+              <LocationStatusLine services={visibleServices.filter((s) => s.location_id === openLoc.id)} allLicenses={allLicenses} today={date} />
             </div>
           ) : (
             <h1>{TAB_TITLES[tab]}</h1>
           )}
-          {tab === "locations" && !addingLocation && (
-            <button type="button" className="btn add-loc-btn" onClick={() => { setOpenLocId(null); setAddingServiceFor(null); setAddingLocation(true); }}>+ Add location</button>
+          {tab === "locations" && !openLoc && !addingLocation && (
+            <button type="button" className="btn add-loc-btn" onClick={() => setAddingLocation(true)}>+ Add location</button>
           )}
         </div>
 
@@ -572,7 +575,9 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                   )}
                   {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
                   <button
-                    className="btn-outline"
+                    type="button"
+                    className="btn-outline icon-btn"
+                    aria-label="Archive location"
                     title="Archive location"
                     onClick={async () => {
                       if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
@@ -582,7 +587,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                       }
                     }}
                   >
-                    <ArchiveIcon /> Archive
+                    <ArchiveIcon size={20} />
                   </button>
                 </div>
 
@@ -602,7 +607,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                 {locServices.length === 0 && !addingHere && <div className="muted small">No services here yet — use "Add service" above.</div>}
                 {locServices.map((s) => (
                   <ServiceEditor
-                    key={s.id} service={s} allServices={services} tenant={tenant} setError={setError}
+                    key={s.id} statusInHeader={locServices.length === 1} service={s} allServices={services} tenant={tenant} setError={setError}
                     locationName={loc.name}
                     onChange={() => { refreshCore(); refreshLicenses(); }}
                     autoBuy={renewServiceId === s.id}
@@ -1422,6 +1427,44 @@ function locationLicenceText(locServices, allLicenses, today) {
   return pending > 0 ? "licence not yet scheduled" : "no licence yet";
 }
 
+function licencePayText(l) {
+  if (l.paid === false) return l.payment_method === "invoice" ? "Invoice, awaiting payment" : "Unpaid";
+  if (l.payment_method === "card") return "Paid by card";
+  if (l.payment_method === "invoice") return "Invoiced";
+  return "";
+}
+// The licence that matters right now: the live one, otherwise the next one coming up.
+function currentLicenceOf(licenses) {
+  return licenses.find((l) => l.status === "active") || licenses.filter((l) => l.status === "scheduled").sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))[0];
+}
+function licenceDetailText(l) {
+  const parts = [`${l.plan_label} licence${l.start_date ? ` · ${shortDate(l.start_date)} to ${shortDate(l.end_date)}` : ""}`];
+  if (Number(l.price) > 0) parts.push(priceText(l.price));
+  const pay = licencePayText(l);
+  if (pay) parts.push(pay);
+  return parts.join(" · ");
+}
+// Compact status line directly under the location name: licence badge + one line of licence detail
+// for a sole service, or the location-level licence summary when there are several services.
+function LocationStatusLine({ services, allLicenses, today }) {
+  if (services.length === 1) {
+    const lics = allLicenses.filter((l) => l.service_id === services[0].id);
+    const summary = licenseSummary(lics);
+    const cur = currentLicenceOf(lics.filter((l) => l.status !== "refunded" && l.status !== "expired"));
+    return (
+      <div className="loc-status" data-testid="loc-status">
+        <span className={`badge badge-${summary.color}`}>{summary.text}</span>
+        {cur && <span className="muted small">{licenceDetailText(cur)}</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="loc-status" data-testid="loc-status">
+      <span className="muted small">{services.length} service{services.length === 1 ? "" : "s"} · {locationLicenceText(services, allLicenses, today)}</span>
+    </div>
+  );
+}
+
 // A compact, always-visible summary of a service's license health — shown in the
 // collapsed header row so you don't have to expand every service to check coverage.
 function licenseSummary(licenses) {
@@ -1442,7 +1485,7 @@ function licenseSummary(licenses) {
   return { text: "No license", color: "red" };
 }
 
-function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, autoBuy, onAutoBuyHandled, startExpanded = false }) {
+function ServiceEditor({ service, allServices, onChange, setError, tenant, locationName, autoBuy, onAutoBuyHandled, startExpanded = false, statusInHeader = false }) {
   const [panel, setPanel] = useState(startExpanded ? "hours" : null); // null | "hours" | "licences"
   const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
@@ -1466,16 +1509,8 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
     setBuyTrigger((t) => t + 1);
   }
   useEffect(() => { if (autoBuy) { startBuy(); onAutoBuyHandled?.(); } }, [autoBuy]); // eslint-disable-line react-hooks/exhaustive-deps
-  // The licence that matters right now: the live one, otherwise the next one coming up.
-  const currentLic = licenses.find((l) => l.status === "active") || licenses.filter((l) => l.status === "scheduled").sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))[0];
+  const currentLic = currentLicenceOf(licenses);
   const modeText = service.mode === "queue" ? "Queue (walk-ins)" : service.mode === "appointment" ? `Appointments · ${service.slot_minutes} min slots` : `Queue and appointments · ${service.slot_minutes} min slots`;
-  function payText(l) {
-    if (l.paid === false) return l.payment_method === "invoice" ? "Invoice, awaiting payment" : "Unpaid";
-    if (l.payment_method === "card") return "Paid by card";
-    if (l.payment_method === "invoice") return "Invoiced";
-    return "";
-  }
-
   // Fake for now — there's no real WhatsApp Business number wired up yet, so the QR just
   // points at the same stand-in customer link the Setup tab shows, with the service tagged
   // on so the real version can route straight to it once WhatsApp is actually connected.
@@ -1537,20 +1572,16 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
           </button>
         )}
       </div>
-      <div className="row wrap">
-        {service.archived && <span className="badge badge-amber">Archived</span>}
-        {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
-        <span className={`badge badge-${summary.color}`}>{summary.text}</span>
-      </div>
-
-      {currentLic && (
-        <div className="muted" style={{ fontSize: 14, lineHeight: "20px" }}>
-          {currentLic.plan_label} licence{currentLic.start_date ? ` · ${shortDate(currentLic.start_date)} to ${shortDate(currentLic.end_date)}` : ""}
-          {(Number(currentLic.price) > 0 || payText(currentLic)) && <br />}
-          {Number(currentLic.price) > 0 && priceText(currentLic.price)}
-          {Number(currentLic.price) > 0 && payText(currentLic) && " · "}
-          {payText(currentLic)}
+      {(service.archived || service.queue_paused || !statusInHeader) && (
+        <div className="row wrap">
+          {service.archived && <span className="badge badge-amber">Archived</span>}
+          {service.queue_paused && <span className="badge badge-red">Queue paused</span>}
+          {!statusInHeader && <span className={`badge badge-${summary.color}`}>{summary.text}</span>}
         </div>
+      )}
+
+      {currentLic && !statusInHeader && (
+        <div className="muted" style={{ fontSize: 14, lineHeight: "20px" }}>{licenceDetailText(currentLic)}</div>
       )}
 
       <div className="svc-actions">
@@ -1559,21 +1590,15 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
         <div className="svc-buy">
           <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
           <button type="button" className="btn-outline icon-btn" aria-label="Print QR code" title="Print QR code" onClick={printServiceQR}><QrIcon /></button>
+          <button
+            type="button" className="btn-outline icon-btn" aria-label="Archive service" title="Archive service"
+            onClick={async () => {
+              if (confirm(`Archive "${service.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its license history is kept.`)) {
+                try { await api.updateService(service.id, { archived: true }); onChange(); } catch (err) { setError(err.message); }
+              }
+            }}
+          ><ArchiveIcon size={20} /></button>
         </div>
-        <MoreMenu
-          label={`More actions for ${service.name}`}
-          items={[
-            {
-              label: "Archive", danger: true,
-              onClick: async () => {
-                if (confirm(`Archive "${service.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its license history is kept.`)) {
-                  await api.updateService(service.id, { archived: true });
-                  onChange();
-                }
-              },
-            },
-          ]}
-        />
       </div>
 
       {licMounted && (
@@ -1872,8 +1897,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
   const [bookingStaffCount, setBookingStaffCount] = useState(1);
   const [walkInStaffCount, setWalkInStaffCount] = useState(1);
   const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
-  const [addStaff, setAddStaff] = useState(0); // pending "add staff to today" amount (live day only)
-  const [addStaffTo, setAddStaffTo] = useState("walkin"); // hybrid services: which side the extra staff join
+  const [staffError, setStaffError] = useState(""); // server rejection of a staff/hours change, shown beside the staff controls
 
   const paintingRef = useRef(false);
   const paintModeRef = useRef(true);
@@ -1943,13 +1967,13 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     setStaffCount(entry?.staff_count ?? 2);
     setBookingStaffCount(entry?.booking_staff_count ?? 1);
     setWalkInStaffCount(entry?.walkin_staff_count ?? 1);
-    setAddStaff(0);
   }, [selectedDate, monthConfigs]);
+  useEffect(() => { setStaffError(""); }, [selectedDate]);
 
   const selectedIsPast = !!selectedDate && isDatePastClient(selectedDate);
   const selectedIsToday = !!selectedDate && selectedDate === todayIso();
-  // A day is "live" once it is today or earlier. Live days can only grow: extra staff and
-  // extra hours later in the day — no Set 9-5 / Clear day, no reducing staff (the server enforces the same).
+  // A day is "live" once it is today or earlier. Live days: no Set 9-5 / Clear day, started hours are frozen,
+  // staff can go up any time but only down while nothing is booked or queued (the server enforces the same).
   const selectedIsLive = !!selectedDate && selectedDate <= todayIso();
   const currentMinutes = nowMinutes();
 
@@ -2013,6 +2037,7 @@ function ServiceCalendar({ service, setError, refreshToken }) {
     if (patch.bookingStaffCount !== undefined) setBookingStaffCount(patch.bookingStaffCount);
     if (patch.walkInStaffCount !== undefined) setWalkInStaffCount(patch.walkInStaffCount);
     setSaveStatus("saving");
+    setStaffError("");
     try {
       await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn, nowMinutes: nowMinutes() });
       setMonthConfigs((prev) => ({ ...prev, [selectedDate]: { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking, walkin_staff_count: nextWalkIn } }));
@@ -2020,22 +2045,10 @@ function ServiceCalendar({ service, setError, refreshToken }) {
       if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
       savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
     } catch (err) {
-      setError(err.message);
+      setStaffError(err.message);
       setSaveStatus("error");
-      loadMonth(calendarMonth);
+      loadMonth(calendarMonth); // reload the saved values so the inputs snap back to what the server has
     }
-  }
-
-  // Live day only: raises staff_count (and the booking / walk-in side the extra people join).
-  // More staff means more walk-in budget and more bookable slots per block via the normal capacity logic.
-  function commitAddStaff() {
-    if (addStaff <= 0) return;
-    const toBooking = service.mode === "appointment" || (service.mode === "hybrid" && addStaffTo === "booking");
-    saveNow({
-      staffCount: staffCount + addStaff,
-      bookingStaffCount: bookingStaffCount + (toBooking ? addStaff : 0),
-      walkInStaffCount: walkInStaffCount + (toBooking ? 0 : addStaff),
-    });
   }
 
   // For today, quick-fill/clear only touch hours from now onward — whatever was already
@@ -2173,86 +2186,58 @@ function ServiceCalendar({ service, setError, refreshToken }) {
                 </div>
               )}
 
-              {selectedIsToday ? (
-                <div className="live-staff stack" style={{ gap: 8 }}>
-                  <div className="small" data-testid="live-staff-summary">
-                    <strong>Staff today: {staffCount}</strong>
-                    {service.mode === "hybrid" && <span className="muted"> · {bookingStaffCount} on bookings · {walkInStaffCount} on walk-ins</span>}
-                  </div>
-                  <div className="live-staff-box" role="group" aria-labelledby={`addstaff-${service.id}`}>
-                    <strong id={`addstaff-${service.id}`} style={{ fontSize: 14 }}>Add staff to today</strong>
-                    <div className="stepper-row">
-                      <div className="stepper">
-                        <button type="button" className="btn-outline icon-btn" aria-label="Fewer staff to add" title="Fewer staff to add" disabled={addStaff <= 0} onClick={() => setAddStaff((n) => Math.max(0, n - 1))}>−</button>
-                        <output className="stepper-value" aria-live="polite" aria-label="Staff to add">+{addStaff}</output>
-                        <button type="button" className="btn-outline icon-btn" aria-label="More staff to add" title="More staff to add" disabled={addStaff >= 20} onClick={() => setAddStaff((n) => Math.min(20, n + 1))}>+</button>
-                      </div>
-                      {service.mode === "hybrid" && (
-                        <select aria-label="Extra staff work on" value={addStaffTo} onChange={(e) => setAddStaffTo(e.target.value)}>
-                          <option value="walkin">On walk-ins</option>
-                          <option value="booking">On bookings</option>
-                        </select>
-                      )}
-                      <button type="button" className="btn btn-accent" disabled={addStaff <= 0 || saveStatus === "saving"} onClick={commitAddStaff}>
-                        {addStaff > 0 ? `Add ${addStaff} staff` : "Add staff"}
-                      </button>
-                    </div>
-                    <div className="muted small">Adds slots for the queue and appointments. You can't remove staff once the day is live.</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="staff-inputs">
-                  <label className="muted small" htmlFor={`staff-${service.id}`} style={{ minWidth: 68 }}>Staff:</label>
-                  <input
-                    id={`staff-${service.id}`}
-                    className="input"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    disabled={selectedIsPast}
-                    value={staffCount}
-                    onChange={(e) => {
-                      const nextStaff = Math.max(1, Number(e.target.value) || 1);
-                      const { booking: nextBooking, walkIn: nextWalkIn } = clampStaffSplit(nextStaff, bookingStaffCount, walkInStaffCount);
-                      saveNow({ staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
-                    }}
-                  />
-                  {service.mode === "hybrid" && (
-                    <>
-                      <label className="muted small" htmlFor={`book-${service.id}`}>On bookings:</label>
-                      <input
-                        id={`book-${service.id}`}
-                        className="input"
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        disabled={selectedIsPast}
-                        value={bookingStaffCount}
-                        onChange={(e) => {
-                          const nextBooking = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
-                          const nextWalkIn = Math.min(walkInStaffCount, staffCount - nextBooking);
-                          saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
-                        }}
-                      />
-                      <label className="muted small" htmlFor={`walk-${service.id}`}>On walk-ins:</label>
-                      <input
-                        id={`walk-${service.id}`}
-                        className="input"
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        disabled={selectedIsPast}
-                        value={walkInStaffCount}
-                        onChange={(e) => {
-                          const nextWalkIn = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
-                          const nextBooking = Math.min(bookingStaffCount, staffCount - nextWalkIn);
-                          saveNow({ walkInStaffCount: nextWalkIn, bookingStaffCount: nextBooking });
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
+              <div className="staff-inputs">
+                <label className="muted small" htmlFor={`staff-${service.id}`} style={{ minWidth: 68 }}>Staff:</label>
+                <input
+                  id={`staff-${service.id}`}
+                  className="input"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  disabled={selectedIsPast}
+                  value={staffCount}
+                  onChange={(e) => {
+                    const nextStaff = Math.max(1, Number(e.target.value) || 1);
+                    const { booking: nextBooking, walkIn: nextWalkIn } = clampStaffSplit(nextStaff, bookingStaffCount, walkInStaffCount);
+                    saveNow({ staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                  }}
+                />
+                {service.mode === "hybrid" && (
+                  <>
+                    <label className="muted small" htmlFor={`book-${service.id}`}>On bookings:</label>
+                    <input
+                      id={`book-${service.id}`}
+                      className="input"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      disabled={selectedIsPast}
+                      value={bookingStaffCount}
+                      onChange={(e) => {
+                        const nextBooking = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                        const nextWalkIn = Math.min(walkInStaffCount, staffCount - nextBooking);
+                        saveNow({ bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
+                      }}
+                    />
+                    <label className="muted small" htmlFor={`walk-${service.id}`}>On walk-ins:</label>
+                    <input
+                      id={`walk-${service.id}`}
+                      className="input"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      disabled={selectedIsPast}
+                      value={walkInStaffCount}
+                      onChange={(e) => {
+                        const nextWalkIn = Math.max(0, Math.min(Number(e.target.value) || 0, staffCount));
+                        const nextBooking = Math.min(bookingStaffCount, staffCount - nextWalkIn);
+                        saveNow({ walkInStaffCount: nextWalkIn, bookingStaffCount: nextBooking });
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+              {staffError && <div className="staff-error" role="alert">{staffError}</div>}
 
               {!selectedIsPast && (
                 <div className="wrap">

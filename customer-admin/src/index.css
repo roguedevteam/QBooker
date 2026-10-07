@@ -347,10 +347,9 @@ select, .input {
 @media (min-width: 768px) { .svc-buy { flex: 0 0 auto; } .svc-buy > .btn { flex: 0 0 auto; } }
 .add-loc-btn { min-height: 44px; }
 
-/* Live day: add staff stepper */
-.live-staff-box { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); background: var(--brand-weak); padding: 12px; min-width: 0; }
-.stepper-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.stepper { display: inline-flex; align-items: center; gap: 4px; }
-.stepper .icon-btn { min-width: 44px; min-height: 44px; font-size: 20px; line-height: 1; }
-.stepper-value { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 44px; font-weight: 700; font-size: 18px; }
-.live-staff-box .btn, .live-staff-box select { min-height: 44px; }
+/* Location top: name + status line */
+.loc-top { min-width: 0; display: flex; flex-direction: column; gap: 0; }
+.loc-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -2px 0 0 34px; min-width: 0; }
+.loc-status .muted { line-height: 18px; }
+.staff-error { border: 1px solid var(--error); background: var(--error-weak); color: var(--error); padding: 8px 12px; font-size: 14px; line-height: 20px; }
+@media (max-width: 480px) { .loc-status { margin-left: 34px; } .loc-toolbar { gap: 6px; } }
