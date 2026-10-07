@@ -1664,6 +1664,8 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   const [licenses, setLicenses] = useState([]);
   const [licensesLoaded, setLicensesLoaded] = useState(false);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
+  const [focusDay, setFocusDay] = useState(null); // { date, n } — hours calendar should select this day
+  const hoursRef = useRef(null);
 
   async function loadLicenses() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
@@ -1690,6 +1692,24 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
     setPanel("licences"); // open only, never toggle closed
     setAssignTrigger((t) => ({ licId, n: (t?.n || 0) + 1 }));
   }
+  // After buying with a start date or confirming Assign/Change dates: close the buying UI, open Hours on the
+  // first licensed day and bring it into view so hours can be set straight away.
+  function showHoursFor(date) {
+    setPanel("hours");
+    setFocusDay((f) => ({ date, n: (f?.n || 0) + 1 }));
+    setCalendarRefresh((t) => t + 1);
+  }
+  useEffect(() => {
+    if (!focusDay || panel !== "hours") return;
+    const t = setTimeout(() => {
+      const el = hoursRef.current;
+      if (!el) return;
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+      el.focus({ preventScroll: true });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [focusDay]); // eslint-disable-line react-hooks/exhaustive-deps
   function startBuy() {
     setLicMounted(true);
     setPanel("licences");
@@ -1727,7 +1747,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
       <div className="svc-actions">
         {showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>}
         {licensesLoaded && firstAvailable && <button type="button" className="btn" onClick={() => startAssign(firstAvailable.id)}>Assign dates</button>}
-        {showLicencesBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
+        {showLicencesBtn && !showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
         <div className="svc-buy">
           <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
           <button
@@ -1740,6 +1760,9 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
           ><ArchiveIcon size={20} /></button>
         </div>
       </div>
+      {showLicencesBtn && showHoursBtn && (
+        <button type="button" className="link-btn" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>
+      )}
 
       {licMounted && (
         <div className="svc-panel" hidden={panel !== "licences"}>
@@ -1747,12 +1770,13 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
             service={service} allServices={allServices || []} setError={setError} locationName={locationName}
             onChanged={() => { loadLicenses(); onChange(); setCalendarRefresh((t) => t + 1); }}
             tenant={tenant} buyTrigger={buyTrigger} assignTrigger={assignTrigger} showBuyButton={false}
+            onScheduled={showHoursFor}
           />
         </div>
       )}
       {panel === "hours" && (
-        <div className="svc-panel">
-          <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} />
+        <div className="svc-panel" ref={hoursRef} tabIndex={-1} aria-label="Opening hours">
+          <ServiceCalendar service={service} setError={setError} refreshToken={calendarRefresh} focusDay={focusDay} />
         </div>
       )}
     </div>
@@ -1763,13 +1787,17 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
 // (bought, no dates) can be moved to another service or refunded within 90 days; Scheduled
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
-function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, assignTrigger, showBuyButton = true, hideHeader = false, onBought, locationName }) {
+function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, assignTrigger, showBuyButton = true, hideHeader = false, onBought, onScheduled, locationName }) {
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
   // Buying is two steps, same shape as the signup wizard: pick the license type first,
   // then (only when it isn't free) confirm how it's paid for, before it's actually bought.
+  // plan -> start (when it begins) -> payment (skipped for free licences).
   const [buyStep, setBuyStep] = useState("plan");
+  const [startChoice, setStartChoice] = useState("today"); // "today" | "pick" | "later"
+  const [pickDate, setPickDate] = useState(todayIso());
+  const [buyBusy, setBuyBusy] = useState(false);
   const [planId, setPlanId] = useState("week");
   const [customDays, setCustomDays] = useState(7);
   const [buyPay, setBuyPay] = useState(tenant?.payment_method === "invoice" ? "invoice" : "card");
@@ -1782,7 +1810,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
   // "Buy a license" lives in ServiceEditor's header (to the left of its Actions ⋯ menu);
   // it bumps buyTrigger to open the plan picker here.
-  useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); } }, [buyTrigger]);
+  useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); } }, [buyTrigger]);
 
   useEffect(() => {
     if (assignTrigger) { setSchedulingId(assignTrigger.licId); setStartDate(todayIso()); }
@@ -1801,22 +1829,36 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   useEffect(() => { load(); }, [service.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function buy() {
+    if (buyBusy) return;
+    const wantDate = startChoice === "today" ? todayIso() : startChoice === "pick" ? pickDate : null;
+    setBuyBusy(true);
+    let lic;
     try {
       const r = await api.buyServiceLicense(service.id, {
         planId, customDays: planId === "custom" ? customDays : undefined,
         paymentMethod: buyPay, invoiceEmail: buyPay === "invoice" ? buyEmail : undefined, invoicePO: buyPay === "invoice" ? buyPO : undefined,
       });
-      setBuying(false);
-      await load();
-      onChanged?.();
-      onBought?.(r.license);
-    } catch (err) { setError(err.message); }
+      lic = r.license;
+    } catch (err) { setError(err.message); setBuyBusy(false); return; }
+    setBuying(false);
+    // Dates are assigned through the same schedule call (and server-side overlap checks) as Assign dates.
+    // If that fails the licence is still bought and stays Available, with Assign dates to try again.
+    let scheduledOn = null;
+    if (wantDate && lic) {
+      try { await api.scheduleServiceLicense(service.id, lic.id, wantDate); scheduledOn = wantDate; }
+      catch (err) { setError(`Licence bought, but its dates could not be set: ${err.message} Use Assign dates to choose again.`); }
+    }
+    await load();
+    onChanged?.();
+    setBuyBusy(false);
+    if (scheduledOn) onScheduled?.(scheduledOn);
+    onBought?.(lic, scheduledOn);
   }
   async function schedule(lic) {
     if (lic.status === "scheduled" && startDate !== lic.start_date) {
       if (!confirm("Change this license's dates? The hours and staffing already set on its old dates will move with it to the new dates.")) return;
     }
-    try { await api.scheduleServiceLicense(service.id, lic.id, startDate); setSchedulingId(null); await load(); onChanged?.(); } catch (err) { setError(err.message); }
+    try { await api.scheduleServiceLicense(service.id, lic.id, startDate); setSchedulingId(null); await load(); onChanged?.(); onScheduled?.(startDate); } catch (err) { setError(err.message); }
   }
   async function unschedule(lic) {
     if (!confirm("Unschedule this license? Its dates — and any hours already set across them — will be cleared, and it goes back to Available.")) return;
@@ -1830,6 +1872,16 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
   const planLabel = planId === "custom" ? "Custom" : planId.charAt(0).toUpperCase() + planId.slice(1);
   const price = selectedPrice();
+  const buySteps = price > 0 ? ["Plan", "Start", "Pay"] : ["Plan", "Start"];
+  const stepIdx = buyStep === "plan" ? 0 : buyStep === "start" ? 1 : 2;
+  const planDays = planId === "custom" ? Math.max(1, Number(customDays) || 1) : ({ day: 1, week: 7, month: 30 })[planId];
+  const pickValid = /^\d{4}-\d{2}-\d{2}$/.test(pickDate) && pickDate >= todayIso();
+  const startInvalid = startChoice === "pick" && !pickValid;
+  const START_ROWS = [
+    { id: "today", name: "Start today", desc: "Goes live straight away — open hours as soon as you've bought it." },
+    { id: "pick", name: "Pick a date", desc: "Choose when it begins, for example a future launch." },
+    { id: "later", name: "Decide later", desc: "Buy now and assign dates from the service card. Nothing goes live until you do." },
+  ];
   const PLAN_ROWS = [
     { id: "day", name: "Day", desc: "1 day" },
     { id: "week", name: "Week", desc: "7 days" },
@@ -1847,7 +1899,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
       {!hideHeader && (
         <div className="row" style={{ justifyContent: "space-between" }}>
           <strong style={{ fontSize: 14 }}>Licences</strong>
-          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); }}>Buy a licence</button>}
+          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); }}>Buy a licence</button>}
         </div>
       )}
 
@@ -1856,21 +1908,19 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
           <div className="buy-head">
             <button
               type="button" className="back-btn"
-              aria-label={buyStep === "plan" ? "Cancel buying a licence" : "Back to plan"}
-              onClick={() => (buyStep === "plan" ? setBuying(false) : setBuyStep("plan"))}
+              aria-label={buyStep === "plan" ? "Cancel buying a licence" : buyStep === "start" ? "Back to plan" : "Back to start date"}
+              onClick={() => (buyStep === "plan" ? setBuying(false) : setBuyStep(buyStep === "payment" ? "start" : "plan"))}
             ><BackIcon /></button>
             <div className="title">Buy a licence</div>
           </div>
           <div className="buy-progress">
             <div className="bars" aria-hidden="true">
-              <span className="on" /><span className="on" /><span className={buyStep === "payment" ? "on" : ""} />
+              {buySteps.map((n, i) => <span key={n} className={i <= stepIdx ? "on" : ""} />)}
             </div>
             <div className="labels">
-              <span>Service</span>
-              <span className={buyStep === "plan" ? "cur" : ""}>Plan</span>
-              <span className={buyStep === "payment" ? "cur" : ""}>Payment</span>
+              {buySteps.map((n, i) => <span key={n} className={i === stepIdx ? "cur" : ""}>{i + 1} {n}</span>)}
             </div>
-            <div className="sr-only" role="status">Step {buyStep === "plan" ? 2 : 3} of 3: {buyStep === "plan" ? "Plan" : "Payment"}</div>
+            <div className="sr-only" role="status">Step {stepIdx + 1} of {buySteps.length}: {buySteps[stepIdx]}</div>
           </div>
 
           <div className="buy-body">
@@ -1901,6 +1951,45 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     <span className="field-label">Number of days</span>
                     <input className="input" type="number" inputMode="numeric" min={1} value={customDays} onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value) || 1))} />
                   </label>
+                )}
+              </>
+            )}
+
+            {buyStep === "start" && (
+              <>
+                <div>
+                  <h2>When should it start?</h2>
+                  <div className="muted" style={{ fontSize: 14, marginTop: 2 }}>{planLabel} licence{planId === "custom" ? ` (${planDays} day${planDays === 1 ? "" : "s"})` : ""} for {service.name}</div>
+                </div>
+                <div className="stack" style={{ gap: 12 }} role="radiogroup" aria-label="Licence start date">
+                  {START_ROWS.map((row) => (
+                    <button key={row.id} type="button" role="radio" aria-checked={startChoice === row.id} className="plan-row" onClick={() => setStartChoice(row.id)}>
+                      <span className="plan-dot" aria-hidden="true" />
+                      <span className="plan-text"><span className="plan-name">{row.name}</span><span className="plan-desc">{row.desc}</span></span>
+                    </button>
+                  ))}
+                </div>
+                {startChoice === "today" && (
+                  <div className="notice-info" role="note">
+                    Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.
+                  </div>
+                )}
+                {startChoice === "pick" && (
+                  <div className="stack" style={{ gap: 8 }}>
+                    <label className="field" style={{ maxWidth: 220 }}>
+                      <span className="field-label">Start date</span>
+                      <input className="input" type="date" min={todayIso()} value={pickDate} onChange={(e) => setPickDate(e.target.value)} aria-invalid={startInvalid} />
+                    </label>
+                    {pickValid
+                      ? <span className="muted small">Ends {formatDateDisplay(addDaysIso(pickDate, planDays - 1))}</span>
+                      : <span className="small" role="alert" style={{ color: "var(--danger, #B3261E)" }}>Choose today or a future date.</span>}
+                    {pickValid && pickDate === todayIso() && (
+                      <div className="notice-info" role="note">Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.</div>
+                    )}
+                  </div>
+                )}
+                {startChoice === "later" && (
+                  <div className="muted small">You'll find an Assign dates button on the service card whenever you're ready.</div>
                 )}
               </>
             )}
@@ -1940,17 +2029,24 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
               <div className="k">Total</div>
               <div className="v">{price > 0 ? <>{exMoney(price)} <small>({exMoney(incVat(price))} inc VAT)</small></> : "Free"}</div>
             </div>
-            {buyStep === "plan" ? (
+            {buyStep === "plan" && (
               <>
                 <button type="button" className="btn-outline hide-phone" onClick={() => setBuying(false)}>Cancel</button>
-                <button type="button" className="btn btn-accent" onClick={() => (price > 0 ? setBuyStep("payment") : buy())}>
+                <button type="button" className="btn btn-accent" onClick={() => setBuyStep("start")}>Continue</button>
+              </>
+            )}
+            {buyStep === "start" && (
+              <>
+                <button type="button" className="btn-outline hide-phone" onClick={() => setBuyStep("plan")}>Back</button>
+                <button type="button" className="btn btn-accent" disabled={startInvalid || buyBusy} onClick={() => (price > 0 ? setBuyStep("payment") : buy())}>
                   {price > 0 ? "Continue" : "Buy — free"}
                 </button>
               </>
-            ) : (
+            )}
+            {buyStep === "payment" && (
               <>
-                <button type="button" className="btn-outline hide-phone" onClick={() => setBuyStep("plan")}>Back</button>
-                <button type="button" className="btn btn-accent" disabled={buyPay === "invoice" && !buyPO.trim()} onClick={buy}>Confirm &amp; buy</button>
+                <button type="button" className="btn-outline hide-phone" onClick={() => setBuyStep("start")}>Back</button>
+                <button type="button" className="btn btn-accent" disabled={buyBusy || (buyPay === "invoice" && !buyPO.trim())} onClick={buy}>Confirm &amp; buy</button>
               </>
             )}
           </div>
@@ -2001,7 +2097,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                   </label>
                   <span className="muted small">Ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
                   {startDate === todayIso() && (
-                    <div className="notice-info" role="note" style={{ background: "#EEF5FA", border: "1px solid #BBD3E4", padding: "10px 12px", fontSize: 14, lineHeight: "20px", maxWidth: 420 }}>
+                    <div className="notice-info" role="note">
                       Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.
                     </div>
                   )}
@@ -2028,12 +2124,13 @@ function clampStaffSplit(staff, booking, walkIn) {
   return { booking: b, walkIn: w };
 }
 
-function ServiceCalendar({ service, setError, refreshToken }) {
+function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   // No day is selected until the admin picks one on the calendar — picking is only
   // possible for a day actually covered by a license (see the calendar button's
   // `inWindow` guard below), so the hours panel never opens onto an uncovered day.
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(todayIso()));
+  const [selectedDate, setSelectedDate] = useState(focusDay?.date || null);
+  const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(focusDay?.date || todayIso()));
+  const focusRef = useRef(focusDay?.date || null); // a just-requested day is kept even before its window has loaded
   const [monthConfigs, setMonthConfigs] = useState({});
   const [windows, setWindows] = useState([]); // this service's scheduled/active license windows — gaps allowed, never overlapping
   const [draftHours, setDraftHours] = useState([]);
@@ -2093,6 +2190,17 @@ function ServiceCalendar({ service, setError, refreshToken }) {
   // first day of the earliest scheduled/active window — switching the visible month
   // to match either way.
   useEffect(() => {
+    if (focusDay?.n) {
+      focusRef.current = focusDay.date;
+      setSelectedDate(focusDay.date);
+      setCalendarMonth(firstOfMonth(focusDay.date));
+    }
+  }, [focusDay?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (focusRef.current && selectedDate === focusRef.current) {
+      if (isWithinAnyWindow(selectedDate)) focusRef.current = null;
+      return;
+    }
     if (selectedDate && isWithinAnyWindow(selectedDate)) return;
     const target = isWithinAnyWindow(todayIso()) ? todayIso() : overallStart;
     if (target) {
@@ -2413,6 +2521,7 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
   const [slotMinutes, setSlotMinutes] = useState(15);
   const [creating, setCreating] = useState(false);
   const [createdService, setCreatedService] = useState(null);
+  const [startedOn, setStartedOn] = useState(null); // start date chosen while buying, if any
 
   const needsSlotLength = mode === "appointment" || mode === "hybrid";
 
@@ -2423,6 +2532,7 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
     setMode("hybrid");
     setSlotMinutes(15);
     setCreatedService(null);
+    setStartedOn(null);
   }
 
   async function next() {
@@ -2479,11 +2589,11 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
     return (
       <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
         <h3>New service <span className="muted" style={{ fontSize: 13, fontWeight: 500 }}>— step 2 of 2: buy a license for "{createdService.name}"</span></h3>
-        <div className="muted small">This license is bound to this service. Assign it to calendar dates any time from the service's own panel.</div>
+        <div className="muted small">This license is bound to this service. Choose when it starts as you buy, or decide later and assign dates from the service's own panel.</div>
         <ServiceLicensesPanel
           service={createdService} locationName={locationName} allServices={allServices || []} setError={setError}
           onChanged={() => {}} tenant={tenant} buyTrigger={1} hideHeader
-          onBought={() => setStep(3)}
+          onBought={(lic, scheduledOn) => { setStartedOn(scheduledOn || null); setStep(3); }}
         />
       </div>
     );
@@ -2492,7 +2602,11 @@ function ServiceWizard({ locationId, locationName, allServices, onDone, onAdded,
   return (
     <div className="card stack" style={{ background: "var(--accent-weak)", border: "1px solid var(--ink)" }}>
       <h3>"{createdService.name}" is ready</h3>
-      <div className="muted small">License bought — assign it to calendar dates any time from the service's own panel.</div>
+      <div className="muted small">
+        {startedOn
+          ? `License bought — it starts ${formatDateDisplay(startedOn)}. Press Done, then set opening hours in the service's Hours panel.`
+          : "License bought — assign it to calendar dates any time from the service's own panel."}
+      </div>
       <div className="form-actions">
         <button className="btn-outline" onClick={addAnother}>+ Add another service</button>
         <button className="btn" onClick={() => onDone(createdService)}>Done</button>
