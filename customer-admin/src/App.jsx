@@ -1755,6 +1755,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
               {service.queue_paused ? "Resume queue" : "Pause queue"}
             </button>
           )}
+          {!neverLicensed && <button type="button" className="btn svc-buy-btn" onClick={startBuy}>Buy a licence</button>}
           <button
             type="button" className="btn-outline icon-btn" aria-label="Archive service" title="Archive service"
             onClick={async () => {
@@ -2092,7 +2093,6 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
       <div>
         {visible.map((lic) => {
           const meta = LICENSE_STATUS_META[lic.status];
-          const showMenu = lic.status === "scheduled" || movingId === lic.id || (lic.status === "available" && otherServices.length > 0);
           return (
             <div key={lic.id} className="lic-line" data-testid="lic-line">
               <div className="lic-line-main">
@@ -2106,26 +2106,22 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                   {Number(lic.price) > 0 ? priceText(lic.price) : "Free"}
                 </div>
               </div>
-              {showMenu && (movingId === lic.id ? (
-                <select aria-label="Move licence to another service" defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
-                  <option value="" disabled>Move to…</option>
-                  {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              ) : (
-                <MoreMenu
-                  label="Licence actions"
-                  items={[
-                    lic.status === "scheduled" && { label: "Change dates", onClick: () => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); } },
-                    lic.status === "scheduled" && { label: "Unschedule", onClick: () => unschedule(lic) },
-                    lic.status === "available" && otherServices.length > 0 && { label: "Move License", onClick: () => setMovingId(lic.id) },
-                  ]}
-                />
-              ))}
-              {lic.status === "available" && schedulingId !== lic.id && (
+              <div className="lic-line-actions">
+                {movingId === lic.id && (
+                  <select aria-label="Move licence to another service" defaultValue="" onChange={(e) => { if (e.target.value) move(lic, e.target.value); }}>
+                    <option value="" disabled>Move to…</option>
+                    {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                )}
+                {lic.status === "scheduled" && schedulingId !== lic.id && <button type="button" className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>Change dates</button>}
+                {lic.status === "scheduled" && <button type="button" className="btn-outline" onClick={() => unschedule(lic)}>Unschedule</button>}
+                {lic.status === "available" && otherServices.length > 0 && movingId !== lic.id && <button type="button" className="btn-outline" onClick={() => setMovingId(lic.id)}>Move licence</button>}
+                {lic.status === "available" && schedulingId !== lic.id && (
                 <button type="button" className="btn btn-accent lic-assign" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
                   Assign dates
                 </button>
               )}
+              </div>
               {schedulingId === lic.id && (
                 <div className="stack lic-line-picker" style={{ gap: 8 }}>
                   <label className="field" style={{ maxWidth: 220 }}>
@@ -2149,9 +2145,6 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
         })}
       </div>
 
-      {buyAtBottom && !buying && visible.length > 0 && (
-        <div><button type="button" className="btn-outline buy-more" onClick={() => { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); }}>Buy a licence</button></div>
-      )}
     </div>
   );
 }

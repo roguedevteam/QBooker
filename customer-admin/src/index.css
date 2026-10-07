@@ -452,3 +452,7 @@ select, .input {
 .link-btn:focus-visible { outline: 2px solid var(--blue, #1D5C8A); outline-offset: 2px; }
 .svc-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .svc-panel:focus { outline: none; }
+
+.lic-line-actions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.lic-line-actions:empty { display: none; }
+.svc-buy-btn { white-space: nowrap; }
