@@ -266,6 +266,7 @@ function Landing({ onStart, simulatedBadge }) {
           <div><strong>No hardware</strong><p>No kiosks, ticket printers or installation. Your team uses a web page.</p></div>
           <div><strong>No patient data stored</strong><p>QBooker doesn't capture patient records of any kind.</p></div>
           <div><strong>UK-based support</strong><p>UK servers and a UK support team.</p></div>
+          <div><strong>Pay by service only</strong><p>Unlimited locations, staff users and patients. You only pay for each service you run.</p></div>
         </div>
       </section>
 
@@ -391,7 +392,8 @@ function Landing({ onStart, simulatedBadge }) {
               <button className="btn-accent" onClick={onStart}>Start free trial</button>
             </div>
             <div>
-              <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month or a custom number of days.</p>
+              <p style={{ margin: "0 0 12px", fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>After that, each service has its own licence for a day, a week, a month or a custom number of days.</p>
+              <p style={{ margin: "0 0 16px", fontSize: 16, lineHeight: 1.55, maxWidth: 520, fontWeight: 600 }}>Unlimited locations, staff users and patients. You only pay for each service.</p>
               {pricing && (
                 <>
                   {pricing.sale?.active && <p style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, margin: "0 0 10px" }}>Sale on selected plans</p>}

@@ -136,7 +136,7 @@ html { scroll-padding-top: 80px; }
 
 /* facts */
 .lp-facts-band { padding: 48px 0; }
-.lp-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; }
+.lp-facts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 28px; }
 .lp-facts > div { border-top: 2px solid var(--accent); padding-top: 16px; }
 .lp-facts strong { font-size: 16px; }
 .lp-facts p { margin: 8px 0 0; font-size: 14px; line-height: 1.55; color: #B7C7D4; }
