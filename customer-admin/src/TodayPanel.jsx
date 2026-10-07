@@ -163,24 +163,54 @@ function HourRows({ d }) {
   );
 }
 
+const ALL = "__all__";
+
+// Combine several services' "today" payloads into one (sums per half-hour block).
+function mergeToday(list) {
+  const open = list.filter((r) => r && r.open);
+  if (open.length === 0) return list.find((r) => r) || null;
+  const byStart = new Map();
+  open.forEach((r) => r.blocks.forEach((b) => {
+    const g = byStart.get(b.start) || { start: b.start, staff: 0, booked: 0, walkIn: 0, bookingCapacity: 0, walkinCapacity: 0 };
+    g.staff += b.staff; g.booked += b.booked; g.walkIn += b.walkIn;
+    g.bookingCapacity += b.bookingCapacity; g.walkinCapacity += b.walkinCapacity;
+    byStart.set(b.start, g);
+  }));
+  const sum = (f) => open.reduce((n, r) => n + (f(r) || 0), 0);
+  return {
+    ...open[0], open: true,
+    mode: open.every((r) => r.mode === "queue") ? "queue" : open.find((r) => r.mode !== "queue")?.mode,
+    blocks: [...byStart.values()].sort((a, b) => a.start - b.start),
+    totals: { freeLeft: sum((r) => r.totals?.freeLeft), bookedTotal: sum((r) => r.totals?.bookedTotal) },
+    queueCount: sum((r) => r.queueCount), staffNow: sum((r) => r.staffNow),
+  };
+}
+
 // services: [{ id, name, locationName? }]. embedded: hide the title row (the host supplies one).
-export default function TodayPanel({ services, embedded = false, refreshMs = 30000 }) {
-  const [serviceId, setServiceId] = useState(services[0]?.id || "");
+// allOption: add "All services" (the default) to the drop-down, combining every service.
+export default function TodayPanel({ services, embedded = false, refreshMs = 30000, allOption = false }) {
+  const useAll = allOption && services.length > 1;
+  const [serviceId, setServiceId] = useState(useAll ? ALL : services[0]?.id || "");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const rootRef = useRef(null);
   const wide = useWide(rootRef);
   const idRef = useRef(serviceId);
+  const svcRef = useRef(services);
+  svcRef.current = services;
 
   // Keep the selection valid when the list changes (default: first service).
   useEffect(() => {
-    if (!services.some((s) => s.id === serviceId)) setServiceId(services[0]?.id || "");
-  }, [services, serviceId]);
+    if (serviceId === ALL && useAll) return;
+    if (!services.some((s) => s.id === serviceId)) setServiceId(useAll ? ALL : services[0]?.id || "");
+  }, [services, serviceId, useAll]);
 
   const load = useCallback(async (id) => {
     if (!id) return;
     try {
-      const r = await api.getToday(id, localMinutes());
+      const r = id === ALL
+        ? mergeToday(await Promise.all(svcRef.current.map((s) => api.getToday(s.id, localMinutes()).catch(() => null))))
+        : await api.getToday(id, localMinutes());
       if (idRef.current === id) { setData(r); setError(""); }
     } catch (err) { if (idRef.current === id) setError(err.message || "Couldn't load today."); }
   }, []);
@@ -192,7 +222,7 @@ export default function TodayPanel({ services, embedded = false, refreshMs = 300
     return () => clearInterval(t);
   }, [serviceId, load, refreshMs]);
 
-  const svc = services.find((s) => s.id === serviceId);
+  const svc = serviceId === ALL ? { name: "All services" } : services.find((s) => s.id === serviceId);
   const multi = services.length > 1;
   const sub = [data ? fmtDate(data.date) : null, svc?.locationName, multi ? null : svc?.name].filter(Boolean).join(" · ");
   const d = data && data.open ? data : null;
@@ -208,6 +238,7 @@ export default function TodayPanel({ services, embedded = false, refreshMs = 300
           <label className="td-select">
             <span className="sr-only">Service</span>
             <select value={serviceId} onChange={(e) => setServiceId(e.target.value)} aria-label="Service">
+              {useAll && <option value={ALL}>All services</option>}
               {services.map((s) => <option key={s.id} value={s.id}>{s.locationName ? `${s.locationName} · ${s.name}` : s.name}</option>)}
             </select>
           </label>

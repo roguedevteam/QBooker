@@ -711,7 +711,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
             </div>
           )}
 
-          {todayServices.length > 0 && <TodayPanel services={todayServices} />}
+          {todayServices.length > 0 && <TodayPanel services={todayServices} allOption />}
 
           {stats && (
             <section className="stack" style={{ gap: 8 }} aria-label="Today at a glance">
