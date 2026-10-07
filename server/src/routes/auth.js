@@ -182,7 +182,7 @@ const MAX_OTP_ATTEMPTS = 5;
 router.post("/staff/request-otp", asyncHandler(async (req, res) => {
   const email = (req.body.email || "").trim();
   const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
-  if (staff) {
+  if (staff && staff.active) {
     const tenant = (await query(`select status from tenants where id=$1`, [staff.tenant_id])).rows[0];
     if (tenant?.status === "disabled") {
       return res.status(403).json({ error: "This account has been disabled — contact your manager." });
@@ -203,7 +203,7 @@ router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   const code = (req.body.code || "").trim();
   const bad = () => res.status(401).json({ error: "Incorrect or expired code." });
   const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
-  if (!staff) return bad();
+  if (!staff || !staff.active) return bad();
   const tenant = (await query(`select * from tenants where id=$1`, [staff.tenant_id])).rows[0];
   if (tenant.status === "disabled") {
     return res.status(403).json({ error: "This account has been disabled — contact your manager." });

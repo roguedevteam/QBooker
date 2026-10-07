@@ -1091,6 +1091,10 @@ function StaffTab({ staffAppUrl, setError }) {
     try { await api.updateStaff(id, edit); setEditId(null); await load(); }
     catch (err) { setError(err.message); } finally { setBusy(false); }
   }
+  async function setActive(m, active) {
+    if (!active && !confirm(`Disable ${m.first_name} ${m.last_name}? They'll be signed out and can't sign in until you enable them again.`)) return;
+    try { await api.updateStaff(m.id, { active }); await load(); } catch (err) { setError(err.message); }
+  }
   async function remove(m) {
     if (!confirm(`Remove ${m.first_name} ${m.last_name}? They'll be signed out and won't be able to sign in to the staff portal.`)) return;
     try { await api.deleteStaff(m.id); await load(); } catch (err) { setError(err.message); }
@@ -1164,10 +1168,11 @@ function StaffTab({ staffAppUrl, setError }) {
         ) : (
           <div key={m.id} className="list-card">
             <div>
-              <div className="loc-name">{m.first_name} {m.last_name}</div>
+              <div className="loc-name">{m.first_name} {m.last_name} <span className={`badge ${m.active ? "badge-green" : "badge-amber"}`}>{m.active ? "Active" : "Inactive"}</span></div>
               <div className="muted" style={{ fontSize: 14, overflowWrap: "anywhere" }}>{m.email}</div>
             </div>
             <div className="t-actions">
+              <button className="btn-outline" style={{ flex: 1 }} onClick={() => setActive(m, !m.active)}>{m.active ? "Disable" : "Enable"}</button>
               <button className="btn-outline" style={{ flex: 1 }} onClick={() => startEdit(m)} aria-label={`Edit ${m.first_name} ${m.last_name}`}>Edit</button>
               <button className="btn-outline danger" style={{ flex: 1 }} onClick={() => remove(m)} aria-label={`Delete ${m.first_name} ${m.last_name}`}>Delete</button>
             </div>
@@ -1178,15 +1183,16 @@ function StaffTab({ staffAppUrl, setError }) {
       {/* Wide screens: table */}
       <div className="show-wide card" style={{ padding: 0, overflowX: "auto" }}>
         <table>
-          <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th></th></tr></thead>
+          <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {staff === null && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>Loading…</td></tr>}
-            {staff && staff.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff yet — add your first staff member above.</td></tr>}
+            {staff === null && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 12 }}>Loading…</td></tr>}
+            {staff && staff.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 12 }}>No staff yet — add your first staff member above.</td></tr>}
             {staff && staff.map((m) => editId === m.id ? (
               <tr key={m.id}>
                 <td><input className="input" aria-label="First name" value={edit.firstName} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></td>
                 <td><input className="input" aria-label="Last name" value={edit.lastName} onChange={(e) => setEdit({ ...edit, lastName: e.target.value })} /></td>
                 <td><input className="input" aria-label="Email address" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></td>
+                <td></td>
                 <td>
                   <div className="row" style={{ justifyContent: "flex-end" }}>
                     <button className="btn" disabled={busy || !staffFormValid(edit)} onClick={() => save(m.id)}>Save</button>
@@ -1197,8 +1203,10 @@ function StaffTab({ staffAppUrl, setError }) {
             ) : (
               <tr key={m.id}>
                 <td>{m.first_name}</td><td>{m.last_name}</td><td>{m.email}</td>
+                <td><span className={`badge ${m.active ? "badge-green" : "badge-amber"}`}>{m.active ? "Active" : "Inactive"}</span></td>
                 <td>
                   <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <button className="btn-outline" onClick={() => setActive(m, !m.active)}>{m.active ? "Disable" : "Enable"}</button>
                     <button className="btn-outline" onClick={() => startEdit(m)} aria-label={`Edit ${m.first_name} ${m.last_name}`}>Edit</button>
                     <button className="btn-outline danger" onClick={() => remove(m)} aria-label={`Delete ${m.first_name} ${m.last_name}`}>Delete</button>
                   </div>

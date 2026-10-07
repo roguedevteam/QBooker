@@ -36,7 +36,7 @@ async function loadTenant(req, res, next) {
   // staff list ends their session immediately instead of waiting for the token to expire.
   if (req.auth.role === "staff") {
     const staff = req.auth.staffId
-      ? (await query(`select * from staff_members where id=$1 and tenant_id=$2`, [req.auth.staffId, req.auth.tenantId])).rows[0]
+      ? (await query(`select * from staff_members where id=$1 and tenant_id=$2 and active=true`, [req.auth.staffId, req.auth.tenantId])).rows[0]
       : null;
     if (!staff) return res.status(401).json({ error: "Session expired or invalid — please sign in again." });
     req.staff = staff;
@@ -71,7 +71,7 @@ async function validateStaffBody(req, res, { requireAll }) {
   return { first, last, email };
 }
 router.get("/staff", adminOnly, asyncHandler(async (req, res) => {
-  const r = await query(`select id, first_name, last_name, email, created_at from staff_members where tenant_id=$1 order by lower(first_name), lower(last_name)`, [req.tenant.id]);
+  const r = await query(`select id, first_name, last_name, email, active, created_at from staff_members where tenant_id=$1 order by lower(first_name), lower(last_name)`, [req.tenant.id]);
   res.json({ staff: r.rows });
 }));
 router.post("/staff", adminOnly, asyncHandler(async (req, res) => {
@@ -79,7 +79,7 @@ router.post("/staff", adminOnly, asyncHandler(async (req, res) => {
   if (!v) return;
   const dup = await query(`select 1 from staff_members where lower(email)=lower($1)`, [v.email]);
   if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
-  const r = await query(`insert into staff_members (tenant_id, first_name, last_name, email) values ($1,$2,$3,$4) returning id, first_name, last_name, email, created_at`, [req.tenant.id, v.first, v.last, v.email]);
+  const r = await query(`insert into staff_members (tenant_id, first_name, last_name, email) values ($1,$2,$3,$4) returning id, first_name, last_name, email, active, created_at`, [req.tenant.id, v.first, v.last, v.email]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Staff user added: ${v.first} ${v.last}`]);
   res.json({ staff: r.rows[0] });
 }));
@@ -90,13 +90,15 @@ router.patch("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
     const dup = await query(`select 1 from staff_members where lower(email)=lower($1) and id<>$2`, [v.email, req.params.id]);
     if (dup.rows.length) return res.status(409).json({ error: "That email address is already registered to a staff member." });
   }
+  const active = typeof req.body.active === "boolean" ? req.body.active : null;
   const r = await query(
-    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email)
-     where id=$4 and tenant_id=$5 returning id, first_name, last_name, email, created_at`,
-    [v.first || null, v.last || null, v.email || null, req.params.id, req.tenant.id]
+    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email), active=coalesce($6,active)
+     where id=$4 and tenant_id=$5 returning id, first_name, last_name, email, active, created_at`,
+    [v.first || null, v.last || null, v.email || null, req.params.id, req.tenant.id, active]
   );
   if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
-  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `Staff user updated: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id,
+    active === null ? `Staff user updated: ${r.rows[0].first_name} ${r.rows[0].last_name}` : `Staff user ${active ? "enabled" : "disabled"}: ${r.rows[0].first_name} ${r.rows[0].last_name}`]);
   res.json({ staff: r.rows[0] });
 }));
 router.delete("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
@@ -383,7 +385,7 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
   if (unschedule) {
     if (license.status !== "scheduled") return res.status(409).json({ error: "Only a scheduled (not yet active) license can be unscheduled." });
     const result = await query(
-      `update service_licenses set start_date=null, end_date=null, status='available' where id=$1 returning *`,
+      `update service_licenses set start_date=null, end_date=null, status='available', scheduled_at=null where id=$1 returning *`,
       [license.id]
     );
     // A "scheduled" license's whole window is still in the future (it flips to "active" the
@@ -418,7 +420,7 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
   try {
     await client.query("BEGIN");
     result = await client.query(
-      `update service_licenses set start_date=$1, end_date=$2, status=$3 where id=$4 returning *`,
+      `update service_licenses set start_date=$1, end_date=$2, status=$3, scheduled_at=now() where id=$4 returning *`,
       [startDate, endDate, status, license.id]
     );
     if (wasScheduled && license.start_date && license.end_date) {

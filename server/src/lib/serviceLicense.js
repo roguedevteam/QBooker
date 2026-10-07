@@ -49,6 +49,23 @@ export async function resolveServiceLicenses(serviceId) {
         resolved.push(r.rows[0]);
         continue;
       }
+      // Dates were assigned but no opening hours were ever set across the window: once the
+      // start date has arrived (and the dates weren't only assigned today, so same-day set-up
+      // still works) the licence goes back to Available with its dates cleared, so it isn't
+      // used up by a service that never opened.
+      if (lic.start_date <= today && (!lic.scheduled_at || String(lic.scheduled_at.toISOString?.() ?? lic.scheduled_at).slice(0, 10) < today)) {
+        const has = await query(
+          `select 1 from service_daily_config where service_id=$1 and date >= $2 and date <= $3 and coalesce(array_length(hours,1),0) > 0 limit 1`,
+          [lic.service_id, lic.start_date, lic.end_date]
+        );
+        if (!has.rows.length) {
+          const r = await query(`update service_licenses set status='available', start_date=null, end_date=null, scheduled_at=null where id=$1 returning *`, [lic.id]);
+          await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+            [lic.tenant_id, `Licence returned to Available — no hours were set for its dates (${lic.start_date} to ${lic.end_date})`]);
+          resolved.push(r.rows[0]);
+          continue;
+        }
+      }
       if (lic.status === "scheduled" && lic.start_date <= today) {
         const r = await query(`update service_licenses set status='active' where id=$1 returning *`, [lic.id]);
         resolved.push(r.rows[0]);
