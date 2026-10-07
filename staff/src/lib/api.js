@@ -1,11 +1,14 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
-let token = localStorage.getItem("qf_staff_token") || null;
+let token = null;
+try { token = localStorage.getItem("qf_staff_token") || null; } catch { /* storage unavailable */ }
 
 export function setToken(t) {
   token = t;
-  if (t) localStorage.setItem("qf_staff_token", t);
-  else localStorage.removeItem("qf_staff_token");
+  try {
+    if (t) localStorage.setItem("qf_staff_token", t);
+    else localStorage.removeItem("qf_staff_token");
+  } catch { /* storage unavailable: stay signed in for this tab only */ }
 }
 export function hasToken() {
   return !!token;
