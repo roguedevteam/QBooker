@@ -369,12 +369,12 @@ function PendingPaymentBanner({ tenant }) {
   if (tenant.status !== "pending") return null;
   return (
     <div className="card" style={{ background: "#FBE9E7", borderColor: "#B3261E", color: "#B3261E", fontSize: 13, fontWeight: 500 }}>
-      Payment pending — your account can be configured now, but staff kiosk and customer WhatsApp won't work until payment is received.
+      Payment pending — your account can be configured now, but staff kiosk and patient WhatsApp won't work until payment is received.
     </div>
   );
 }
 
-const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", customers: "Customers", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
+const TAB_TITLES = { dashboard: "Dashboard", locations: "Locations", customers: "Patients", staff: "Staff", profile: "Account", audit: "Audit log", shop: "Shop" };
 const SIDE_TABS = ["dashboard", "locations", "customers", "staff", "profile", "audit", "shop"];
 const PHONE_TABS = ["dashboard", "locations", "customers", "staff"];
 
@@ -1372,7 +1372,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         <div className="card stack" style={{ borderColor: "var(--accent)" }}>
           <h2>Payment required</h2>
           <div className="muted small">
-            Staff kiosk and customer WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
+            Staff kiosk and patient WhatsApp are switched off until payment is settled. Configure everything now — it'll switch on as soon as payment goes through.
           </div>
           {!payMethod && (
             <div className="form-actions">
@@ -1487,9 +1487,9 @@ function ShopTab({ tenant, locations }) {
   }
 
   const products = [
-    { name: "QR Code Brochure", price: "Free", desc: "A printable page for your waiting area with your WhatsApp sign-in code — customers message it to join the queue or book instantly.", action: { label: "Download brochure", onClick: downloadBrochure } },
+    { name: "QR Code Brochure", price: "Free", desc: "A printable page for your waiting area with your WhatsApp sign-in code — patients message it to join the queue or book instantly.", action: { label: "Download brochure", onClick: downloadBrochure } },
     { name: "Floor-standing Banner", price: "Get a quote", desc: "A pull-up banner for your entrance or waiting area, printed with your business name and WhatsApp code built in.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing banner enquiry") } },
-    { name: "Desktop Touch-Screen Kiosk", price: "Get a quote", desc: "A compact touch-screen unit for a reception desk or counter, so walk-in customers can check themselves in without staff involvement.", action: { label: "Get a quote", onClick: () => enquire("Desktop touch-screen kiosk enquiry") } },
+    { name: "Desktop Touch-Screen Kiosk", price: "Get a quote", desc: "A compact touch-screen unit for a reception desk or counter, so walk-in patients can check themselves in without staff involvement.", action: { label: "Get a quote", onClick: () => enquire("Desktop touch-screen kiosk enquiry") } },
     { name: "Floor-standing Kiosk", price: "Get a quote", desc: "A free-standing self-check-in kiosk for busier waiting areas and lobbies.", action: { label: "Get a quote", onClick: () => enquire("Floor-standing kiosk enquiry") } },
   ];
 
@@ -2625,8 +2625,8 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
 }
 
 const SERVICE_MODE_INFO = [
-  { id: "queue", label: "Queue", text: "Walk-ins only. Customers join a live queue and get called forward in order — no fixed appointment times." },
-  { id: "appointment", label: "Appointment", text: "Bookable time slots only. Customers pick a specific time in advance — no walk-ins." },
+  { id: "queue", label: "Queue", text: "Walk-ins only. Patients join a live queue and get called forward in order — no fixed appointment times." },
+  { id: "appointment", label: "Appointment", text: "Bookable time slots only. Patients pick a specific time in advance — no walk-ins." },
   { id: "hybrid", label: "Hybrid", text: "Both at once. Some staff take walk-ins while others take bookings, at the same time." },
 ];
 
