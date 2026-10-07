@@ -110,7 +110,7 @@ const MODES = [
 
 const SETUP_STEPS = [
   { name: "Create your account", text: "Your name, your business name and your email address." },
-  { name: "Add your service", text: "Name it and choose queue, appointments or both. Your two free days start straight away." },
+  { name: "Add your service", text: "Name it, choose queue, appointments or hybrid, and pick your two free days." },
   { name: "Share your WhatsApp link", text: "Patients can start queuing straight away." },
 ];
 
@@ -499,12 +499,6 @@ function FaqItem({ q, a }) {
   );
 }
 
-function clockLabel(min) {
-  const h = Math.floor(min / 60) % 24, m = min % 60;
-  const ap = h >= 12 ? "pm" : "am";
-  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${ap}`;
-}
-
 function Success({ result }) {
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus({ preventScroll: true }); }, []);
@@ -522,15 +516,8 @@ function Success({ result }) {
           </>
         ) : (
           <>
-            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>{result.live ? "You're live" : "You're set up"}</h1>
+            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>You're set up</h1>
             <p className="su-p">Account created for <strong>{result.tenant.business_name}</strong>.</p>
-            {result.live && (
-              <p className="su-p">
-                <strong>{result.live.serviceName}</strong> is open for customers
-                {result.live.todayFrom != null ? ` today from ${clockLabel(result.live.todayFrom)} to ${clockLabel(result.live.todayTo)}` : " from tomorrow"}
-                {result.live.endDate > result.live.startDate ? ", and tomorrow from 8:00am to 6:00pm" : ""}. Today counts as your first free day, and you can change the hours any time.
-              </p>
-            )}
           </>
         )}
         <div className="su-code" role="group" aria-label="Demo sign-in code">
@@ -753,7 +740,6 @@ function Signup({ onDone, setError, onBackToLanding }) {
       const payload = {
         businessName, firstName, lastName, email,
         locations: locationNames.map((n) => ({ name: n.trim() })),
-        localMinutes: new Date().getHours() * 60 + new Date().getMinutes(),
         services: services.map((s) => ({
           name: s.name.trim(), locationIndex: s.locationIndex, mode: s.mode, slotMinutes: s.slotMinutes,
         })),
@@ -889,9 +875,8 @@ function Signup({ onDone, setError, onBackToLanding }) {
             <div>
               <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Add your services</h2>
               <p className="su-hint">
-                Each service belongs to one location. Your 2 free days go on the first service you add and start today, even if
-                the day is half gone: today counts as day one, and we open it from the next half hour so you can take customers straight away.
-                You can change the hours any time.
+                Each service belongs to one location. Your 2 free days go on the first service you add, and you choose
+                which two days from its calendar once you're in. Start today, even part-way through the day, or pick a future date, so nothing is wasted while you're still setting up.
               </p>
             </div>
             <div className="su-stack" style={{ gap: 12 }}>
@@ -934,7 +919,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
               <button type="button" className="su-add" onClick={addService} disabled={services.length >= MAX_SERVICES}>+ Add another service</button>
             </div>
 
-            <div className="su-note"><strong>2 free days, starting today</strong> — no card needed. Add more licences whenever you're ready.</div>
+            <div className="su-note"><strong>2 free days</strong> — no card needed. Add more licences whenever you're ready.</div>
           </div>
         )}
 

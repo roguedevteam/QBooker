@@ -8,8 +8,6 @@ import { createLocationCode } from "../lib/codes.js";
 import { domainAcceptsMail } from "../lib/emailCheck.js";
 import { countryForIp } from "../lib/geo.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
-import { getToday } from "../lib/clock.js";
-import { computeEndDate } from "../lib/serviceLicense.js";
 
 const router = Router();
 
@@ -20,7 +18,7 @@ const router = Router();
 router.post("/signup", asyncHandler(async (req, res) => {
   const {
     businessName, firstName, lastName, email, companyAddress,
-    locations, services, localMinutes,
+    locations, services,
   } = req.body;
 
   if (!email || !businessName || !firstName || !lastName || !locations?.length || !services?.length) {
@@ -102,7 +100,6 @@ router.post("/signup", asyncHandler(async (req, res) => {
     // one Available license bound to it — not scheduled yet; the admin assigns dates from
     // the service's own calendar once they're in.
     let serviceIndex = 0;
-    let liveInfo = null;
     for (const s of resolvedServices) {
       const location = locationRows[s.locationIndex];
       if (!location) throw Object.assign(new Error("A service referenced a location that doesn't exist."), { statusCode: 400 });
@@ -111,40 +108,18 @@ router.post("/signup", asyncHandler(async (req, res) => {
         [tenant.id, location.id, s.name.trim(), s.mode || "hybrid", s.slotMinutes || 15]
       );
       if (serviceIndex === 0) {
-        // Live straight away: the free days start today, however late in the day it is
-        // (today still counts as day one), with hours opened from the next half hour so the
-        // service can take customers within a minute of signing up. Tomorrow gets a normal day.
-        const startDate = getToday();
-        const endDate = computeEndDate(startDate, trialPlan.planDays);
         await client.query(
-          `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, start_date, end_date)
-           values ($1,$2,$3,$4,$5,$6,'active',$7,$8)`,
-          [tenant.id, svcResult.rows[0].id, trialPlan.planId, trialPlan.planLabel, trialPlan.planDays, trialPlan.price, startDate, endDate]
+          `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
+           values ($1,$2,$3,$4,$5,$6,'available')`,
+          [tenant.id, svcResult.rows[0].id, trialPlan.planId, trialPlan.planLabel, trialPlan.planDays, trialPlan.price]
         );
-        const nowMin = Number.isFinite(Number(localMinutes)) ? Math.max(0, Math.min(1439, Number(localMinutes))) : 8 * 60;
-        const range = (from, to) => { const out = []; for (let m = from; m < to; m += 30) out.push(m); return out; };
-        const first = Math.ceil(nowMin / 30) * 30;
-        const todayHours = first >= 24 * 60 ? [] : range(first, Math.min(24 * 60, Math.max(18 * 60, first + 120)));
-        const days = [[startDate, todayHours]];
-        if (endDate > startDate) {
-          const next = new Date(startDate + "T00:00:00Z"); next.setUTCDate(next.getUTCDate() + 1);
-          days.push([next.toISOString().slice(0, 10), range(8 * 60, 18 * 60)]);
-        }
-        for (const [date, hours] of days) {
-          await client.query(
-            `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
-             values ($1,$2,$3,2,1,1) on conflict (service_id, date) do nothing`,
-            [svcResult.rows[0].id, date, hours]
-          );
-        }
-        liveInfo = { serviceName: s.name.trim(), startDate, endDate, todayFrom: todayHours[0] ?? null, todayTo: todayHours.length ? todayHours[todayHours.length - 1] + 30 : null };
       }
       serviceIndex++;
     }
 
     await client.query(
       `insert into audit_log (tenant_id, message) values ($1,$2)`,
-      [tenant.id, `Account activated for ${businessName} — ${locations.length} location(s), ${services.length} service(s), 2-day free trial started and live from today${liveInfo ? ` (${liveInfo.startDate} to ${liveInfo.endDate})` : ""}`]
+      [tenant.id, `Account activated for ${businessName} — ${locations.length} location(s), ${services.length} service(s), 2-day free trial started`]
     );
 
     await client.query("COMMIT");
@@ -158,7 +133,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
     const body = `Your QBooker admin sign-in code is ${code}.`;
     await logSimulatedMessage({ tenantId: tenant.id, channel: "email", toReference: email, body });
 
-    res.json({ tenant: sanitizeTenant(tenant), demoOtp: code, live: liveInfo });
+    res.json({ tenant: sanitizeTenant(tenant), demoOtp: code });
   } catch (err) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error(err);
