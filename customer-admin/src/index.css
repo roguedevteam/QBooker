@@ -321,3 +321,10 @@ select, .input {
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 
 @media (min-width: 768px) { .svc-actions > .btn, .svc-actions > .btn-outline, .lic-actions > .btn, .lic-actions > .btn-outline { flex: 0 0 auto; } }
+
+/* Compact location action row: code + copy, Add service, Rename, Archive */
+.loc-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.loc-code { display: inline-flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--line, #E1E1DB); padding: 3px 4px 3px 10px; min-height: 44px; box-sizing: border-box; }
+.loc-code .label { font-size: 12px; color: var(--muted, #5F615B); }
+.loc-code .code-text { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 16px; letter-spacing: 1px; }
+.loc-toolbar .btn-outline { min-height: 44px; }

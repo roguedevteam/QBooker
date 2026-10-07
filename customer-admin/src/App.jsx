@@ -330,6 +330,7 @@ const PHONE_TABS = ["dashboard", "locations", "staff", "profile"];
 function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, setError }) {
   const [tab, setTab] = useState("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [renamingLoc, setRenamingLoc] = useState(false);
   const [openLocId, setOpenLocId] = useState(undefined); // undefined = default (auto-open a sole location), null = list, id = that location
   const [ticketFilter, setTicketFilter] = useState("all");
   const [renewServiceId, setRenewServiceId] = useState(null);
@@ -549,50 +550,45 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
             const addingHere = addingServiceFor === loc.id;
             return (
               <div className="stack" style={{ gap: 16 }}>
-                {loc.code && (
-                  <div className="code-card">
-                    <div className="muted small">Customers message this code on WhatsApp</div>
-                    <div className="row">
+                <div className="loc-toolbar" role="toolbar" aria-label={`${loc.name} actions`}>
+                  {loc.code && (
+                    <span className="loc-code" title="Customers message this code on WhatsApp">
+                      <span className="label">WhatsApp code</span>
                       <span className="code-text">{loc.code}</span>
-                      <CopyButton value={loc.code} label="Copy code" showText />
-                    </div>
-                  </div>
-                )}
+                      <CopyButton value={loc.code} label="Copy code" />
+                    </span>
+                  )}
+                  {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
+                  <button className="btn-outline" aria-expanded={renamingLoc} onClick={() => setRenamingLoc((v) => !v)}>Rename</button>
+                  <button
+                    className="btn-outline"
+                    title="Archive location"
+                    onClick={async () => {
+                      if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
+                        await api.archiveLocation(loc.id);
+                        setOpenLocId(null);
+                        refreshCore();
+                      }
+                    }}
+                  >
+                    <ArchiveIcon /> Archive
+                  </button>
+                </div>
 
-                <details className="details-card">
-                  <summary>Rename or archive this location</summary>
-                  <div className="inner">
-                    <label className="field">
-                      <span className="field-label">Location name</span>
-                      <input
-                        key={loc.id + loc.name}
-                        className="input" defaultValue={loc.name}
-                        onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } }}
-                        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                      />
-                    </label>
-                    <div>
-                      <button
-                        className="btn-outline"
-                        title="Archive location"
-                        aria-label="Archive location"
-                        onClick={async () => {
-                          if (confirm(`Archive "${loc.name}"? It'll move to the Audit tab, and you can unarchive it from there any time. Its services and license history are kept.`)) {
-                            await api.archiveLocation(loc.id);
-                            setOpenLocId(null);
-                            refreshCore();
-                          }
-                        }}
-                      >
-                        <ArchiveIcon /> Archive location
-                      </button>
-                    </div>
-                  </div>
-                </details>
+                {renamingLoc && (
+                  <label className="field">
+                    <span className="field-label">Location name</span>
+                    <input
+                      key={loc.id + loc.name}
+                      className="input" defaultValue={loc.name} autoFocus
+                      onBlur={async (e) => { const v = e.target.value.trim(); if (v && v !== loc.name) { await api.updateLocation(loc.id, { name: v }); refreshCore(); } else { e.target.value = loc.name; } setRenamingLoc(false); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setRenamingLoc(false); }}
+                    />
+                  </label>
+                )}
 
                 <div className="page-head">
                   <h2>Services</h2>
-                  {!addingHere && <button className="btn-outline" onClick={() => setAddingServiceFor(loc.id)}>+ Add service</button>}
                 </div>
 
                 {addingHere && (
