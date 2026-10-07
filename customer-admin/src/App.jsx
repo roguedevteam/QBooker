@@ -1363,8 +1363,6 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         </div>
       )}
 
-      <OnSiteSetting tenant={tenant} onTenantChange={onTenantChange} />
-
       <div className="card stack">
         <h2>Licenses ({visibleLicenses.length})</h2>
         {visibleLicenses.length === 0 && <div className="muted small">No licenses yet.</div>}
