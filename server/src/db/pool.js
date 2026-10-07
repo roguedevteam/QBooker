@@ -17,7 +17,7 @@ if (!process.env.DATABASE_URL) {
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // required for Supabase's managed Postgres
+  ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false }, // required for Supabase; tests use a local DB
 });
 
 export async function query(text, params) {
