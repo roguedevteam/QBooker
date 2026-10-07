@@ -1490,15 +1490,24 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
   const [licMounted, setLicMounted] = useState(false); // keep the licences panel mounted once opened so a buy in progress survives switching tabs
   const [buyTrigger, setBuyTrigger] = useState(0);
   const [licenses, setLicenses] = useState([]);
+  const [licensesLoaded, setLicensesLoaded] = useState(false);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
 
   async function loadLicenses() {
     try { const r = await api.getServiceLicenses(service.id); setLicenses(r.licenses); } catch (err) { setError(err.message); }
+    setLicensesLoaded(true);
   }
   useEffect(() => { loadLicenses(); }, [service.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const summary = licenseSummary(licenses);
   const hasActiveLicense = licenses.some((l) => l.status === "active");
+  // Hours only make sense while the service has a live or booked-in licence; Licences only once it has ever had one.
+  const everHadLicence = licenses.some((l) => l.status !== "refunded");
+  const showHoursBtn = licensesLoaded && licenses.some((l) => l.status === "active" || l.status === "scheduled");
+  const showLicencesBtn = licensesLoaded && everHadLicence;
+  useEffect(() => {
+    if (licensesLoaded && ((panel === "hours" && !showHoursBtn) || (panel === "licences" && !showLicencesBtn && !buyTrigger))) setPanel(null);
+  }, [licensesLoaded, showHoursBtn, showLicencesBtn]); // eslint-disable-line react-hooks/exhaustive-deps
   function openPanel(name) {
     if (name === "licences") setLicMounted(true);
     setPanel((cur) => (cur === name ? null : name));
@@ -1585,8 +1594,8 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
       )}
 
       <div className="svc-actions">
-        <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>
-        <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>
+        {showHoursBtn && <button type="button" className="btn-outline" aria-expanded={panel === "hours"} onClick={() => openPanel("hours")}>Hours</button>}
+        {showLicencesBtn && <button type="button" className="btn-outline" aria-expanded={panel === "licences"} onClick={() => openPanel("licences")}>Licences</button>}
         <div className="svc-buy">
           <button type="button" className="btn" onClick={startBuy}>Buy a licence</button>
           <button type="button" className="btn-outline icon-btn" aria-label="Print QR code" title="Print QR code" onClick={printServiceQR}><QrIcon /></button>
