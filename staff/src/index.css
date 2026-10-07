@@ -277,3 +277,13 @@ legend { padding: 0; }
 @media (min-width: 768px) { .room-box { flex: 0 1 280px; margin-left: auto; } }
 
 @media (min-width: 768px) { .work-bar-col, .work-bar-col + .room-warn { max-width: 760px; margin-left: auto; margin-right: auto; } .work-bar-col { margin-bottom: 14px; } }
+
+/* Service tile: the tick row and its Queue / Appointments / Both choice share one box */
+.svc-tile { border: 1px solid var(--line-strong); background: #fff; }
+.svc-tile:has(.opt input:checked) { border: 2px solid var(--blue); background: var(--blue-weak); }
+.svc-tile .opt, .svc-tile .opt:has(input:checked) { border: 0; background: transparent; padding: 10px 14px; }
+.svc-tile:has(.opt input:checked) .opt { padding: 9px 13px; }
+.svc-tile .role-pick { margin: 0; padding: 0 13px 13px 53px; border: 0; min-width: 0; }
+.svc-tile .role-pick .seg { background: #fff; }
+.svc-tile .role-pick .seg:has(input:checked) { background: var(--blue); border-color: var(--blue); }
+@media (max-width: 420px) { .svc-tile .role-pick { padding-left: 13px; } }

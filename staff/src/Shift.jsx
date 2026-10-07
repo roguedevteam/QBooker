@@ -192,7 +192,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
               const n = waitingCount(s.id);
               const on = serviceIds.includes(s.id);
               return (
-                <div key={s.id}>
+                <div key={s.id} className="svc-tile">
                   <label className="opt opt-lg">
                     <input type="checkbox" checked={on} onChange={(e) => toggle(s.id, e.target.checked)} />
                     <span className="box" aria-hidden="true" />
