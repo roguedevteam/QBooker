@@ -2,6 +2,7 @@ import TimezoneSelect from "./TimezoneSelect.jsx";
 import { useState, useEffect, useRef } from "react";
 import { priceText, exMoney, incVat, vatLabel, vatPercent, setBilling } from "./lib/money.js";
 import { api, setToken, hasToken } from "./lib/api.js";
+import CodeBoxes from "./CodeBoxes.jsx";
 import { todayIso, nowMinutes, isSimulatedToday, refreshClock, setDefaultTimezone, getDefaultTimezone } from "./lib/clock.js";
 import TodayPanel from "./TodayPanel.jsx";
 
@@ -385,10 +386,10 @@ function AdminLogin({ onSignedIn, setError }) {
               If <strong style={{ overflowWrap: "anywhere" }}>{email.trim()}</strong> has an account, we've emailed you a 6-digit code. It can take a minute to arrive.
               {demoOtp && <> (demo: <strong>{demoOtp}</strong>)</>}
             </div>
-            <label className="field">
-              <span className="field-label">6-digit code</span>
-              <input className="input mono" autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
-            </label>
+            <div className="field">
+              <span className="field-label" id="admin-code-label">Enter your 6-digit code</span>
+              <CodeBoxes value={code} onChange={setCode} onEnter={verify} />
+            </div>
             <button className="btn" onClick={verify}>Verify &amp; sign in</button>
           </>
         )}

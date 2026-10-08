@@ -70,6 +70,8 @@ export default function SignIn({ onSignedIn }) {
     fill(i, d);
   }
   function onKeyDown(i, e) {
+    // A digit key is handled here too: typing the same digit over a filled box fires no change event, so the cursor would not move on.
+    if (/^\d$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); fill(i, e.key); return; }
     if (e.key === "Backspace") {
       e.preventDefault();
       const next = [...digits];

@@ -643,13 +643,13 @@ def journey_A(env):
         assert re.fullmatch(r"\d{6}", S["signup_otp"]), S["signup_otp"]
     a.scan(A, "sign-up: confirm email")
     with T.step(A, "a wrong code is refused and the setup does not continue", p):
-        p.get_by_label("6-digit code").fill("000000")
+        fill_code(p, "000000")
         with a.mon.expect("401", "Failed to load resource"):
             btn(p, "Confirm email").click()
             wait_text(p, "Incorrect or expired code")
         assert not has_text(p, "Add your locations")
     with T.step(A, "the emailed code confirms the address and moves on to locations", p, critical=True):
-        p.get_by_label("6-digit code").fill(S["signup_otp"])
+        fill_code(p, S["signup_otp"])
         btn(p, "Confirm email").click()
         wait_text(p, "Add your locations")
     a.scan(A, "sign-up step 2 (locations)")
@@ -685,13 +685,13 @@ def journey_A(env):
         wait_text(p, "demo:")
     a.scan(A, "admin sign-in (code)")
     with T.step(A, "admin sign-in: a wrong code is rejected with a clear message", p):
-        p.get_by_label("6-digit code").fill("000000")
+        fill_code(p, "000000")
         with a.mon.expect("401", "Failed to load resource"):
             btn(p, "Verify & sign in").click()
             wait_text(p, "Incorrect or expired code")
     with T.step(A, "admin sign-in: the newest emailed (demo) code signs the owner in", p, critical=True):
         demo_code = p.locator("strong").filter(has_text=re.compile(r"^\d{6}$")).first.inner_text().strip()
-        p.get_by_label("6-digit code").fill(demo_code)
+        fill_code(p, demo_code)
         btn(p, "Verify & sign in").click()
         wait_text(p, "Customer admin")
         assert has_text(p, S["biz"])
@@ -708,6 +708,12 @@ def journey_A(env):
 # ==========================================================================================================
 # B. Customer-admin: locations, services, licences, hours, staff, dashboard, account
 # ==========================================================================================================
+def fill_code(p, code):
+    """Types a one-time code into the six single-digit boxes (typing moves from box to box)."""
+    p.get_by_label("Digit 1 of 6").click()
+    p.keyboard.type(code)
+
+
 def nav(a, label):
     p = a.page
     if a.phone and label in ("Account", "Audit log", "Shop"):

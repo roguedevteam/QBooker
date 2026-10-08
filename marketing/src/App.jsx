@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useId, cloneElement } from "react";
+import CodeBoxes from "./CodeBoxes.jsx";
 import { priceText, exMoney, incVat } from "./lib/vat.js";
 import { api } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
@@ -873,9 +874,11 @@ function Signup({ onDone, setError, onBackToLanding }) {
               <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Check your email</h2>
               <p className="su-hint">We've sent a 6-digit code to <strong style={{ overflowWrap: "anywhere" }}>{email.trim()}</strong>. It works once and expires in 10 minutes. Check your junk folder if it doesn't arrive.</p>
             </div>
-            <Field label="6-digit code" error={attempted && !/^\d{6}$/.test(code.trim()) ? "Enter the 6-digit code from the email." : null}>
-              <input className="su-input mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-            </Field>
+            <div className="su-field">
+              <span className="su-label">Enter your 6-digit code</span>
+              <CodeBoxes value={code} onChange={setCode} onEnter={() => { if (/^\d{6}$/.test(code)) checkCode(); }} invalid={attempted && code.length < 6} describedBy={attempted && code.length < 6 ? "su-code-err" : undefined} />
+              {attempted && code.length < 6 && <div className="su-error" id="su-code-err" role="alert">Enter the 6-digit code from the email.</div>}
+            </div>
             {demoCode && (
               <div className="su-code" role="group" aria-label="Demo code">
                 <span className="su-code-label">Demo code (simulated email)</span>

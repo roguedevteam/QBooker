@@ -481,3 +481,10 @@ select, .input {
 
 .loc-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .link-copy-btn { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* One-time code: six boxes */
+.code-boxes { display: flex; gap: 8px; max-width: 420px; }
+.code-box { flex: 1; min-width: 0; height: 60px; border: 2px solid var(--line-strong); background: #fff; color: var(--ink); text-align: center; font-size: 26px; font-weight: 600; border-radius: 0; padding: 0; }
+.code-box:not([value=""]) { border-color: var(--blue); }
+.code-box:focus { border-color: var(--blue); outline: 3px solid var(--accent); outline-offset: 2px; }
+.code-box[aria-invalid="true"] { border-color: var(--error); }
