@@ -558,33 +558,27 @@ function FaqItem({ q, a }) {
 function Success({ result }) {
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus({ preventScroll: true }); }, []);
-  const existing = result.alreadyExists;
+  // The hand-off token is good for two minutes and is swapped for a normal session by the admin portal, so the person lands
+  // signed in. It travels in the URL fragment, which is never sent to any server.
+  const dest = result.handoff ? `${ADMIN_APP_URL}#handoff=${encodeURIComponent(result.handoff)}` : ADMIN_APP_URL;
+  useEffect(() => {
+    if (!result.handoff) return undefined;
+    const t = setTimeout(() => { window.location.assign(dest); }, result.demoOtp ? 60000 : 1200);
+    return () => clearTimeout(t);
+  }, [dest, result.handoff, result.demoOtp]);
   return (
     <main id="main" className="su-wrap su-wrap-narrow">
       <div className="su-card su-success">
         <div className="su-success-mark" aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 22 22"><path d="M4 11.5l4.5 4.5L18 6.5" stroke="#fff" strokeWidth="2.5" fill="none" /></svg>
         </div>
-        {existing ? (
-          <>
-            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>Welcome back</h1>
-            <p className="su-p">An account for <strong>{result.businessName}</strong> already exists with that email — we've sent a fresh sign-in code instead of creating a new one.</p>
-          </>
-        ) : (
-          <>
-            <h1 className="su-h1" tabIndex={-1} ref={headingRef}>You're set up</h1>
-            <p className="su-p">Thanks, <strong>{result.businessName}</strong> is being set up.</p>
-          </>
-        )}
-        {/* Production never shows the code: it is emailed. A demo/test server also returns it (demoOtp) so it can be shown here. */}
-        <p className="su-p">We've emailed a 6-digit sign-in code to <strong style={{ overflowWrap: "anywhere" }}>{result.email}</strong>. Open the admin portal, enter that address and the code.</p>
-        {result.demoOtp && (
-          <div className="su-code" role="group" aria-label="Demo sign-in code">
-            <span className="su-code-label">Demo sign-in code (simulated email)</span>
-            <span className="su-code-value mono">{result.demoOtp}</span>
-          </div>
-        )}
-        <a href={ADMIN_APP_URL} className="su-btn su-btn-primary su-btn-block">Go to admin sign-in →</a>
+        <h1 className="su-h1" tabIndex={-1} ref={headingRef}>{result.existing ? "Welcome back" : "You're set up"}</h1>
+        <p className="su-p">
+          {result.existing
+            ? <>Your account for <strong>{result.businessName}</strong> is confirmed. Taking you to your dashboard…</>
+            : <><strong>{result.businessName}</strong> is ready. Taking you to your dashboard…</>}
+        </p>
+        <a href={dest} className="su-btn su-btn-primary su-btn-block">Go to my dashboard →</a>
       </div>
     </main>
   );
@@ -693,6 +687,14 @@ function Signup({ onDone, setError, onBackToLanding }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  // Email check, done on step 1 before anything else: a code is emailed and must be entered before the setup continues.
+  const [verifyStage, setVerifyStage] = useState(false);
+  const [code, setCode] = useState("");
+  const [demoCode, setDemoCode] = useState("");
+  const [signupToken, setSignupToken] = useState("");
+  const [verifiedEmail, setVerifiedEmail] = useState("");
+  const emailKey = email.trim().toLowerCase();
+  const emailVerified = !!signupToken && verifiedEmail === emailKey;
 
   // Step 2 — locations (free, unlimited — just a routing/staff-access concept)
   const [locationNames, setLocationNames] = useState([""]);
@@ -784,6 +786,25 @@ function Signup({ onDone, setError, onBackToLanding }) {
   function next() { setStep((s) => Math.min(lastStep, s + 1)); }
   function back() { setStep((s) => Math.max(1, s - 1)); }
 
+  async function sendCode() {
+    setSubmitting(true); setError(""); setSubmitError("");
+    try {
+      const r = await api.requestSignupCode(email.trim());
+      setDemoCode(r.demoOtp || ""); setCode(""); setVerifyStage(true);
+    } catch (err) { setSubmitError(err.message); }
+    finally { setSubmitting(false); }
+  }
+  async function checkCode() {
+    setSubmitting(true); setError(""); setSubmitError("");
+    try {
+      const r = await api.verifySignupCode(email.trim(), code.trim());
+      if (r.existing) { onDone({ existing: true, businessName: r.businessName, handoff: r.handoff }); return; }
+      setSignupToken(r.signupToken); setVerifiedEmail(emailKey); setVerifyStage(false);
+      next();
+    } catch (err) { setSubmitError(err.message); }
+    finally { setSubmitting(false); }
+  }
+
   async function submit() {
     setSubmitting(true);
     setError("");
@@ -793,7 +814,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
       // pricing), so there's no payment method to collect; bill as "card" with no
       // invoice fields since there's nothing to invoice either.
       const payload = {
-        businessName, firstName, lastName, email,
+        businessName, firstName, lastName, signupToken,
         locations: locationNames.map((n) => ({ name: n.trim() })),
         services: services.map((s) => ({
           name: s.name.trim(), locationIndex: s.locationIndex, mode: s.mode, slotMinutes: s.slotMinutes,
@@ -816,7 +837,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
   function onFormSubmit(e) {
     e.preventDefault();
     if (submitting) return;
-    const valid = [step1Valid, step2Valid, step3Valid, step4Valid][step - 1];
+    const valid = step === 1 && verifyStage ? /^\d{6}$/.test(code.trim()) : [step1Valid, step2Valid, step3Valid, step4Valid][step - 1];
     if (!valid) {
       setAttempted(true);
       if (step === 3) {
@@ -826,13 +847,16 @@ function Signup({ onDone, setError, onBackToLanding }) {
       focusFirstInvalid();
       return;
     }
+    if (step === 1 && !emailVerified) { if (verifyStage) checkCode(); else sendCode(); return; }
     if (step < lastStep) next();
     else submit();
   }
 
   const missing = (v) => (attempted && !String(v).trim());
   const badServices = attempted ? services.map((s, i) => (isServiceValid(s) ? -1 : i)).filter((i) => i >= 0) : [];
-  const primaryLabel = step < lastStep ? "Continue" : submitting ? "Processing…" : "Create account";
+  const primaryLabel = submitting ? "Please wait…"
+    : step === 1 && !emailVerified ? (verifyStage ? "Confirm email" : "Send me a code")
+    : step < lastStep ? "Continue" : "Create account";
 
   return (
     <main id="main" className="su-wrap">
@@ -843,7 +867,29 @@ function Signup({ onDone, setError, onBackToLanding }) {
       <StepHeader step={step} labels={stepLabels} />
 
       <form id="su-form" className="su-card" onSubmit={onFormSubmit} noValidate>
-        {step === 1 && (
+        {step === 1 && verifyStage && !emailVerified && (
+          <div className="su-stack">
+            <div>
+              <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Check your email</h2>
+              <p className="su-hint">We've sent a 6-digit code to <strong style={{ overflowWrap: "anywhere" }}>{email.trim()}</strong>. It works once and expires in 10 minutes. Check your junk folder if it doesn't arrive.</p>
+            </div>
+            <Field label="6-digit code" error={attempted && !/^\d{6}$/.test(code.trim()) ? "Enter the 6-digit code from the email." : null}>
+              <input className="su-input mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+            </Field>
+            {demoCode && (
+              <div className="su-code" role="group" aria-label="Demo code">
+                <span className="su-code-label">Demo code (simulated email)</span>
+                <span className="su-code-value mono">{demoCode}</span>
+              </div>
+            )}
+            <p className="su-hint">
+              <button type="button" className="su-link" onClick={sendCode} disabled={submitting}>Send a new code</button>
+              {" · "}
+              <button type="button" className="su-link" onClick={() => { setVerifyStage(false); setCode(""); setSubmitError(""); }}>Use a different email address</button>
+            </p>
+          </div>
+        )}
+        {step === 1 && !(verifyStage && !emailVerified) && (
           <div className="su-stack">
             <div>
               <h2 className="su-h2" tabIndex={-1} ref={headingRef}>Your details</h2>
@@ -862,7 +908,7 @@ function Signup({ onDone, setError, onBackToLanding }) {
             </div>
             <Field
               label="Email address"
-              hint="This is what you'll sign in with — we'll send a one-time code here each time, no password to remember."
+              hint="This is what you'll sign in with. We'll email you a code to confirm it now, and a new one each time you sign in — no password to remember."
               error={missing(email) ? "Enter your email address." : null}
             >
               <input className="su-input" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} />

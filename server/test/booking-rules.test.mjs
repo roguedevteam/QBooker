@@ -22,6 +22,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { signupV, verifyEmail } from './signup-helper.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = path.resolve(HERE, '..');
@@ -119,7 +120,7 @@ async function at(iso, { frozen = true } = {}) {
 }
 async function signup(label = 't', { locations = [{ name: 'Main' }], services = [{ name: 'Dental Care', locationIndex: 0 }] } = {}) {
   const email = `br-${RUN}-${label}-${rnd()}@example.com`;
-  const r = await post('/api/auth/signup', { businessName: `br-${label}-${rnd()}`, firstName: 'Br', lastName: 'Tester', email, locations, services });
+  const r = await signupV(post, { businessName: `br-${label}-${rnd()}`, firstName: 'Br', lastName: 'Tester', email, locations, services });
   assert.equal(r.status, 200, `signup failed: ${r.text}`);
   createdTenants.push(r.json.tenant.id);
   const v = await post('/api/auth/admin/verify-otp', { email, code: r.json.demoOtp });

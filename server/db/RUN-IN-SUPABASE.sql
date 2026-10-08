@@ -144,3 +144,16 @@ select tenant_id, 'Ticket ' || old_number || ' (' || visit_date::text || ') renu
 from upd;
 
 create unique index if not exists idx_tickets_location_day_number on tickets (location_id, visit_date, ticket_number);
+
+-- 0020: verify the email address before an account is created (sign-up).
+create table if not exists signup_otp (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  code text not null,
+  expires_at timestamptz not null,
+  consumed boolean not null default false,
+  attempts integer not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_signup_otp_email on signup_otp (lower(email), created_at desc);
+alter table signup_otp enable row level security;

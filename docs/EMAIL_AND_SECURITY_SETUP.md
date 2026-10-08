@@ -113,10 +113,11 @@ Tick every line.
 
 - [ ] Open `https://<your-api-address>/health`. It shows `{"ok":true}`.
 - [ ] Open the **sign-up** page and create a test account using an email address you can read (not a work alias that forwards).
-- [ ] The success page says "We've emailed a 6-digit sign-in code" and **shows no code**.
+- [ ] After you enter your details, the page says "Check your email" and **shows no code**.
 - [ ] The email arrives within a minute, from your sender name, with the code. If it is in **spam**, mark it "not spam" and
       re-check Part 2 (all records verified, DMARC added).
-- [ ] Go to the **admin sign-in**, enter that email and the code. You are signed in.
+- [ ] Enter the code, finish the setup steps, and you land in the customer admin already signed in (no second code).
+- [ ] Close the tab, open the **admin sign-in**, enter that email: a new code arrives and signs you in.
 - [ ] Sign out, request a code again for the same email: you get a new email and the **old code no longer works**.
 - [ ] Request a code for an email address that has **no account**. The screen looks exactly the same as for a real one,
       and no email arrives. (This is deliberate.)

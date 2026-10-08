@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { signupV, verifyEmail } from './signup-helper.mjs';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:4100').replace(/\/$/, '');
 const JWT_SECRET = process.env.JWT_SECRET || 'testsecret';
@@ -128,7 +129,7 @@ async function systemToken() {
 // Real signup can be blocked in sandboxes without DNS (emailCheck.js treats ENOTFOUND as "no MX"). We probe once;
 // when blocked, fixtures are seeded through psql and the sign-up-only tests are skipped.
 const probeEmail = `api-test-${RUN}-probe-${rnd()}@example.com`;
-const probe = await post('/api/auth/signup', { businessName: `api-test-probe-${rnd()}`, firstName: 'P', lastName: 'P', email: probeEmail, locations: [{ name: 'Main' }], services: [{ name: 'Svc', locationIndex: 0 }] }).catch((e) => ({ status: 0, text: String(e) }));
+const probe = await signupV(post, { businessName: `api-test-probe-${rnd()}`, firstName: 'P', lastName: 'P', email: probeEmail, locations: [{ name: 'Main' }], services: [{ name: 'Svc', locationIndex: 0 }] }).catch((e) => ({ status: 0, text: String(e) }));
 if (probe.status === 0) throw new Error(`Cannot reach ${BASE}: ${probe.text}`);
 const dnsDown = probe.status === 400 && /receive mail/.test(probe.text);
 if (probe.status === 200) createdTenants.push(probe.json.tenant.id);
@@ -170,7 +171,7 @@ async function signup({ label = 't', locations = [{ name: 'Main' }], services = 
     createdTenants.push(id);
     otp = (await post('/api/auth/admin/request-otp', { email })).json.demoOtp;
   } else {
-    const r = await post('/api/auth/signup', body);
+    const r = await signupV(post, body);
     assert.equal(r.status, 200, `signup failed: ${r.text}`);
     id = r.json.tenant.id; tenant = r.json.tenant; otp = r.json.demoOtp;
     createdTenants.push(id);
@@ -262,28 +263,28 @@ describe('1. Sign-up & auth', () => {
     for (const field of ['email', 'businessName', 'firstName', 'lastName', 'locations', 'services']) {
       it(`rejects a missing ${field} with 400 and creates nothing`, async () => {
         const b = validBody(); delete b[field];
-        const r = await post('/api/auth/signup', b);
+        const r = await signupV(post, b);
         assert.equal(r.status, 400, r.text);
         if (PSQL_OK) assert.equal(tenantCount(b.email), 0);
       });
     }
     it('rejects empty locations / services arrays', async () => {
-      assert.equal((await post('/api/auth/signup', { ...validBody(), locations: [] })).status, 400);
-      assert.equal((await post('/api/auth/signup', { ...validBody(), services: [] })).status, 400);
+      assert.equal((await signupV(post, { ...validBody(), locations: [] })).status, 400);
+      assert.equal((await signupV(post, { ...validBody(), services: [] })).status, 400);
     });
     it('rejects blank location / service names and missing locationIndex', async () => {
-      assert.equal((await post('/api/auth/signup', { ...validBody(), locations: [{ name: '   ' }] })).status, 400);
-      assert.equal((await post('/api/auth/signup', { ...validBody(), services: [{ name: ' ', locationIndex: 0 }] })).status, 400);
-      assert.equal((await post('/api/auth/signup', { ...validBody(), services: [{ name: 'x' }] })).status, 400);
+      assert.equal((await signupV(post, { ...validBody(), locations: [{ name: '   ' }] })).status, 400);
+      assert.equal((await signupV(post, { ...validBody(), services: [{ name: ' ', locationIndex: 0 }] })).status, 400);
+      assert.equal((await signupV(post, { ...validBody(), services: [{ name: 'x' }] })).status, 400);
     });
     it('rejects duplicate location names (case/space-insensitive)', async () => {
-      const r = await post('/api/auth/signup', { ...validBody(), locations: [{ name: 'North' }, { name: ' north ' }] });
+      const r = await signupV(post, { ...validBody(), locations: [{ name: 'North' }, { name: ' north ' }] });
       assert.equal(r.status, 400, r.text);
     });
     it('[D01] rejects a service whose locationIndex is out of range with 400 (not 500)', needsSignup, async () => {
       for (const idx of [5, -1]) {
         const b = validBody(); b.services = [{ name: 'Svc', locationIndex: idx }];
-        const r = await post('/api/auth/signup', b);
+        const r = await signupV(post, b);
         assert.equal(r.status, 400, `locationIndex ${idx}: ${r.status} ${r.text}`);
         if (PSQL_OK) assert.equal(tenantCount(b.email), 0, 'no half-created tenant');
       }
@@ -308,20 +309,20 @@ describe('1. Sign-up & auth', () => {
       const keys = Object.keys(variants).filter((k) => !dnsDown || !/businessName|firstName|email is an array/.test(k)); // those checks sit behind the MX lookup
       await forAll(keys, async (k) => {
         const b = validBody(); variants[k](b);
-        const r = await post('/api/auth/signup', b);
+        const r = await signupV(post, b);
         return r.status === 400 ? null : `${r.status} ${r.text.slice(0, 80)}`;
       });
     });
     it('[D03] rejects syntactically invalid email addresses', needsSignup, async () => {
       await forAll(['plainstring', 'two words@example.com', 'a@@example.com', '@example.com', 'a@', 'a@b'], async (email) => {
         const b = validBody(); b.email = email;
-        const r = await post('/api/auth/signup', b);
+        const r = await signupV(post, b);
         return r.status === 400 ? null : `${r.status}`;
       });
     });
     it('rejects a null byte in text fields without a 500', needsSignup, async () => {
       const b = validBody(); b.locations = [{ name: 'Ma\u0000in' }];
-      const r = await post('/api/auth/signup', b);
+      const r = await signupV(post, b);
       assert.ok(is4xx(r.status), `${r.status} ${r.text}`);
     });
   });
@@ -352,20 +353,28 @@ describe('1. Sign-up & auth', () => {
       const log = (await get('/api/tenant/audit-log', { token: first.token })).json.auditLog;
       assert.ok(log.some((l) => /Account activated/.test(l.message)));
     });
-    it('same email (any case) does not create a second account and returns alreadyExists + a working OTP', needsSignup, async () => {
-      const r = await post('/api/auth/signup', { ...validBody(), email: first.email.toUpperCase() });
-      assert.equal(r.status, 200);
-      assert.equal(r.json.alreadyExists, true);
-      assert.match(r.json.demoOtp, /^\d{6}$/);
+    it('same email (any case) does not create a second account: the owner is sent a sign-in code and, once it is entered, is signed straight in', needsSignup, async () => {
+      const rc = await post('/api/auth/signup/request-code', { email: first.email.toUpperCase() });
+      assert.equal(rc.status, 200);
+      assert.match(rc.json.demoOtp, /^\d{6}$/);
+      const vc = await post('/api/auth/signup/verify-code', { email: first.email, code: rc.json.demoOtp });
+      assert.equal(vc.status, 200);
+      assert.equal(vc.json.existing, true);
+      assert.ok(!vc.json.signupToken, 'an existing address never gets a sign-up token');
+      const ex = await post('/api/auth/admin/exchange', { handoff: vc.json.handoff });
+      assert.equal(ex.status, 200);
+      assert.equal((await get('/api/tenant/me', { token: ex.json.token })).status, 200);
       if (PSQL_OK) assert.equal(tenantCount(first.email), 1);
-      const v = await post('/api/auth/admin/verify-otp', { email: first.email, code: r.json.demoOtp });
-      assert.equal(v.status, 200);
     });
-    it('[D04] concurrent signups with one email never 500 and create exactly one account', needsSignup, async () => {
+    it('[D04] concurrent signups with one verified email create exactly one account (the rest get 409), never a 500', needsSignup, async () => {
       const b = validBody();
-      const rs = await Promise.all([1, 2, 3, 4].map(() => post('/api/auth/signup', { ...b, businessName: `api-test-race-${rnd()}` })));
-      const codes = rs.map((r) => r.status);
-      assert.ok(codes.every((c) => c === 200), `statuses ${codes}`);
+      const v = await verifyEmail(post, b.email);
+      assert.ok(v.signupToken, JSON.stringify(v.fail));
+      const { email, ...rest } = b;
+      const rs = await Promise.all([1, 2, 3, 4].map(() => post('/api/auth/signup', { ...rest, businessName: `api-test-race-${rnd()}`, signupToken: v.signupToken })));
+      const codes = rs.map((r) => r.status).sort();
+      assert.equal(codes.filter((c) => c === 200).length, 1, `statuses ${codes}`);
+      assert.ok(codes.every((c) => c === 200 || c === 409), `statuses ${codes}`);
       if (PSQL_OK) assert.equal(tenantCount(b.email), 1);
     });
     it('a disabled account cannot re-signup / sign in, and nothing reveals that it exists (uniform 200 / 401)', async () => {
@@ -373,7 +382,7 @@ describe('1. Sign-up & auth', () => {
       const st = await systemToken();
       assert.equal((await patch(`/api/system/tenants/${t.id}`, { status: 'disabled' }, { token: st })).status, 200);
       // CHANGED (account enumeration): these used to answer 403 "disabled"; now the same 200 / 401 as an unknown address, no code issued.
-      if (!dnsDown) { const r = await post('/api/auth/signup', { ...validBody(), email: t.email }); assert.equal(r.status, 200); assert.ok(!r.json.demoOtp); }
+      if (!dnsDown) { const rc = await post('/api/auth/signup/request-code', { email: t.email }); assert.equal(rc.status, 200); assert.ok(!rc.json.demoOtp); assert.equal((await post('/api/auth/signup/verify-code', { email: t.email, code: '123456' })).status, 401); }
       const rq = await post('/api/auth/admin/request-otp', { email: t.email }); assert.equal(rq.status, 200); assert.ok(!rq.json.demoOtp);
       assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '123456' })).status, 401);
       // an already-issued token is blocked too

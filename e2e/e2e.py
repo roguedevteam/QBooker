@@ -223,12 +223,14 @@ class Api:
         """locations: [name]; services: [(name, mode, locationIndex)].  Every service gets a licence starting today
         (first one uses the free trial licence).  hours: 'all' (whole day) | list of minute starts | None (no hours)."""
         email = f"e2e-{RUN}-{re.sub('[^a-z0-9]', '', name.lower())[:40]}@example.com"
+        # Sign-up verifies the address first: request a code, enter it, then create the account and take the hand-off.
+        rc = self.ok("POST", "/api/auth/signup/request-code", dict(email=email))
+        vc = self.ok("POST", "/api/auth/signup/verify-code", dict(email=email, code=rc["demoOtp"]))
         st = self.ok("POST", "/api/auth/signup", dict(
-            businessName=name, firstName="E2E", lastName="Fixture", email=email,
+            businessName=name, firstName="E2E", lastName="Fixture", signupToken=vc["signupToken"],
             locations=[{"name": n} for n in locations],
             services=[dict(name=n, mode=m, locationIndex=li, slotMinutes=15) for n, m, li in services]))
-        otp = st["demoOtp"]
-        v = self.ok("POST", "/api/auth/admin/verify-otp", dict(email=email, code=otp))
+        v = self.ok("POST", "/api/auth/admin/exchange", dict(handoff=st["handoff"]))
         tok, tenant = v["token"], v["tenant"]
         if website:
             self.ok("PATCH", "/api/tenant/me", dict(websiteUrl=website), tok)
@@ -627,15 +629,28 @@ def journey_A(env):
         wait_text(p, "Set up your account")
     a.scan(A, "sign-up step 1", focus=True)
     with T.step(A, "step 1 validation: empty form shows errors and stays on step 1", p):
-        btn(p, "Continue").click()
+        btn(p, "Send me a code").click()
         wait_text(p, "Enter your business name.")
         assert has_text(p, "Enter your email address.")
-    with T.step(A, "step 1 -> 2 with valid details", p, critical=True):
+    with T.step(A, "step 1: valid details send a code and ask for it before anything else", p, critical=True):
         p.get_by_label("Business name").fill(S["biz"])
         p.get_by_label("First name").fill("Ellie")
         p.get_by_label("Last name").fill("Tester")
         p.get_by_label("Email address").fill(S["email"])
-        btn(p, "Continue").click()
+        btn(p, "Send me a code").click()
+        wait_text(p, "Check your email")
+        S["signup_otp"] = p.locator(".su-code-value").inner_text().strip()
+        assert re.fullmatch(r"\d{6}", S["signup_otp"]), S["signup_otp"]
+    a.scan(A, "sign-up: confirm email")
+    with T.step(A, "a wrong code is refused and the setup does not continue", p):
+        p.get_by_label("6-digit code").fill("000000")
+        with a.mon.expect("401", "Failed to load resource"):
+            btn(p, "Confirm email").click()
+            wait_text(p, "Incorrect or expired code")
+        assert not has_text(p, "Add your locations")
+    with T.step(A, "the emailed code confirms the address and moves on to locations", p, critical=True):
+        p.get_by_label("6-digit code").fill(S["signup_otp"])
+        btn(p, "Confirm email").click()
         wait_text(p, "Add your locations")
     a.scan(A, "sign-up step 2 (locations)")
     with T.step(A, "step 2: duplicate location names are rejected", p):
@@ -653,14 +668,15 @@ def journey_A(env):
         p.get_by_label("Service name").fill("Blood Test")
         btn(p, "Create account").click()
         wait_text(p, "You're set up")
-    with T.step(A, "success page shows the business and a 6-digit demo code", p):
+    with T.step(A, "after setup the owner lands in the customer admin already signed in (no second code)", p, critical=True):
+        p.wait_for_url(env.urls["admin"] + "/**", timeout=30000)
+        wait_text(p, "Customer admin")
         assert has_text(p, S["biz"])
-        S["signup_otp"] = p.locator(".su-code-value").inner_text().strip()
-        assert re.fullmatch(r"\d{6}", S["signup_otp"]), S["signup_otp"]
-    a.scan(A, "sign-up success")
-    with T.step(A, "'Go to admin sign-in' leads to the customer-admin app", p, critical=True):
-        p.get_by_role("link", name=re.compile("Go to admin sign-in")).click()
-        p.wait_for_url(env.urls["admin"] + "/**")
+        assert "handoff" not in p.url, p.url
+        assert p.evaluate("!!sessionStorage.getItem('qf_admin_token')")
+    with T.step(A, "signing out and back in later uses the emailed code", p, critical=True):
+        p.evaluate("sessionStorage.removeItem('qf_admin_token')")
+        p.goto(env.urls["admin"])
         wait_text(p, "Admin sign-in")
     a.scan(A, "admin sign-in (email)")
     with T.step(A, "admin sign-in: request code shows the demo code", p, critical=True):
@@ -670,12 +686,6 @@ def journey_A(env):
     a.scan(A, "admin sign-in (code)")
     with T.step(A, "admin sign-in: a wrong code is rejected with a clear message", p):
         p.get_by_label("6-digit code").fill("000000")
-        with a.mon.expect("401", "Failed to load resource"):
-            btn(p, "Verify & sign in").click()
-            wait_text(p, "Incorrect or expired code")
-    with T.step(A, "admin sign-in: asking for a new code cancels the earlier (sign-up) code", p):
-        # CHANGED: the sign-up code used to keep working next to a later one; now each new code replaces the previous.
-        p.get_by_label("6-digit code").fill(S["signup_otp"])
         with a.mon.expect("401", "Failed to load resource"):
             btn(p, "Verify & sign in").click()
             wait_text(p, "Incorrect or expired code")

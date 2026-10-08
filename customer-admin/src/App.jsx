@@ -277,6 +277,16 @@ export default function App() {
   useEffect(() => {
     async function restore() {
       await Promise.all([refreshClock(), api.publicPricing().then((r) => setBilling(r.billing)).catch(() => {})]); // tax rate / label from the platform; defaults are the UK ones
+      // Coming from sign-up (or from verifying an existing address there): a 2-minute hand-off token in the URL fragment is
+      // swapped for a normal session, and removed from the address bar straight away.
+      const m = /(?:^#|&)handoff=([^&]+)/.exec(window.location.hash || "");
+      if (m) {
+        try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* ignore */ }
+        try {
+          const r = await api.exchangeHandoff(decodeURIComponent(m[1]));
+          setToken("tenant_admin", r.token);
+        } catch { /* expired - fall through to the normal sign-in screen */ }
+      }
       if (hasToken("tenant_admin")) {
         try {
           const r = await api.me();

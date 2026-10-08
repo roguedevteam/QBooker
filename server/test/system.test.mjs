@@ -20,6 +20,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { signupV, verifyEmail } from './signup-helper.mjs';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:4100').replace(/\/$/, '');
 const JWT_SECRET = process.env.JWT_SECRET || 'testsecret';
@@ -485,8 +486,8 @@ describe('4. Disabling a tenant', () => {
     const rqA = await post('/api/auth/admin/request-otp', { email: t.email }); assert.equal(rqA.status, 200); assert.equal(rqA.json.demoOtp, undefined);
     const rqS = await post('/api/auth/staff/request-otp', { email: st.email }); assert.equal(rqS.status, 200); assert.equal(rqS.json.demoOtp, undefined);
     assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '000000' })).status, 401);
-    const su = await post('/api/auth/signup', { businessName: 'x', firstName: 'a', lastName: 'b', email: t.email, locations: [{ name: 'a' }], services: [{ name: 'b', locationIndex: 0 }] });
-    assert.ok(su.status === 200 || su.status === 400, `signup with the disabled account's email -> ${su.status}`);
+    const su = await signupV(post, { businessName: 'x', firstName: 'a', lastName: 'b', email: t.email, locations: [{ name: 'a' }], services: [{ name: 'b', locationIndex: 0 }] });
+    assert.ok([200, 400, 401].includes(su.status), `signup with the disabled account's email -> ${su.status}`);
     assert.equal(su.json?.demoOtp, undefined, 'no code is issued for a disabled account');
     const P = `/api/public/tenant/${t.id}`;
     assert.equal((await get(`${P}/info`)).status, 404);

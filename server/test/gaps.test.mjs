@@ -19,6 +19,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { signupV, verifyEmail } from './signup-helper.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = path.resolve(HERE, '..');
@@ -140,7 +141,7 @@ const today = async () => (await get('/api/public/clock')).json.today;
 async function signup({ label = 't', locations = [{ name: 'Main' }], services = [{ name: 'Dental Care', locationIndex: 0, mode: 'hybrid', slotMinutes: 15 }] } = {}) {
   const email = `gaps-${RUN}-${label}-${rnd()}@example.com`;
   const body = { businessName: `gaps-${label}-${rnd()}`, firstName: 'Gap', lastName: 'Tester', email, locations, services };
-  const r = await post('/api/auth/signup', body);
+  const r = await signupV(post, body);
   assert.equal(r.status, 200, `signup failed: ${r.text}`);
   createdTenants.push(r.json.tenant.id);
   const v = await post('/api/auth/admin/verify-otp', { email, code: r.json.demoOtp });
@@ -1610,7 +1611,7 @@ describe('E. security', () => {
     });
     it('sign-up ignores client-supplied status, access code, billing and counters', async () => {
       const email = `gaps-${RUN}-mass-su-${rnd()}@example.com`;
-      const r = await post('/api/auth/signup', { businessName: `gaps-su-${rnd()}`, firstName: 'A', lastName: 'B', email, locations: [{ name: 'Main', staff_access_code: 'HACK', code: 'QB-HACKED' }], services: [{ name: 'Svc', locationIndex: 0, tenant_id: crypto.randomUUID() }],
+      const r = await signupV(post, { businessName: `gaps-su-${rnd()}`, firstName: 'A', lastName: 'B', email, locations: [{ name: 'Main', staff_access_code: 'HACK', code: 'QB-HACKED' }], services: [{ name: 'Svc', locationIndex: 0, tenant_id: crypto.randomUUID() }],
         status: 'pending', access_code: 'HACK-HACK', payment_method: 'later', location_count: 50, id: crypto.randomUUID(), signup_country: 'XX', invoice_po: 'x' });
       assert.equal(r.status, 200, r.text); createdTenants.push(r.json.tenant.id);
       const row = sqlJson(`select status, access_code, payment_method, location_count, signup_country from tenants where id='${r.json.tenant.id}'`)[0];

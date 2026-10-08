@@ -38,6 +38,8 @@ export const api = {
   requestAdminOtp: (email) => request("/api/auth/admin/request-otp", { method: "POST", body: { email }, auth: false }),
   verifyAdminOtp: (email, code) => request("/api/auth/admin/verify-otp", { method: "POST", body: { email, code }, auth: false }),
 
+  exchangeHandoff: (handoff) => request("/api/auth/admin/exchange", { method: "POST", body: { handoff }, auth: false }),
+
   me: () => request("/api/tenant/me"),
   updateMe: (patch) => request("/api/tenant/me", { method: "PATCH", body: patch }),
   getAllLicenses: () => request("/api/tenant/licenses"),

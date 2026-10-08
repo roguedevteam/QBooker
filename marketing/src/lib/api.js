@@ -12,6 +12,8 @@ async function request(path, { method = "GET", body } = {}) {
 }
 
 export const api = {
+  requestSignupCode: (email) => request("/api/auth/signup/request-code", { method: "POST", body: { email } }),
+  verifySignupCode: (email, code) => request("/api/auth/signup/verify-code", { method: "POST", body: { email, code } }),
   signup: (payload) => request("/api/auth/signup", { method: "POST", body: payload }),
   publicPricing: () => request("/api/public/pricing"),
   getClock: () => request("/api/public/time"),

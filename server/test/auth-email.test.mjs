@@ -18,6 +18,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { signupV } from './signup-helper.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = path.resolve(HERE, '..');
@@ -147,12 +148,32 @@ const signupBody = (label, email) => ({
 });
 const tenantIdByEmail = (email) => sql(`select id from tenants where lower(email)=lower(${q(email)})`);
 
-// Sign up + sign in on the production (real-email) instance, reading the code out of the stub's captured email.
+// Sign-up on an instance that does NOT show codes (production + stub Resend): the signup code is read out of the stub's captured email.
+// Returns what POST /signup returns, or the response of whichever earlier step failed (existing addresses come back as 200 { existing: true }).
+async function verifyEmailP(post, email) {
+  const r1 = await post('/api/auth/signup/request-code', { email });
+  if (r1.status !== 200) return { fail: r1 };
+  const r2 = await post('/api/auth/signup/verify-code', { email, code: await lastCode(email) });
+  if (r2.status !== 200 || !r2.json.signupToken) return { fail: r2 };
+  return { signupToken: r2.json.signupToken };
+}
+async function signupP(post, body) {
+  const v = await verifyEmailP(post, body.email);
+  if (v.fail) return v.fail;
+  const { email, ...rest } = body;
+  return post('/api/auth/signup', { ...rest, signupToken: v.signupToken });
+}
+const headerNames = (r) => [...r.headers.keys()].filter((h) => !['date', 'content-length', 'etag', 'x-ratelimit-remaining'].includes(h)).sort();
+const SIGNUP_ROLE = 'signup_verified';
+const jwtSign = (payload, { secret = JWT_SECRET, expiresIn = 600 } = {}) => require('jsonwebtoken').sign(payload, secret, { algorithm: 'HS256', expiresIn });
+
+// Sign up + sign in on the production (real-email) instance, reading the codes out of the stub's captured emails.
 async function prodAccount(label) {
   stub.mode = 'ok';
   const body = signupBody(label);
-  const r = await P.post('/api/auth/signup', body);
+  const r = await signupP((a, b) => P.post(a, b), body);
   assert.equal(r.status, 200, r.text);
+  assert.equal((await P.post('/api/auth/admin/request-otp', { email: body.email })).status, 200);
   const code = await lastCode(body.email);
   const v = await P.post('/api/auth/admin/verify-otp', { email: body.email, code });
   assert.equal(v.status, 200, v.text);
@@ -277,14 +298,11 @@ describe('provider selection (lib/email.js, lib/whatsapp.js)', () => {
 
 // =====================================================================================================
 describe('real email: sign-up, request, delivery shape (production instance, stub Resend)', () => {
-  it('sign-up emails the code through Resend with the right request, and answers without any code', async () => {
+  it('sign-up step 1 emails a confirmation code through Resend with the right request, and answers without any code', async () => {
     stubReset();
     const body = signupBody('shape');
-    const r = await P.post('/api/auth/signup', body);
-    assert.equal(r.status, 200, r.text);
-    assert.deepEqual(Object.keys(r.json).sort(), ['businessName', 'email', 'ok']);
-    assert.equal(r.json.demoOtp, undefined); assert.equal(r.json.tenant, undefined); assert.equal(r.json.alreadyExists, undefined);
-    createdTenants.push(tenantIdByEmail(body.email));
+    const r = await P.post('/api/auth/signup/request-code', { email: body.email });
+    assert.equal(r.status, 200, r.text); assert.deepEqual(r.json, { ok: true });
     const sends = emailsTo(body.email);
     assert.equal(sends.length, 1);
     const s = sends[0];
@@ -294,10 +312,23 @@ describe('real email: sign-up, request, delivery shape (production instance, stu
     assert.match(s.headers['idempotency-key'], /^[0-9a-f-]{36}$/);
     assert.equal(s.body.from, 'QBooker Test <login@mail.example.test>'); assert.equal(s.body.reply_to, 'help@example.test');
     assert.deepEqual(s.body.to, [body.email]);
-    assert.match(s.body.subject, /TestApp/); assert.match(s.body.text, /\b\d{6}\b/); assert.match(s.body.html, /<html/);
+    assert.match(s.body.subject, /^Confirm your email address/); assert.match(s.body.subject, /TestApp/);
+    assert.match(s.body.text, /\b\d{6}\b/); assert.match(s.body.html, /<html/);
     assert.ok(s.body.html.includes(codeFrom(s)), 'html shows the same code');
     assert.doesNotMatch(s.body.text, /<[a-z]/i);
     assert.match(s.body.text, /expires in 10 minutes/);
+    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(body.email)})`)), 0, 'nothing is created before the address is verified');
+    // the rest of the flow: verify, create. Creating the account sends no further email and returns no code.
+    const v = await P.post('/api/auth/signup/verify-code', { email: body.email, code: await lastCode(body.email) });
+    assert.equal(v.status, 200, v.text); assert.ok(v.json.signupToken);
+    const { email, ...rest } = body;
+    const su = await P.post('/api/auth/signup', { ...rest, signupToken: v.json.signupToken });
+    assert.equal(su.status, 200, su.text);
+    createdTenants.push(tenantIdByEmail(body.email));
+    assert.deepEqual(Object.keys(su.json).sort(), ['businessName', 'email', 'handoff', 'ok', 'tenant']);
+    assert.equal(su.json.demoOtp, undefined); assert.equal(su.json.email, body.email.toLowerCase());
+    assert.equal(emailsTo(body.email).length, 1, 'creating the account sends no email');
+    assert.doesNotMatch(su.text, /demoOtp/);
   });
 
   it('request-otp for an existing account sends a code; the code signs in once and only once', async () => {
@@ -410,23 +441,30 @@ describe('account enumeration: identical answers for known and unknown addresses
     assert.ok(Math.abs(median(known) - median(unknown)) < 40, `known ${median(known).toFixed(1)}ms vs unknown ${median(unknown).toFixed(1)}ms`);
   });
 
-  it('sign-up with an existing address answers like a new sign-up, and emails the owner a code plus an "already have an account" notice', async () => {
+  it('signup/request-code with an existing address answers like a new one, and emails the owner an "already have an account" notice with a sign-in code', async () => {
     const t = await prodAccount('dup');
     stubReset();
     const fresh = signupBody('dupnew');
-    const a = await P.post('/api/auth/signup', fresh);
-    createdTenants.push(tenantIdByEmail(fresh.email));
-    const b = await P.post('/api/auth/signup', { ...t.body, businessName: 'a different name', email: t.email.toUpperCase() });
+    const a = await P.post('/api/auth/signup/request-code', { email: fresh.email });
+    const b = await P.post('/api/auth/signup/request-code', { email: t.email.toUpperCase() });
     assert.equal(a.status, 200); assert.equal(b.status, 200);
-    assert.deepEqual(Object.keys(a.json).sort(), Object.keys(b.json).sort());
-    assert.equal(b.json.alreadyExists, undefined); assert.equal(b.json.demoOtp, undefined); assert.equal(b.json.tenant, undefined);
-    assert.equal(b.json.businessName, 'a different name', 'the response only echoes what the visitor typed, never the stored name');
+    assert.equal(a.text, b.text); assert.deepEqual(headerNames(a), headerNames(b));
     assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(t.email)})`)), 1, 'no duplicate account');
+    assert.match(emailsTo(fresh.email)[0].body.subject, /Confirm your email address/);
     const mail = emailsTo(t.email);
     assert.equal(mail.length, 1);
     assert.match(mail[0].body.subject, /already have/i); assert.match(mail[0].body.text, /account already exists/i);
-    const v = await P.post('/api/auth/admin/verify-otp', { email: t.email, code: codeFrom(mail[0]) });
-    assert.equal(v.status, 200, 'the emailed code signs the owner in');
+    const code = codeFrom(mail[0]); allCodesSent.push(code);
+    // the emailed code verifies the address as the owner's and hands over a one-off sign-in, not a sign-up token
+    const v = await P.post('/api/auth/signup/verify-code', { email: t.email, code });
+    assert.equal(v.status, 200, v.text); assert.equal(v.json.existing, true); assert.equal(v.json.signupToken, undefined);
+    assert.equal(v.json.businessName, t.body.businessName);
+    const ex = await P.post('/api/auth/admin/exchange', { handoff: v.json.handoff });
+    assert.equal(ex.status, 200, ex.text); assert.equal(ex.json.tenant.id, t.id);
+    assert.equal((await P.get('/api/tenant/me', { token: ex.json.token })).status, 200);
+    assert.equal((await P.post('/api/auth/signup/verify-code', { email: t.email, code })).status, 401, 'single use');
+    // a stranger cannot do this without the emailed code
+    assert.equal((await P.post('/api/auth/signup/verify-code', { email: t.email, code: '000000' })).status, 401);
   });
 
   it('a switched-off account gets a notice by email, no code, and the same answers everywhere', async () => {
@@ -435,12 +473,13 @@ describe('account enumeration: identical answers for known and unknown addresses
     assert.equal((await P.patch(`/api/system/tenants/${t.id}`, { status: 'disabled' }, { token: st })).status, 200);
     stubReset();
     const rq = await P.post('/api/auth/admin/request-otp', { email: t.email });
-    const su = await P.post('/api/auth/signup', { ...t.body, email: t.email });
-    assert.equal(rq.status, 200); assert.deepEqual(rq.json, { ok: true }); assert.equal(su.status, 200);
+    const su = await P.post('/api/auth/signup/request-code', { email: t.email });
+    assert.equal(rq.status, 200); assert.deepEqual(rq.json, { ok: true }); assert.equal(su.status, 200); assert.deepEqual(su.json, { ok: true });
     const mails = emailsTo(t.email);
     assert.equal(mails.length, 2);
     for (const m of mails) { assert.match(m.body.subject, /switched off/i); assert.doesNotMatch(m.body.text, /\b\d{6}\b/); }
     assert.equal((await P.post('/api/auth/admin/verify-otp', { email: t.email, code: '123456' })).status, 401);
+    assert.equal((await P.post('/api/auth/signup/verify-code', { email: t.email, code: '123456' })).status, 401);
     await P.patch(`/api/system/tenants/${t.id}`, { status: 'active' }, { token: st });
   });
 });
@@ -500,17 +539,46 @@ describe('delivery failures: retries, 503, throttle budget, no secrets in the lo
     assert.ok(limited, 'the throttle itself still works');
   });
 
-  it('a failed sign-up send says 503, keeps the account, and signing up again (or signing in) delivers a fresh code', async () => {
+  it('a failed sign-up code send says 503 and creates nothing; asking again delivers a fresh code and the sign-up completes', async () => {
     const body = signupBody('failsignup');
     stubReset('reject422');
-    const r = await P.post('/api/auth/signup', body);
-    assert.equal(r.status, 503);
-    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(body.email)})`)), 1);
-    createdTenants.push(tenantIdByEmail(body.email));
+    const r = await P.post('/api/auth/signup/request-code', { email: body.email });
+    assert.equal(r.status, 503); assert.ok(r.headers.get('retry-after')); assert.match(r.json.error, /couldn't send the code/i);
+    assert.doesNotMatch(r.text, /boom|resend|re_test|stack|demoOtp/i);
+    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(body.email)})`)), 0);
     stubReset();
-    assert.equal((await P.post('/api/auth/signup', body)).status, 200);
+    assert.equal((await signupP((a, b) => P.post(a, b), body)).status, 200);
+    createdTenants.push(tenantIdByEmail(body.email));
+    assert.equal((await P.post('/api/auth/admin/request-otp', { email: body.email })).status, 200);
     const code = await lastCode(body.email);
     assert.equal((await P.post('/api/auth/admin/verify-otp', { email: body.email, code })).status, 200);
+  });
+
+  it('signup/request-code: a provider that keeps failing is a 503 after 2 attempts (and a hang is cut off), for new and existing addresses alike', async () => {
+    const t = await prodAccount('rcfail');
+    const fresh = signupBody('rcfail2').email;
+    for (const [mode, n] of [['fail500', 2], ['reject422', 1], ['hang', 2]]) {
+      for (const email of [fresh, t.email]) {
+        stubReset(mode);
+        const t0 = Date.now();
+        const r = await P.post('/api/auth/signup/request-code', { email });
+        assert.equal(r.status, 503, `${mode} ${email}: ${r.text}`);
+        assert.ok(Date.now() - t0 < 4000);
+        assert.equal(emailsTo(email).length, n, mode);
+      }
+    }
+    stubReset();
+  });
+
+  it('signup/request-code: failed sends do not use up the throttle budget (15 failures for one address and connection, then it works; successes still hit the limit)', async () => {
+    const email = signupBody('rcbudget').email; const ip = randIp();
+    stubReset('reject422');
+    for (let i = 0; i < 15; i++) assert.equal((await P.post('/api/auth/signup/request-code', { email }, { ip })).status, 503, `attempt ${i + 1}`);
+    stubReset();
+    assert.equal((await P.post('/api/auth/signup/request-code', { email }, { ip })).status, 200, 'budget was refunded');
+    let limited = false;
+    for (let i = 0; i < 15 && !limited; i++) limited = (await P.post('/api/auth/signup/request-code', { email }, { ip })).status === 429;
+    assert.ok(limited, 'the throttle itself still works');
   });
 
   it('the server log never contains the API key, any code that was sent, the JWT secret or the pepper', async () => {
@@ -535,15 +603,18 @@ describe('codes are never returned over HTTP in production', () => {
     const s = await addStaffProd(t);
     stubReset();
     const responses = [
-      await P.post('/api/auth/signup', signupBody('plain2')),
+      await P.post('/api/auth/signup/request-code', { email: signupBody('plain2').email }),
+      await P.post('/api/auth/signup/request-code', { email: t.email }),
+      await P.post('/api/auth/signup/request-code', { email: `auth-email-nobody-${rnd()}@example.com` }),
+      await P.post('/api/auth/signup/verify-code', { email: t.email, code: '000000' }),
       await P.post('/api/auth/admin/request-otp', { email: t.email }),
       await P.post('/api/auth/staff/request-otp', { email: s.email }),
       await P.post('/api/auth/staff/request-otp', { email: 'nobody@example.com' }),
       await P.post('/api/auth/admin/verify-otp', { email: t.email, code: '000000' }),
     ];
-    createdTenants.push(...sql(`select id from tenants where business_name like 'auth-email-plain2%'`).split('\n').filter(Boolean));
-    for (const r of responses) { assert.doesNotMatch(r.text, /demo|"code"|\b\d{6}\b/i, r.text); }
+    for (const r of responses) { assert.doesNotMatch(r.text, /demo|"code"|handoff|signupToken|\b\d{6}\b/i, r.text); }
     const sent = [await lastCode(t.email), await lastCode(s.email)];
+    for (const rec of stub.requests.filter((x) => x.url === '/emails')) sent.push(codeFrom(rec));
     for (const c of sent) for (const r of responses) assert.ok(!r.text.includes(c));
   });
 
@@ -552,7 +623,7 @@ describe('codes are never returned over HTTP in production', () => {
     const a = await C.post('/api/auth/admin/request-otp', { email });
     const b = await C.post('/api/auth/staff/request-otp', { email });
     const body = signupBody('closed', email);
-    const c = await C.post('/api/auth/signup', body);
+    const c = await signupV((a, b) => C.post(a, b), body);
     for (const r of [a, b, c]) { assert.equal(r.status, 503, r.text); assert.match(r.json.error, /isn't switched on/i); assert.equal(r.json.demoOtp, undefined); assert.doesNotMatch(r.text, /\b\d{6}\b/); }
     assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(email)})`)), 0, 'sign-up created nothing');
     assert.equal((await C.get('/health')).status, 200, 'the server itself stays up');
@@ -571,7 +642,7 @@ describe('codes are never returned over HTTP in production', () => {
 
   it('DEMO_MODE=true (log provider) is the only production-like setup that returns a code, and it still stores it hashed', async () => {
     const body = signupBody('demo');
-    const r = await D.post('/api/auth/signup', body);
+    const r = await signupV((a, b) => D.post(a, b), body);
     assert.equal(r.status, 200, r.text); assert.match(r.json.demoOtp, /^\d{6}$/);
     createdTenants.push(r.json.tenant.id);
     assert.match(sql(`select code from admin_otp where tenant_id='${r.json.tenant.id}'`), /^[0-9a-f]{64}$/);
@@ -596,7 +667,7 @@ describe('sessions: lifetime, sliding refresh, sign out everywhere', () => {
 
   it('a fresh session gets no refresh header; one that has used half its life gets a new token that works and keeps the original sign-in time', async () => {
     const email = `auth-email-${RUN}-slide-${rnd()}@example.com`;
-    const su = await V.post('/api/auth/signup', { ...signupBody('slide', email) });
+    const su = await signupV((a, b) => V.post(a, b), { ...signupBody('slide', email) });
     assert.equal(su.status, 200, su.text); createdTenants.push(su.json.tenant.id);
     const v = await V.post('/api/auth/admin/verify-otp', { email, code: su.json.demoOtp });
     const tok = v.json.token; const c0 = decodeJwt(tok);
@@ -621,7 +692,7 @@ describe('sessions: lifetime, sliding refresh, sign out everywhere', () => {
 
   it('staff kiosk sessions slide too, and a removed staff member cannot refresh', async () => {
     const email = `auth-email-${RUN}-kiosk-${rnd()}@example.com`;
-    const su = await V.post('/api/auth/signup', { ...signupBody('kiosk', email) });
+    const su = await signupV((a, b) => V.post(a, b), { ...signupBody('kiosk', email) });
     createdTenants.push(su.json.tenant.id);
     const admin = (await V.post('/api/auth/admin/verify-otp', { email, code: su.json.demoOtp })).json.token;
     const sEmail = `auth-email-${RUN}-ks-${rnd()}@example.com`;
@@ -687,6 +758,277 @@ describe('sessions: lifetime, sliding refresh, sign out everywhere', () => {
   it('sign-out endpoints need a session', async () => {
     assert.equal((await P.post('/api/auth/sign-out-everywhere', {})).status, 401);
     assert.equal((await P.post(`/api/auth/staff/${crypto.randomUUID()}/sign-out`, {})).status, 401);
+  });
+});
+
+// =====================================================================================================
+describe('sign-up: the email address is verified first (production instance, stub Resend)', () => {
+  const UNI = 'Incorrect or expired code.';
+  const requestCode = (email, o) => P.post('/api/auth/signup/request-code', { email }, o);
+  const verify = (email, code, o) => P.post('/api/auth/signup/verify-code', { email, code }, o);
+  const fresh = (label) => `auth-email-${RUN}-${label}-${rnd()}@example.com`;
+  const wrongOf = (c) => (c === '111111' ? '222222' : '111111');
+  const signupRest = (label) => { const { email, ...rest } = signupBody(label); return rest; };
+  // a verified token for a brand-new address
+  async function token(label) {
+    const email = fresh(label); stubReset();
+    assert.equal((await requestCode(email)).status, 200);
+    const v = await verify(email, await lastCode(email));
+    assert.equal(v.status, 200, v.text);
+    return { email, signupToken: v.json.signupToken };
+  }
+  const tenantsNamed = (name) => Number(sql(`select count(*) from tenants where business_name=${q(name)}`));
+
+  it('a good code gives a signup token (role signup_verified, bound to the address, ~90 minutes); the code is single use', async () => {
+    const email = fresh('tok').toUpperCase().replace('@EXAMPLE.COM', '@example.com'); stubReset();
+    await requestCode(email); const code = await lastCode(email);
+    const v = await verify(email, code);
+    assert.equal(v.status, 200, v.text);
+    const c = decodeJwt(v.json.signupToken);
+    assert.equal(c.role, SIGNUP_ROLE); assert.equal(c.email, email.toLowerCase()); assert.equal(c.exp - c.iat, 90 * 60);
+    assert.equal(c.tenantId, undefined);
+    assert.deepEqual(await verify(email, code).then((r) => [r.status, r.json.error]), [401, UNI], 'single use');
+  });
+
+  it('signup codes are stored as 64-hex keyed hashes bound to the address (never in clear); a new code cancels the older one', async () => {
+    const email = fresh('hash'); stubReset();
+    await requestCode(email); const first = await lastCode(email);
+    await requestCode(email); const second = await lastCode(email);
+    assert.notEqual(first, second);
+    const rows = sql(`select code from signup_otp where lower(email)=${q(email)}`).split('\n');
+    for (const row of rows) assert.match(row, /^[0-9a-f]{64}$/);
+    assert.ok(!rows.includes(first) && !rows.includes(second));
+    assert.ok(rows.includes(crypto.createHmac('sha256', OTP_PEPPER).update(`signup\n${email}\n${second}`).digest('hex')), 'HMAC-SHA256(OTP_PEPPER, signup+address+code)');
+    assert.equal(Number(sql(`select count(*) from signup_otp where lower(email)=${q(email)} and consumed=false and expires_at>now()`)), 1, 'exactly one live code');
+    assert.equal((await verify(email, first)).status, 401, 'older code must be dead');
+    assert.equal((await verify(email, second)).status, 200);
+    assert.equal(Number(sql(`select count(*) from simulated_messages where body like '%${second}%'`)), 0);
+  });
+
+  it('wrong, expired, never-requested and 5-times-guessed codes all get the same 401', async () => {
+    const email = fresh('bad'); stubReset();
+    const never = await verify(fresh('never'), '123456');
+    await requestCode(email); const code = await lastCode(email);
+    const wrong = await verify(email, wrongOf(code));
+    const empty = await verify(email, '');
+    const nonString = await P.post('/api/auth/signup/verify-code', { email, code: 123456 });
+    for (const r of [never, wrong, empty, nonString]) { assert.equal(r.status, 401, r.text); assert.deepEqual(r.json, { error: UNI }); }
+    assert.equal(never.text, wrong.text); assert.deepEqual(headerNames(never), headerNames(wrong));
+    // expired
+    sql(`update signup_otp set expires_at = now() - interval '1 minute' where lower(email)=${q(email)}`);
+    const expired = await verify(email, code);
+    assert.equal(expired.status, 401); assert.equal(expired.text, wrong.text);
+    // five wrong guesses kill a code even if the right one follows
+    stubReset(); await requestCode(email); const code2 = await lastCode(email);
+    for (let i = 0; i < 5; i++) assert.equal((await verify(email, wrongOf(code2))).status, 401);
+    const late = await verify(email, code2);
+    assert.equal(late.status, 401); assert.equal(late.text, wrong.text);
+    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=${q(email)}`)), 0);
+    // a code for one address is useless for another
+    const other = fresh('other'); stubReset(); await requestCode(other); const oc = await lastCode(other);
+    stubReset(); await requestCode(email); await lastCode(email);
+    assert.equal((await verify(email, oc)).status, 401);
+  });
+
+  it('request-code: new, existing and switched-off addresses get byte-identical answers (status, body, headers); only the email differs', async () => {
+    const t = await prodAccount('uni'); const off = await prodAccount('unioff');
+    const st = (await P.post('/api/auth/system/login', { password: SYSTEM_PASSWORD })).json.token;
+    assert.equal((await P.patch(`/api/system/tenants/${off.id}`, { status: 'disabled' }, { token: st })).status, 200);
+    try {
+      stubReset();
+      const nu = fresh('uninew');
+      const a = await requestCode(nu), b = await requestCode(t.email), c = await requestCode(off.email), d = await requestCode(nu.toUpperCase());
+      for (const r of [a, b, c, d]) { assert.equal(r.status, 200, r.text); assert.deepEqual(r.json, { ok: true }); }
+      assert.equal(a.text, b.text); assert.equal(a.text, c.text);
+      assert.deepEqual(headerNames(a), headerNames(b)); assert.deepEqual(headerNames(a), headerNames(c));
+      assert.match(emailsTo(nu)[0].body.subject, /Confirm your email address/);
+      assert.match(emailsTo(t.email)[0].body.subject, /already have/i); assert.match(emailsTo(t.email)[0].body.text, /\b\d{6}\b/);
+      const notice = emailsTo(off.email);
+      assert.equal(notice.length, 1); assert.match(notice[0].body.subject, /switched off/i); assert.doesNotMatch(notice[0].body.text, /\b\d{6}\b/);
+      // disabled: verify-code is the same 401 as any wrong code, whatever is sent
+      const dv = await verify(off.email, '123456');
+      assert.equal(dv.status, 401); assert.deepEqual(dv.json, { error: UNI });
+      assert.equal(Number(sql(`select count(*) from signup_otp where lower(email)=lower(${q(off.email)}) and consumed=false`)), 0, 'no signup code for an address that has an account');
+      // malformed address is a 400 with no email
+      stubReset();
+      assert.equal((await requestCode('not-an-email')).status, 400);
+      assert.equal(stub.requests.length, 0);
+    } finally { await P.patch(`/api/system/tenants/${off.id}`, { status: 'active' }, { token: st }); }
+  });
+
+  it('timing: request-code for an existing address is not measurably different from a new one', async () => {
+    const t = await prodAccount('uni-timing'); stubReset();
+    const time = async (email) => { const s0 = process.hrtime.bigint(); await requestCode(email); return Number(process.hrtime.bigint() - s0) / 1e6; };
+    for (let i = 0; i < 3; i++) { await time(t.email); await time(fresh('tm')); }
+    const known = [], unknown = [];
+    for (let i = 0; i < 6; i++) { known.push(await time(t.email)); unknown.push(await time(fresh('tm'))); }
+    const median = (a) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    assert.ok(Math.abs(median(known) - median(unknown)) < 40, `known ${median(known).toFixed(1)}ms vs unknown ${median(unknown).toFixed(1)}ms`);
+  });
+
+  it('signup creates the account for the VERIFIED address (a body email is ignored) and the hand-off signs in once', async () => {
+    const tk = await token('mk'); const other = fresh('bodyemail'); stubReset();
+    const r = await P.post('/api/auth/signup', { ...signupRest('mk'), email: other, signupToken: tk.signupToken });
+    assert.equal(r.status, 200, r.text);
+    createdTenants.push(r.json.tenant.id);
+    assert.equal(r.json.email, tk.email.toLowerCase());
+    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(other)})`)), 0, 'the body address was ignored');
+    assert.equal(stub.requests.filter((x) => x.url === '/emails').length, 0, 'sign-up itself sends no email');
+    assert.doesNotMatch(r.text, /demoOtp/);
+    const c = decodeJwt(r.json.handoff);
+    assert.equal(c.role, 'signup_handoff'); assert.equal(c.tenantId, r.json.tenant.id); assert.equal(c.exp - c.iat, 120);
+    const ex = await P.post('/api/auth/admin/exchange', { handoff: r.json.handoff });
+    assert.equal(ex.status, 200, ex.text); assert.equal(ex.json.tenant.id, r.json.tenant.id);
+    const sc = decodeJwt(ex.json.token); assert.equal(sc.role, 'tenant_admin'); assert.equal(sc.exp - sc.iat, 12 * 3600);
+    assert.equal((await P.get('/api/tenant/me', { token: ex.json.token })).status, 200);
+    // the same token again: the address now has an account
+    const again = await P.post('/api/auth/signup', { ...signupRest('mk2'), signupToken: tk.signupToken });
+    assert.equal(again.status, 409, again.text);
+    assert.equal(Number(sql(`select count(*) from tenants where lower(email)=lower(${q(tk.email)})`)), 1);
+  });
+
+  it('signup without a token, or with a missing/garbled/tampered/expired/foreign-secret/unsigned token, is a 401 and creates nothing', async () => {
+    const tk = await token('bad'); const name = `auth-email-notoken-${rnd()}`;
+    const go = (signupToken, extra = {}) => P.post('/api/auth/signup', { ...signupRest('x'), businessName: name, ...(signupToken === undefined ? {} : { signupToken }), ...extra });
+    const [h, pl, sig] = tk.signupToken.split('.');
+    const forged = Buffer.from(JSON.stringify({ ...decodeJwt(tk.signupToken), email: fresh('victim') })).toString('base64url');
+    const noneAlg = `${Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url')}.${pl}.`;
+    const cases = {
+      missing: undefined, empty: '', garbage: 'not.a.jwt', number: 12345, object: { a: 1 },
+      'payload swapped': `${h}.${forged}.${sig}`, 'signature cut': `${h}.${pl}.${sig.slice(0, -4)}`, 'alg none': noneAlg,
+      'wrong secret': jwtSign({ role: SIGNUP_ROLE, email: fresh('ws') }, { secret: 'some-other-secret-' + 'q'.repeat(20) }),
+      expired: jwtSign({ role: SIGNUP_ROLE, email: fresh('exp') }, { expiresIn: -30 }),
+      'no expiry claim but no email': jwtSign({ role: SIGNUP_ROLE }),
+    };
+    for (const [label, tok] of Object.entries(cases)) {
+      const r = await go(tok);
+      assert.equal(r.status, 401, `${label}: ${r.text}`);
+      assert.match(r.json.error, /confirm your email/i);
+    }
+    assert.equal(tenantsNamed(name), 0);
+    // in the old flow a bare email was enough: that must not work any more
+    assert.equal((await go(undefined, { email: fresh('legacy') })).status, 401);
+    assert.equal(tenantsNamed(name), 0);
+  });
+
+  it('only a signup_verified token works for signup: an admin session, a hand-off token, or other roles are refused', async () => {
+    const t = await prodAccount('role'); const name = `auth-email-role-${rnd()}`;
+    const ho = (await P.post('/api/auth/signup/verify-code', { email: t.email, code: await (async () => { stubReset(); await requestCode(t.email); return lastCode(t.email); })() })).json.handoff;
+    assert.ok(ho);
+    const toks = {
+      'real admin session': t.token,
+      'hand-off token': ho,
+      'staff-like': jwtSign({ role: 'staff', staffId: crypto.randomUUID(), tenantId: t.id, email: fresh('r') }),
+      'system': jwtSign({ role: 'system_admin', email: fresh('r2') }),
+      'no role': jwtSign({ email: fresh('r3') }),
+      'role with email of an owner': jwtSign({ role: 'tenant_admin', tenantId: t.id, email: fresh('r4') }),
+    };
+    for (const [label, tok] of Object.entries(toks)) {
+      const r = await P.post('/api/auth/signup', { ...signupRest('role'), businessName: name, signupToken: tok });
+      assert.equal(r.status, 401, `${label}: ${r.text}`);
+    }
+    assert.equal(tenantsNamed(name), 0);
+    // and a signup token is not a session or a hand-off
+    const tk = await token('role2');
+    assert.ok([401, 403].includes((await P.get('/api/tenant/me', { token: tk.signupToken })).status), 'not an API session');
+    assert.equal((await P.post('/api/auth/admin/exchange', { handoff: tk.signupToken })).status, 401, 'not a hand-off');
+  });
+
+  it('signup with a valid token still validates the rest (400) without burning the verification', async () => {
+    const tk = await token('val');
+    const r = await P.post('/api/auth/signup', { signupToken: tk.signupToken, businessName: 'x', firstName: 'A', lastName: 'B', locations: [], services: [] });
+    assert.equal(r.status, 400);
+    const ok = await P.post('/api/auth/signup', { ...signupRest('val'), signupToken: tk.signupToken });
+    assert.equal(ok.status, 200, ok.text); createdTenants.push(ok.json.tenant.id);
+  });
+
+  it('admin/exchange: bad, expired, wrong-role, replayed-after-sign-out and disabled-tenant tokens are all the same 401; a good one works', async () => {
+    const t = await prodAccount('xch'); const st = (await P.post('/api/auth/system/login', { password: SYSTEM_PASSWORD })).json.token;
+    const tv = Number(sql(`select token_version from tenants where id='${t.id}'`)) || 0;
+    const handoff = (payload = {}, o) => jwtSign({ role: 'signup_handoff', tenantId: t.id, tv, ...payload }, o);
+    const ex = (h) => P.post('/api/auth/admin/exchange', { handoff: h });
+    const ref = await ex('garbage');
+    assert.equal(ref.status, 401); assert.match(ref.json.error, /expired/i);
+    const bads = {
+      missing: undefined, empty: '', number: 7, object: { a: 1 }, garbage: 'a.b.c',
+      expired: handoff({}, { expiresIn: -5 }),
+      'wrong secret': handoff({}, { secret: 'some-other-secret-' + 'q'.repeat(20) }),
+      'admin session': t.token,
+      'signup_verified': jwtSign({ role: SIGNUP_ROLE, email: t.email, tenantId: t.id, tv }),
+      'no role': jwtSign({ tenantId: t.id, tv }),
+      'unknown tenant': handoff({ tenantId: crypto.randomUUID() }),
+      'wrong token version': handoff({ tv: tv + 5 }),
+      'no tenant': jwtSign({ role: 'signup_handoff', tv }),
+    };
+    for (const [label, h] of Object.entries(bads)) {
+      const r = await ex(h);
+      assert.equal(r.status, 401, `${label}: ${r.text}`); assert.equal(r.text, ref.text, label); assert.equal(r.json.token, undefined);
+    }
+    // a good one works, and yields a normal session
+    const good = await ex(handoff());
+    assert.equal(good.status, 200, good.text); assert.equal(good.json.tenant.id, t.id);
+    assert.equal(decodeJwt(good.json.token).role, 'tenant_admin');
+    assert.equal((await P.get('/api/tenant/me', { token: good.json.token })).status, 200);
+    // signing out everywhere kills hand-offs issued before it
+    const before = handoff();
+    assert.equal((await P.post('/api/auth/sign-out-everywhere', {}, { token: good.json.token })).status, 200);
+    assert.equal((await ex(before)).status, 401, 'issued before sign-out-everywhere');
+    // disabled tenant
+    const tv2 = Number(sql(`select token_version from tenants where id='${t.id}'`)) || 0;
+    const h2 = jwtSign({ role: 'signup_handoff', tenantId: t.id, tv: tv2 });
+    assert.equal((await P.patch(`/api/system/tenants/${t.id}`, { status: 'disabled' }, { token: st })).status, 200);
+    try {
+      const r = await ex(h2);
+      assert.equal(r.status, 401); assert.equal(r.text, ref.text);
+    } finally { await P.patch(`/api/system/tenants/${t.id}`, { status: 'active' }, { token: st }); }
+    assert.equal((await ex(h2)).status, 200, 'and works again once switched back on (sanity: it was the status that blocked it)');
+  });
+
+  it('a hand-off from verifying an existing address also exchanges for a session, and a disabled account never gets one', async () => {
+    const t = await prodAccount('exh'); stubReset();
+    await requestCode(t.email);
+    const v = await verify(t.email, await lastCode(t.email));
+    assert.equal(v.status, 200); assert.equal(v.json.existing, true);
+    assert.deepEqual(Object.keys(v.json).sort(), ['businessName', 'existing', 'handoff']);
+    assert.equal((await P.post('/api/auth/admin/exchange', { handoff: v.json.handoff })).status, 200);
+  });
+
+  it('an existing owner who finishes the old way (token for an address that has since got an account) is refused with 409', async () => {
+    const tk = await token('race');
+    const first = await P.post('/api/auth/signup', { ...signupRest('race1'), signupToken: tk.signupToken });
+    assert.equal(first.status, 200); createdTenants.push(first.json.tenant.id);
+    const second = await P.post('/api/auth/signup', { ...signupRest('race2'), signupToken: tk.signupToken });
+    assert.equal(second.status, 409);
+    assert.doesNotMatch(second.text, /handoff|demoOtp/);
+  });
+
+  it('request-code on the demo server (DEMO_MODE) is the only place a code is returned, and it is stored hashed; a real provider never returns one', async () => {
+    const email = fresh('demo');
+    const r = await D.post('/api/auth/signup/request-code', { email });
+    assert.equal(r.status, 200); assert.match(r.json.demoOtp, /^\d{6}$/);
+    assert.match(sql(`select code from signup_otp where lower(email)=${q(email)}`), /^[0-9a-f]{64}$/);
+    const v = await D.post('/api/auth/signup/verify-code', { email, code: r.json.demoOtp });
+    assert.equal(v.status, 200); assert.ok(v.json.signupToken);
+    const su = await D.post('/api/auth/signup', { ...signupRest('demo'), signupToken: v.json.signupToken });
+    assert.equal(su.status, 200); assert.equal(su.json.demoOtp, undefined, 'sign-up itself returns no code any more');
+    createdTenants.push(su.json.tenant.id);
+    stubReset();
+    const p = await requestCode(fresh('nodemo'));
+    assert.deepEqual(p.json, { ok: true });
+    const c = await C.post('/api/auth/signup/request-code', { email: fresh('closed') });
+    assert.equal(c.status, 503); assert.equal(c.json.demoOtp, undefined);
+    assert.equal(Number(sql(`select count(*) from signup_otp where lower(email) like '%closed%${RUN}%'`)), 0, 'closed server stores nothing');
+  });
+
+  it('verify-code is throttled per address, and signup/request-code per address (10 sends / 10 min)', async () => {
+    const email = fresh('thr'); const ip = randIp(); stubReset();
+    const seen = [];
+    for (let i = 0; i < 12; i++) seen.push((await requestCode(email, { ip })).status);
+    assert.equal(seen.filter((x) => x === 200).length, 10); assert.equal(seen[11], 429);
+    const guess = [];
+    for (let i = 0; i < 20; i++) guess.push((await verify(email, '000000', { ip })).status);
+    assert.ok(guess.includes(429), 'verify-code guesses are rate limited too');
+    assert.ok(guess.every((x) => x === 401 || x === 429));
   });
 });
 

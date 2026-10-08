@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { query, pool } from "../db/pool.js";
+import jwt from "jsonwebtoken";
 import { signSession, issueTenantSession, requireAuth } from "../lib/auth.js";
 import { genOtp, genAccessCode } from "../lib/simulate.js";
 import { sendTemplatedEmail, emailStatus, demoOtpAllowed, createLatencyMirror, EmailError, SEND_FAILED_MESSAGE, NOT_CONFIGURED_MESSAGE } from "../lib/email.js";
@@ -73,31 +74,126 @@ async function issueAdminOtp(tenant, email, { lang, template = "otp" } = {}) {
 }
 const sendDisabledNotice = (tenant, email, lang) => sendTemplatedEmail({ to: email, template: "disabled", lang, tenantId: tenant.id });
 
-// Signup with an address that already has an account (see the comment where it is called).
-async function answerExistingSignup(req, res, tenant, email, businessName, lang) {
-  await signupMirror.mimic();
-  let code = null;
+
+// Any unused, unexpired code that was emailed to this owner works, but every wrong guess burns an attempt on all of them,
+// and a code that has used its attempts is dead. New codes are throttled (see otpRequestLimits) and cancel older ones.
+async function consumeAdminOtp(tenant, code) {
+  const active = (await query(
+    `select * from admin_otp where tenant_id=$1 and consumed=false and expires_at > now() order by created_at desc`,
+    [tenant.id]
+  )).rows;
+  const matches = active.map((o) => o.attempts < MAX_OTP_ATTEMPTS && otpMatches(o.code, "admin", tenant.id, code));
+  const latest = active.find((o, i) => matches[i]);
+  if (!latest) {
+    if (active.length) await query(`update admin_otp set attempts = attempts + 1 where id = any($1::uuid[])`, [active.map((o) => o.id)]);
+    return false;
+  }
+  const used = await query(`update admin_otp set consumed=true where id=$1 and consumed=false returning id`, [latest.id]);
+  return !!used.rows[0];
+}
+
+// --- Signup ---------------------------------------------------------------
+// The email address is verified FIRST, then the account is built:
+//   1. POST /signup/request-code  { email }          -> a 6-digit code is emailed (always answers 200 { ok: true })
+//   2. POST /signup/verify-code   { email, code }    -> { signupToken }, good for SIGNUP_TOKEN_MINUTES while the person fills in the rest
+//   3. POST /signup               { signupToken, ...}-> creates the account and returns a short-lived hand-off token
+//   4. POST /admin/exchange       { handoff }        -> the normal admin session (this is how the customer admin signs them straight in)
+// Nothing is created until step 3, so an abandoned or mistyped sign-up leaves nothing behind. Later sign-ins use the usual emailed code.
+// The setup itself is: account details -> free locations -> services (each assigned to a location, with its own license).
+const SIGNUP_TOKEN_MINUTES = 90;
+const signupVerifyLimits = [
+  rateLimit({ windowMs: OTP_WINDOW_MS, max: 30, message: "Too many attempts from this connection. Please wait a few minutes and try again." }),
+  rateLimit({ windowMs: OTP_WINDOW_MS, max: 15, keyFn: emailKey, message: "Too many attempts for this address. Please wait a few minutes and try again." }),
+];
+
+async function issueSignupOtp(email, lang) {
+  const code = genOtp();
+  const addr = email.toLowerCase();
+  await query(
+    `with cancelled as (update signup_otp set consumed=true where lower(email)=$1 and consumed=false)
+     insert into signup_otp (email, code, expires_at) values ($1,$2, now() + make_interval(mins => $3))`,
+    [addr, hashOtp("signup", addr, code), otpTtlMinutes()]
+  );
+  await sendTemplatedEmail({ to: email, template: "signup", lang, code, minutes: otpTtlMinutes() });
+  return code;
+}
+
+// The short-lived "go straight in" token handed to the customer admin after sign-up or a verified existing address.
+const HANDOFF_SECONDS = 120;
+function handoffToken(tenant) {
+  return signSession({ role: "signup_handoff", tenantId: tenant.id, tv: tenant.token_version || 0 }, HANDOFF_SECONDS);
+}
+
+router.post("/signup/request-code", requireEmailReady, ...signupLimits, asyncHandler(async (req, res) => {
+  const lang = langOf(req);
+  const email = reqEmail(req.body.email);
+  // Catches typos and made-up domains before anything is sent (and keeps junk addresses out of our sender reputation).
+  if (!(await domainAcceptsMail(email))) {
+    return res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." });
+  }
+  // Same answer whether or not the address already has an account: an existing owner gets a sign-in code instead (their email says so).
+  const existing = (await query(`select * from tenants where lower(email) = lower($1)`, [email])).rows[0];
   try {
-    if (tenant.status === "disabled") await sendDisabledNotice(tenant, tenant.email, lang);
-    else code = await issueAdminOtp(tenant, tenant.email, { lang, template: "exists" });
+    if (existing) {
+      await signupMirror.mimic();
+      let code = null;
+      if (existing.status === "disabled") await sendDisabledNotice(existing, existing.email, lang);
+      else code = await issueAdminOtp(existing, existing.email, { lang, template: "exists" });
+      return res.json({ ok: true, ...demoFields(code) });
+    }
+    const code = await signupMirror.track(() => issueSignupOtp(email, lang));
+    return res.json({ ok: true, ...demoFields(code) });
   } catch (err) {
     if (err instanceof EmailError) return sendFailed(req, res);
     throw err;
   }
-  return res.json({ ok: true, email, businessName, ...(demoOtpAllowed() ? { alreadyExists: true, businessName: tenant.business_name, ...demoFields(code) } : {}) });
-}
+}));
 
-// --- Signup ---------------------------------------------------------------
-// Four steps on the client: account details -> free locations -> services (each assigned
-// to a location, with its own license) -> payment. Locations cost nothing and don't limit
-// anything; what's bought here is one license per service.
-router.post("/signup", requireEmailReady, ...signupLimits, asyncHandler(async (req, res) => {
-  const lang = langOf(req);
+router.post("/signup/verify-code", ...signupVerifyLimits, asyncHandler(async (req, res) => {
+  const email = reqEmail(req.body.email);
+  const code = typeof req.body.code === "string" ? req.body.code.trim().slice(0, 20) : "";
+  const addr = email.toLowerCase();
+  const bad = () => res.status(401).json({ error: GENERIC_BAD_CODE });
+
+  // An address that already has an account is verified with the sign-in code it was emailed, and signed straight in.
+  const existing = (await query(`select * from tenants where lower(email) = $1`, [addr])).rows[0];
+  if (existing) {
+    if (existing.status === "disabled") { otpMatches("0", "admin", "0", code); return bad(); }
+    if (!(await consumeAdminOtp(existing, code))) return bad();
+    return res.json({ existing: true, businessName: existing.business_name, handoff: handoffToken(existing) });
+  }
+
+  const active = (await query(
+    `select * from signup_otp where lower(email)=$1 and consumed=false and expires_at > now() order by created_at desc`, [addr]
+  )).rows;
+  const matches = active.map((o) => o.attempts < MAX_OTP_ATTEMPTS && otpMatches(o.code, "signup", addr, code));
+  const hit = active.find((o, i) => matches[i]);
+  if (!hit) {
+    if (active.length) await query(`update signup_otp set attempts = attempts + 1 where id = any($1::uuid[])`, [active.map((o) => o.id)]);
+    else otpMatches("0", "signup", "0", code);
+    return bad();
+  }
+  const used = await query(`update signup_otp set consumed=true where id=$1 and consumed=false returning id`, [hit.id]);
+  if (!used.rows[0]) return bad();
+  const signupToken = signSession({ role: "signup_verified", email: addr }, SIGNUP_TOKEN_MINUTES * 60);
+  res.json({ signupToken, email });
+}));
+
+router.post("/signup", ...signupLimits, asyncHandler(async (req, res) => {
   const businessName = reqString(req.body.businessName, "Business name");
   const firstName = reqString(req.body.firstName, "First name", { max: 100 });
   const lastName = reqString(req.body.lastName, "Last name", { max: 100 });
-  const email = reqEmail(req.body.email);
   const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
+  // The address comes from the verified token, never from the request body.
+  let verifiedEmail;
+  try {
+    const tok = jwt.verify(typeof req.body.signupToken === "string" ? req.body.signupToken : "", process.env.JWT_SECRET, { algorithms: ["HS256"] });
+    if (tok.role !== "signup_verified" || typeof tok.email !== "string") throw new Error("wrong token");
+    verifiedEmail = tok.email;
+  } catch {
+    return res.status(401).json({ error: "Please confirm your email address first — your confirmation may have expired." });
+  }
+  const email = reqEmail(verifiedEmail);
   const { locations, services } = req.body;
   if (!Array.isArray(locations) || !Array.isArray(services) || !locations.length || !services.length) {
     return res.status(400).json({ error: "Missing required signup fields." });
@@ -127,17 +223,9 @@ router.post("/signup", requireEmailReady, ...signupLimits, asyncHandler(async (r
     };
   });
 
-  // Catches typos and made-up domains before we ever create an account against them — good
-  // for deliverability on anything we send, and one less way for a junk account to appear.
-  if (!(await domainAcceptsMail(email))) {
-    return res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." });
-  }
-
-  // One email = one account. If it already exists, don't create a duplicate - and don't say so on screen either (that would let
-  // anyone find out who has an account). The visitor gets the same "check your email" answer as a new customer; the owner of the
-  // address gets an email saying an account already exists, with a code to sign in. A switched-off account just gets a notice.
-  const existing = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
-  if (existing.rows.length > 0) return answerExistingSignup(req, res, existing.rows[0], email, businessName, lang);
+  // The address is verified, so it is safe to say so if an account already exists (e.g. they finished once already).
+  const existing = await query(`select id from tenants where lower(email) = lower($1)`, [email]);
+  if (existing.rows.length > 0) return res.status(409).json({ error: "An account already exists for this email address — sign in to the admin portal instead." });
 
   // Every new account gets one free 2-day trial license, no card needed. It's issued as an
   // ordinary Available license (movable between services), so the admin picks the two days.
@@ -207,21 +295,14 @@ router.post("/signup", requireEmailReady, ...signupLimits, asyncHandler(async (r
     await client.query("COMMIT");
     signupMirror.record(Date.now() - createStarted);
 
-    // Email the first sign-in code. If that fails the account still exists; signing up again with the same address
-    // takes the "already exists" path below and sends a fresh code.
-    let code;
-    try { code = await issueAdminOtp(tenant, email, { lang, template: "signup" }); }
-    catch (err) { if (err instanceof EmailError) return sendFailed(req, res); throw err; }
-
-    res.json({ ok: true, email, businessName, ...(demoOtpAllowed() ? { tenant: sanitizeTenant(tenant), demoOtp: code } : {}) });
+    res.json({ ok: true, email, businessName, handoff: handoffToken(tenant), tenant: sanitizeTenant(tenant) });
   } catch (err) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     // Deliberate 400s thrown inside the transaction pass straight through.
     if (err.statusCode && err.statusCode < 500) return res.status(err.statusCode).json({ error: err.message });
-    // A simultaneous signup with the same address won the race: behave as the "already exists" path.
+    // A simultaneous sign-up with the same address won the race.
     if (err.code === "23505" && /idx_tenants_email_unique/.test(err.constraint || "")) {
-      const tenant = (await query(`select * from tenants where lower(email) = lower($1)`, [email])).rows[0];
-      if (tenant) return answerExistingSignup(req, res, tenant, email, businessName, lang);
+      return res.status(409).json({ error: "An account already exists for this email address — sign in to the admin portal instead." });
     }
     console.error(err);
     res.status(500).json({ error: "Signup failed — check the server's DATABASE_URL and Supabase connection." });
@@ -261,20 +342,21 @@ router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
     otpMatches("0", "admin", "0", code);
     return res.status(401).json({ error: GENERIC_BAD_CODE });
   }
-  // Any unused, unexpired code that was emailed to this owner works, but every wrong guess burns an attempt on all of them,
-  // and a code that has used its attempts is dead. New codes are throttled (see otpRequestLimits) and cancel older ones.
-  const active = (await query(
-    `select * from admin_otp where tenant_id=$1 and consumed=false and expires_at > now() order by created_at desc`,
-    [tenant.id]
-  )).rows;
-  const matches = active.map((o) => o.attempts < MAX_OTP_ATTEMPTS && otpMatches(o.code, "admin", tenant.id, code));
-  const latest = active.find((o, i) => matches[i]);
-  if (!latest) {
-    if (active.length) await query(`update admin_otp set attempts = attempts + 1 where id = any($1::uuid[])`, [active.map((o) => o.id)]);
-    return res.status(401).json({ error: GENERIC_BAD_CODE });
+  if (!(await consumeAdminOtp(tenant, code))) return res.status(401).json({ error: GENERIC_BAD_CODE });
+  const token = issueTenantSession({ role: "tenant_admin", tenantId: tenant.id, tokenVersion: tenant.token_version });
+  res.json({ token, tenant: sanitizeTenant(tenant) });
+}));
+
+// Swaps the 2-minute hand-off token (from sign-up, or from verifying an existing address) for a normal admin session.
+router.post("/admin/exchange", ...signupVerifyLimits, asyncHandler(async (req, res) => {
+  let tok;
+  try { tok = jwt.verify(typeof req.body.handoff === "string" ? req.body.handoff : "", process.env.JWT_SECRET, { algorithms: ["HS256"] }); }
+  catch { return res.status(401).json({ error: "That link has expired — please sign in." }); }
+  if (tok.role !== "signup_handoff") return res.status(401).json({ error: "That link has expired — please sign in." });
+  const tenant = (await query(`select * from tenants where id=$1`, [tok.tenantId])).rows[0];
+  if (!tenant || tenant.status === "disabled" || (Number(tok.tv) || 0) !== (Number(tenant.token_version) || 0)) {
+    return res.status(401).json({ error: "That link has expired — please sign in." });
   }
-  const used = await query(`update admin_otp set consumed=true where id=$1 and consumed=false returning id`, [latest.id]);
-  if (!used.rows[0]) return res.status(401).json({ error: GENERIC_BAD_CODE });
   const token = issueTenantSession({ role: "tenant_admin", tenantId: tenant.id, tokenVersion: tenant.token_version });
   res.json({ token, tenant: sanitizeTenant(tenant) });
 }));
