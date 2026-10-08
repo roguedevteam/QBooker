@@ -51,7 +51,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   const [note, setNote] = useState("");
   const [showAllSeen, setShowAllSeen] = useState(false);
   const [licensed, setLicensed] = useState({}); // serviceId -> true | false (outside its licence window today)
-  const date = todayIso();
+  const date = todayIso(locations.find((l) => l.id === locationId)?.timezone);
   const isWide = useMedia("(min-width: 768px)");
   const prefsLoaded = useRef(false);
 
@@ -64,8 +64,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   async function refreshTickets(force) {
     // Re-measure the server's clock about once a minute so a drifting device clock can't strand the kiosk on yesterday.
     if (force === true || Date.now() - lastSync.current > 60000) { lastSync.current = Date.now(); await refreshClock(); }
-    // todayIso() is read on every poll (not captured once): a kiosk left open overnight must move on to the new day by itself.
-    try { const r = await api.getTickets(todayIso()); setTickets(r.tickets); } catch (err) { setError(err.message); }
+    // No date is sent: the server lists each location's own "today" (so a kiosk left open overnight moves on to the new day by itself, in any time zone).
+    try { const r = await api.getTickets(); setTickets(r.tickets); } catch (err) { setError(err.message); }
   }
   useEffect(() => {
     refreshTickets();
@@ -89,7 +89,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
     if (!svcKey) return undefined;
     let dead = false;
     const check = () => locServices.forEach((x) => {
-      api.getToday(x.id, nowMinutes())
+      api.getToday(x.id)
         .then((r) => { if (!dead) setLicensed((p) => (p[x.id] === (r.reason !== "outside_license_window") ? p : { ...p, [x.id]: r.reason !== "outside_license_window" })); })
         .catch(() => { if (!dead) setLicensed((p) => (p[x.id] === undefined ? { ...p, [x.id]: true } : p)); });
     });
@@ -111,7 +111,8 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [services]);
 
-  const nowMin = nowMinutes();
+  const locTz = locations.find((l) => l.id === locationId)?.timezone;
+  const nowMin = nowMinutes(locTz);
   function workTypeFor(serviceId) {
     const svc = services.find((x) => x.id === serviceId);
     if (svc?.mode === "queue") return "queue";
@@ -286,7 +287,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   async function routeTo(t, newServiceId) {
     const target = locServices.find((x) => x.id === newServiceId);
     setNote("");
-    await doAction(() => api.routeTicket(t.id, { newServiceId, clockMinutes: nowMinutes() }), () => { setPanel(null); setNote(`Sent ${t.ticket_number} to ${target?.name || "another service"}.`); });
+    await doAction(() => api.routeTicket(t.id, { newServiceId }), () => { setPanel(null); setNote(`Sent ${t.ticket_number} to ${target?.name || "another service"}.`); });
   }
   const waitingCol = (
     <section className="step" aria-labelledby="step-waiting">
@@ -306,7 +307,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                       ? <>Appointment {formatTime(t.slot_time)}</>
                       : <>Walk-in · waiting {wm} min</>}
                     {t.type === "booked" && (t.arrived_at
-                      ? <span className="badge badge-green">Checked in {formatClock(t.arrived_at)}</span>
+                      ? <span className="badge badge-green">Checked in {formatClock(t.arrived_at, locTz)}</span>
                       : <span className="badge badge-grey">Not checked in</span>)}
                     {i === 0 && <span className="badge badge-next">Next</span>}
                   </span>
@@ -358,7 +359,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
             {panel === null && (
               <>
                 <button className="btn-sec" disabled={calling} onClick={async () => { try { await api.callAgain(t.id, { roomLabel }); setNote(`Called ${t.ticket_number} again.`); } catch (err) { setError(err.message); } }}>Call again</button>
-                <button className="btn-sec" disabled={calling} onClick={() => doAction(() => api.returnToQueue(t.id, { clockMinutes: nowMinutes() }))}>Return to queue</button>
+                <button className="btn-sec" disabled={calling} onClick={() => doAction(() => api.returnToQueue(t.id, {}))}>Return to queue</button>
                 <button className="btn-sec" disabled={calling} aria-haspopup="true" onClick={() => setPanel("away")}>No show</button>
                 {others.length > 0 && (
                   <select className="route-select route-now" value="" disabled={calling} aria-label={`Route ${t.ticket_number} to another service`} onChange={(e) => { if (e.target.value) routeTo(t, e.target.value); }}>
@@ -401,9 +402,9 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
                   <span className="seen-kind">{t.type === "booked" ? "Appointment" : "Walk-in"}{multi ? ` · ${svcName(t.service_id)}` : ""}</span>
                 </div>
                 <dl className="seen-facts">
-                  <div><dt>{t.type === "booked" ? "Booked for" : "Joined"}</dt><dd>{t.type === "booked" ? formatTime(t.slot_time) : formatClock(t.created_at)}</dd></div>
-                  <div><dt>Called</dt><dd>{t.called_at ? formatClock(t.called_at) : "—"}</dd></div>
-                  <div><dt>Finished</dt><dd>{t.closed_by_system ? <span className="badge badge-amber">System closed</span> : t.finished_at ? formatClock(t.finished_at) : t.status === "serving" ? "In progress" : "—"}</dd></div>
+                  <div><dt>{t.type === "booked" ? "Booked for" : "Joined"}</dt><dd>{t.type === "booked" ? formatTime(t.slot_time) : formatClock(t.created_at, locTz)}</dd></div>
+                  <div><dt>Called</dt><dd>{t.called_at ? formatClock(t.called_at, locTz) : "—"}</dd></div>
+                  <div><dt>Finished</dt><dd>{t.closed_by_system ? <span className="badge badge-amber">System closed</span> : t.finished_at ? formatClock(t.finished_at, locTz) : t.status === "serving" ? "In progress" : "—"}</dd></div>
                   <div><dt>Waited</dt><dd>{waitMin != null ? `${waitMin} min` : "—"}</dd></div>
                   <div><dt>Served by</dt><dd>{t.called_by_name || "—"}</dd></div>
                   <div><dt>Room</dt><dd>{t.called_room || "—"}</dd></div>

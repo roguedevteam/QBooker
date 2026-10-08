@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { query } from "../db/pool.js";
 import { rateLimit, failureLimit } from "../lib/rateLimit.js";
-import { getToday, nowSql, now as clockNow } from "../lib/clock.js";
+import { getToday, getSimulatedToday, testNowParam, nowSql, now as clockNow, DEFAULT_TIMEZONE } from "../lib/clock.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { estimateWalkInWaitMinutes } from "../lib/scheduling.js";
 import { loadService, getAvailability } from "../lib/availability.js";
@@ -60,7 +60,10 @@ async function getQueueInfo(ticket) {
 
 // Only what a customer needs to see — never exposes email, access code, pricing, etc.
 router.get("/:tenantId/info", (req, res) => {
-  res.json({ businessName: req.tenant.business_name, status: req.tenant.status, websiteUrl: req.tenant.website_url || null });
+  res.json({
+    businessName: req.tenant.business_name, status: req.tenant.status, websiteUrl: req.tenant.website_url || null,
+    defaultTimezone: req.tenant.default_timezone || DEFAULT_TIMEZONE, currency: req.tenant.currency || "GBP",
+  });
 });
 
 // The location code is intentionally NOT returned here: when a location is "onsite only" it is
@@ -70,7 +73,7 @@ router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
   const result = await query(
     // Join settings are account-wide (on tenants); the response keeps its per-location shape so the
     // customer app is unchanged.
-    `select l.id, l.name, l.website_url, 'web' as channel_mode, true as whatsapp_updates_offer, te.onsite_only from locations l
+    `select l.id, l.name, l.website_url, l.timezone, 'web' as channel_mode, true as whatsapp_updates_offer, te.onsite_only from locations l
      join tenants te on te.id = l.tenant_id
      where l.tenant_id=$1 and l.archived=false order by l.created_at`,
     [req.tenant.id]
@@ -80,13 +83,21 @@ router.get("/:tenantId/locations", asyncHandler(async (req, res) => {
 
 // A service is only ever shown to customers once it has a scheduled or active license —
 // never while archived, and never while every license on it is still unscheduled/expired.
+// The stored status is only a cache (it can lag behind the calendar until something resolves it), so the listing also
+// applies the date rules itself, in each location's own time zone: a window that is over, or one whose start has arrived
+// with no opening hours set anywhere in it (which resolves back to Available), does not count. `timezone` is the
+// service's location's zone, so the patient app knows which clock the opening hours are on.
 router.get("/:tenantId/services", asyncHandler(async (req, res) => {
   const result = await query(
-    `select distinct s.id, s.name, s.location_id, s.mode from services s
-     join service_licenses sl on sl.service_id = s.id and sl.status in ('scheduled','active')
+    `select distinct s.id, s.name, s.location_id, s.mode, l.timezone from services s
      join locations l on l.id = s.location_id
+     cross join lateral (select coalesce($3::date, (coalesce($2::timestamptz, now()) at time zone l.timezone)::date) as today) d
+     join service_licenses sl on sl.service_id = s.id and sl.status in ('scheduled','active') and sl.end_date >= d.today
+       and (sl.start_date > d.today
+            or (sl.scheduled_at is not null and (sl.scheduled_at at time zone l.timezone)::date >= d.today)
+            or exists (select 1 from service_daily_config c where c.service_id = s.id and c.date >= sl.start_date and c.date <= sl.end_date and coalesce(array_length(c.hours,1),0) > 0))
      where s.tenant_id=$1 and s.archived=false and l.archived=false order by s.name`,
-    [req.tenant.id]
+    [req.tenant.id, testNowParam(), getSimulatedToday()]
   );
   res.json({ services: result.rows });
 }));
@@ -197,7 +208,7 @@ publicTicketRouter.use(tokenMisses.guard);
 async function loadByToken(req, res, next) {
   if (!TOKEN_RE.test(req.params.token)) { tokenMisses.fail(req); return res.status(404).json({ error: "Ticket not found.", state: "unknown" }); }
   const row = (await query(
-    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, te.whatsapp_updates_offer, te.business_name
+    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, l.timezone as location_timezone, te.whatsapp_updates_offer, te.business_name
      from ticket_web_access a
      join tickets t on t.id = a.ticket_id
      join tenants te on te.id = t.tenant_id
@@ -218,7 +229,7 @@ function publicState(t) {
   if (t.status === "cancelled") return "cancelled";
   if (t.status === "serving") return "called";
   if (t.status === "completed" || t.status === "seen" || t.status === "no_show") return "closed";
-  if (String(t.visit_date).slice(0, 10) < getToday()) return "expired";
+  if (String(t.visit_date).slice(0, 10) < getToday(t.location_timezone || DEFAULT_TIMEZONE)) return "expired";
   return "waiting"; // waiting | booked
 }
 
@@ -235,6 +246,7 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
     estimatedMinutes: queue ? queue.estimatedMinutes : null,
     serviceName: t.service_name,
     locationName: t.location_name,
+    timezone: t.location_timezone || DEFAULT_TIMEZONE,
     businessName: t.business_name,
     calledRoom: state === "called" ? (t.called_room || null) : null,
     arrived: !!t.arrived_at,

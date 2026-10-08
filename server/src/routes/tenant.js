@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { query, pool } from "../db/pool.js";
-import { requireAuth } from "../lib/auth.js";
+import { requireAuth, tokenVersionOk, slideSession } from "../lib/auth.js";
+import { t as tr, resolveLang } from "../lib/i18n.js";
 import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
@@ -8,9 +9,10 @@ import {
   currentHourBlock, buildTodayRibbon, BLOCK_MINUTES,
 } from "../lib/scheduling.js";
 import { isDateFullyPast, addDays } from "../lib/plan.js";
-import { getToday, londonNowMinutes, nowSql, now as clockNow } from "../lib/clock.js";
-import { dayCfg, getAvailability, loadService as loadServiceForTenant } from "../lib/availability.js";
-import { createTicket, parseTicketRequest } from "../lib/tickets.js";
+import { getToday, getSimulatedToday, dayShape, nowMinutes as zoneNowMinutes, nowSql, now as clockNow, DEFAULT_TIMEZONE, testNowParam } from "../lib/clock.js";
+import { optTimezone } from "../lib/timezones.js";
+import { dayCfg, getAvailability, loadService as loadServiceForTenant, serviceTz } from "../lib/availability.js";
+import { createTicket, parseTicketRequest, numberForLocation } from "../lib/tickets.js";
 import {
   badRequest, notFound, conflict, isUuid, uuidParams, reqDate, optDate, reqString, optString, optEmail, optInt, optBool, optEnum,
   clockMinutesOrUndefined, parseHours, EMAIL_RE, optWebUrl,
@@ -39,15 +41,18 @@ async function loadTenant(req, res, next) {
     return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
   }
   req.tenant = result.rows[0];
+  // "Sign out everywhere" bumps token_version; tokens issued before that are refused.
+  if (req.auth.role === "tenant_admin" && !tokenVersionOk(req.auth, req.tenant)) return res.status(401).json({ error: "Session expired or invalid — please sign in again." });
   // A staff session must belong to a staff member who still exists — deleting someone from the
   // staff list ends their session immediately instead of waiting for the token to expire.
   if (req.auth.role === "staff") {
     const staff = req.auth.staffId
       ? (await query(`select * from staff_members where id=$1 and tenant_id=$2 and active=true`, [req.auth.staffId, req.auth.tenantId])).rows[0]
       : null;
-    if (!staff) return res.status(401).json({ error: "Session expired or invalid — please sign in again." });
+    if (!staff || !tokenVersionOk(req.auth, staff)) return res.status(401).json({ error: "Session expired or invalid — please sign in again." });
     req.staff = staff;
   }
+  slideSession(req, res); // active sessions get a fresh token in the X-Session-Token header
   next();
 }
 router.use(asyncHandler(loadTenant));
@@ -98,7 +103,7 @@ router.patch("/staff/:id", adminOnly, asyncHandler(async (req, res) => {
   }
   const active = typeof req.body.active === "boolean" ? req.body.active : null;
   const r = await query(
-    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email), active=coalesce($6,active)
+    `update staff_members set first_name=coalesce($1,first_name), last_name=coalesce($2,last_name), email=coalesce($3,email), active=coalesce($6,active), token_version = token_version + (case when $6::boolean is false then 1 else 0 end)
      where id=$4 and tenant_id=$5 returning id, first_name, last_name, email, active, created_at`,
     [v.first || null, v.last || null, v.email || null, req.params.id, req.tenant.id, active]
   );
@@ -128,6 +133,8 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
   const channelMode = optEnum(req.body.channelMode, "channelMode", ["whatsapp", "web", "both"]);
   const whatsappUpdatesOffer = optBool(req.body.whatsappUpdatesOffer, "whatsappUpdatesOffer");
   const onsiteOnly = optBool(req.body.onsiteOnly, "onsiteOnly");
+  // The time zone NEW locations start with (each location then keeps its own; see PATCH /locations/:id).
+  const defaultTimezone = await optTimezone(req.body.defaultTimezone, "Default time zone");
   const result = await query(
     `update tenants set
        business_name = coalesce($1, business_name),
@@ -138,10 +145,11 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
        website_url = coalesce($6, website_url),
        channel_mode = coalesce($7, channel_mode),
        whatsapp_updates_offer = coalesce($8, whatsapp_updates_offer),
-       onsite_only = coalesce($9, onsite_only)
+       onsite_only = coalesce($9, onsite_only),
+       default_timezone = coalesce($11, default_timezone)
      where id=$10 returning *`,
     [businessName, firstName, lastName, email, companyAddress, websiteUrl,
-      channelMode ?? null, whatsappUpdatesOffer ?? null, onsiteOnly ?? null, req.tenant.id]
+      channelMode ?? null, whatsappUpdatesOffer ?? null, onsiteOnly ?? null, req.tenant.id, defaultTimezone ?? null]
   );
   if (channelMode !== undefined || whatsappUpdatesOffer !== undefined || onsiteOnly !== undefined) {
     const r = result.rows[0];
@@ -223,12 +231,14 @@ async function assertLocationNameFree(tenantId, name, exceptId = null) {
 router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   const name = reqString(req.body.name, "Name");
   const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
+  // A new location starts in the account's default time zone unless one is given.
+  const timezone = (await optTimezone(req.body.timezone)) || req.tenant.default_timezone || DEFAULT_TIMEZONE;
   await assertLocationNameFree(req.tenant.id, name);
   const t = req.tenant;
   const staffAccessCode = genAccessCode();
   const loc = await query(
-    `insert into locations (tenant_id, name, address, staff_access_code) values ($1,$2,$3,$4) returning *`,
-    [t.id, name, address || "", staffAccessCode]
+    `insert into locations (tenant_id, name, address, staff_access_code, timezone) values ($1,$2,$3,$4,$5) returning *`,
+    [t.id, name, address || "", staffAccessCode, timezone]
   );
   const code = await createLocationCode(query, req.tenant.id, loc.rows[0].id);
   await query(`update tenants set location_count = location_count + 1 where id=$1`, [req.tenant.id]);
@@ -242,14 +252,25 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   const name = optString(req.body.name, "Name");
   const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
   const archived = optBool(req.body.archived, "archived");
+  const timezone = await optTimezone(req.body.timezone);
   if (name !== undefined) await assertLocationNameFree(req.tenant.id, name, req.params.id);
+  const before = timezone === undefined ? null : (await query(`select timezone from locations where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id])).rows[0];
+  if (before && before.timezone !== timezone) {
+    // The clock the queue runs on is changing: refuse while people are mid-visit, so nobody's place shifts under them.
+    const live = (await query(`select 1 from tickets where location_id=$1 and status in ('waiting','serving') limit 1`, [req.params.id])).rows[0];
+    if (live) throw conflict("Somebody is waiting or being served at this location right now, so its time zone can't be changed. Try again when the queue is empty.");
+  }
   // Join settings (channel mode etc.) are account-wide now — see PATCH /me; any sent here are ignored.
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived)
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived), timezone=coalesce($6,timezone)
      where id=$4 and tenant_id=$5 returning *`,
-    [name, address, archived, req.params.id, req.tenant.id]
+    [name, address, archived, req.params.id, req.tenant.id, timezone ?? null]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: "Location not found." });
+  if (before && before.timezone !== timezone) {
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+      [req.tenant.id, `Location "${result.rows[0].name}" time zone changed from ${before.timezone} to ${timezone}`]);
+  }
   if (archived === true) {
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
       [req.tenant.id, `Location "${result.rows[0].name}" archived`]);
@@ -284,10 +305,11 @@ router.get("/licenses", adminOnly, asyncHandler(async (req, res) => {
 // list and from customers; it never touches its licenses.
 router.get("/services", asyncHandler(async (req, res) => {
   const { includeArchived } = req.query;
+  // `timezone` is the service's location's time zone (the zone its opening hours are written in).
   const result = await query(
     includeArchived === "true"
-      ? `select * from services where tenant_id=$1 order by created_at`
-      : `select * from services where tenant_id=$1 and archived=false order by created_at`,
+      ? `select s.*, l.timezone from services s join locations l on l.id = s.location_id where s.tenant_id=$1 order by s.created_at`
+      : `select s.*, l.timezone from services s join locations l on l.id = s.location_id where s.tenant_id=$1 and s.archived=false order by s.created_at`,
     [req.tenant.id]
   );
   res.json({ services: result.rows });
@@ -354,7 +376,7 @@ router.patch("/services/:id", adminOnly, asyncHandler(async (req, res) => {
 // on a service — never zero-or-more-than-one in an ambiguous way — so scheduling always
 // checks for overlap against the service's own other scheduled/active licenses.
 async function loadService(req, res, next) {
-  const result = await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.id, req.tenant.id]);
+  const result = await query(`select s.*, l.timezone from services s join locations l on l.id = s.location_id where s.id=$1 and s.tenant_id=$2`, [req.params.id, req.tenant.id]);
   if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
   req.service = result.rows[0];
   next();
@@ -437,7 +459,8 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
   const endDate = computeEndDate(startDate, license.plan_days);
 
   const wasScheduled = license.status === "scheduled";
-  const status = startDate <= getToday() ? "active" : "scheduled";
+  const tz = serviceTz(req.service);
+  const status = startDate <= getToday(tz) ? "active" : "scheduled";
 
   // "Change dates" on an already-scheduled license moves it, it doesn't start fresh —
   // whatever hours/staffing were set on day N of the old window should land on day N
@@ -452,7 +475,7 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
     // request's, or two licences could both claim the same days. (The check reads committed rows, so it sees
     // whatever the previous lock holder just committed.)
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`license|${req.service.id}`]);
-    const check = await checkSchedulable(req.service.id, startDate, endDate, license.id, client.query.bind(client));
+    const check = await checkSchedulable(req.service.id, startDate, endDate, license.id, client.query.bind(client), tz);
     if (!check.ok) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: check.error });
@@ -527,6 +550,7 @@ router.post("/services/:id/licenses/:licenseId/pay", adminOnly, asyncHandler(loa
   const { paymentMethod } = req.body;
   const invoiceEmail = optString(req.body.invoiceEmail, "invoiceEmail", { max: 254, allowEmpty: true });
   const invoicePO = optString(req.body.invoicePO, "invoicePO", { max: 100, allowEmpty: true });
+  await resolveServiceLicenses(req.service.id); // keep the status that comes back up to date
   const lic = (await query(`select * from service_licenses where id=$1 and service_id=$2 and tenant_id=$3`, [req.params.licenseId, req.service.id, req.tenant.id])).rows[0];
   if (!lic) return res.status(404).json({ error: "License not found." });
   if (lic.paid) return res.status(409).json({ error: "This license is already paid." });
@@ -575,10 +599,23 @@ router.get("/services/:id/daily-config", asyncHandler(loadService), asyncHandler
     `select * from service_daily_config where service_id=$1 and date >= $2 and date <= $3 order by date`,
     [req.service.id, from, to]
   );
-  const licenses = await resolveServiceLicenses(req.service.id);
+  const licenses = await resolveServiceLicenses(req.service.id, undefined, serviceTz(req.service));
   const windows = activeAndScheduledWindows(licenses);
+  // Days where the clocks change inside the day (a skipped or repeated hour), so the editor can say so. Only odd days are listed.
+  const tz = serviceTz(req.service);
+  const dayShapes = {};
+  if (from <= to) {
+    let d = from, guard = 0;
+    while (d <= to && guard++ < 400) {
+      const sh = dayShape(tz, d);
+      if (sh.gaps.length || sh.folds.length) dayShapes[d] = { gaps: sh.gaps, folds: sh.folds, minutes: sh.minutes };
+      d = addDays(d, 1);
+    }
+  }
   res.json({
     dailyConfig: result.rows,
+    timezone: tz,
+    dayShapes,
     windows,
     lockedFrom: windows.length ? windows.map((w) => w.start).sort()[0] : null,
   });
@@ -588,8 +625,8 @@ router.get("/services/:id/daily-config", asyncHandler(loadService), asyncHandler
 // outright. Today can still be edited: staff can always be increased, but only reduced while the
 // service has no bookings and nobody in the queue today; hours that have already started (before
 // nowMinutes) are frozen, and an hour block that already has non-cancelled tickets can't be removed.
-function isLiveDate(date) {
-  return !!date && String(date).slice(0, 10) <= String(getToday()).slice(0, 10);
+function isLiveDate(date, tz) {
+  return !!date && String(date).slice(0, 10) <= String(getToday(tz)).slice(0, 10);
 }
 
 const MAX_STAFF = 1000;
@@ -606,10 +643,11 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(loadService), a
   const staffCount = optInt(req.body.staffCount, "staffCount", { min: 0, max: MAX_STAFF });
   const bookingStaffCount = optInt(req.body.bookingStaffCount, "bookingStaffCount", { min: -MAX_STAFF, max: MAX_STAFF });
   const walkInStaffCount = optInt(req.body.walkInStaffCount, "walkInStaffCount", { min: -MAX_STAFF, max: MAX_STAFF });
-  if (!(await isServiceLicensedOn(service.id, date))) {
+  const tz = serviceTz(service);
+  if (!(await isServiceLicensedOn(service.id, date, tz))) {
     return res.status(409).json({ error: "That date isn't covered by a license for this service." });
   }
-  if (isDateFullyPast(date)) return res.status(409).json({ error: "That date has already passed." });
+  if (isDateFullyPast(date, tz)) return res.status(409).json({ error: "That date has already passed." });
   const resolvedStaff = staffCount ?? 2;
   const resolvedBooking = Math.max(0, Math.min(bookingStaffCount ?? 1, resolvedStaff));
   // walkInStaffCount is independently set now (not just "whoever's left over"), but it still
@@ -617,7 +655,7 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(loadService), a
   const requestedWalkIn = walkInStaffCount ?? Math.max(0, resolvedStaff - resolvedBooking);
   const resolvedWalkIn = Math.max(0, Math.min(requestedWalkIn, resolvedStaff - resolvedBooking));
 
-  if (isLiveDate(date)) {
+  if (isLiveDate(date, tz)) {
     const existing = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
     if (existing) {
       const reducing = resolvedStaff < existing.staff_count
@@ -636,7 +674,8 @@ router.put("/services/:id/daily-config", adminOnly, asyncHandler(loadService), a
           return res.status(409).json({ error: "Staff can't be reduced today because there are already bookings or customers in the queue for this service. You can still add more staff." });
         }
       }
-      const nowMinutes = clockMinutesOrUndefined(req.body.nowMinutes) ?? londonNowMinutes();
+      // The time of day is the server's, in the location's zone; a nowMinutes sent by an older front-end is ignored.
+      const nowMinutes = zoneNowMinutes(tz);
       const oldHours = existing.hours || [];
       const removed = oldHours.filter((h) => !newHours.includes(h));
       const added = newHours.filter((h) => !oldHours.includes(h));
@@ -678,7 +717,7 @@ router.post("/services/:id/daily-config/copy", adminOnly, asyncHandler(loadServi
   const windows = activeAndScheduledWindows(await resolveServiceLicenses(req.service.id));
   let applied = 0;
   for (const date of toDates) {
-    if (isLiveDate(date)) continue; // never overwrite a live (today/past) day in bulk
+    if (isLiveDate(date, serviceTz(req.service))) continue; // never overwrite a live (today/past) day in bulk
     if (!windows.some((w) => date >= w.start && date <= w.end)) continue;
     await query(
       `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
@@ -704,7 +743,7 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(load
     let d = window.start;
     let guard = 0;
     while (d <= window.end && guard < 400) {
-      if (!isLiveDate(d)) { // live days (today/past) are never bulk-cleared
+      if (!isLiveDate(d, serviceTz(req.service))) { // live days (today/past) are never bulk-cleared
         const hours = [];
         await query(
           `insert into service_daily_config (service_id, date, hours, staff_count, booking_staff_count, walkin_staff_count)
@@ -724,12 +763,18 @@ router.post("/services/:id/daily-config/clear-all", adminOnly, asyncHandler(load
 // --- Tickets ----------------------------------------------------------------------
 const TICKET_STATUSES = ["waiting", "booked", "seen", "serving", "completed", "no_show", "cancelled"];
 
+// With no ?date= this is "today" at EACH ticket's own location (an account can have sites in several time zones, and their
+// days do not line up); an explicit date is that exact visit_date everywhere. The System Admin simulated date, if set, is
+// every location's today.
+// ($2 explicit date or null, $3 simulated date or null, $4 test-clock instant or null.)
 router.get("/tickets", asyncHandler(async (req, res) => {
-  const date = optDate(req.query.date, "date") ?? getToday();
+  const date = optDate(req.query.date, "date");
   await closeStaleTickets();
   const result = await query(
-    `select * from tickets where tenant_id=$1 and visit_date=$2 order by created_at desc`,
-    [req.tenant.id, date]
+    `select t.* from tickets t join locations l on l.id = t.location_id
+      where t.tenant_id=$1 and t.visit_date = coalesce($2::date, $3::date, (coalesce($4::timestamptz, now()) at time zone l.timezone)::date)
+      order by t.created_at desc`,
+    [req.tenant.id, date ?? null, getSimulatedToday(), testNowParam()]
   );
   res.json({ tickets: result.rows });
 }));
@@ -756,6 +801,10 @@ router.patch("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
     if (!loc) throw notFound("Location not found.");
     if (!newLocationId) newLocationId = loc.id; // a service move always takes that service's own location
   }
+  // A move to another location keeps the ticket's number unless it is already taken there that day.
+  const newNumber = newLocationId && newLocationId !== existing.location_id
+    ? await numberForLocation({ query }, newLocationId, existing.visit_date, existing.ticket_number)
+    : existing.ticket_number;
   const result = await query(
     `update tickets set
        status = coalesce($1, status),
@@ -763,9 +812,10 @@ router.patch("/tickets/:id", adminOnly, asyncHandler(async (req, res) => {
        location_id = coalesce($3, location_id),
        slot_time = case when $4::boolean then $5::int else slot_time end,
        type = coalesce($6, type),
-       hour_block = coalesce($7, hour_block)
+       hour_block = coalesce($7, hour_block),
+       ticket_number = $10
      where id=$8 and tenant_id=$9 returning *`,
-    [status ?? null, newServiceId, newLocationId, slotTimeGiven, slotTime, type ?? null, hourBlock ?? null, existing.id, req.tenant.id]
+    [status ?? null, newServiceId, newLocationId, slotTimeGiven, slotTime, type ?? null, hourBlock ?? null, existing.id, req.tenant.id, newNumber]
   );
   res.json({ ticket: result.rows[0] });
 }));
@@ -781,19 +831,29 @@ function parseRoom(v) {
   if (typeof v !== "string" || !v.trim()) throw badRequest("Set where you are (room name) before calling anyone.");
   return reqString(v, "Room name", { max: 80 });
 }
-// The client's clock, in minutes since midnight. Missing -> UK time now; present but nonsense -> 400.
-function parseClock(v) {
-  if (v === undefined || v === null) return londonNowMinutes();
-  const n = clockMinutesOrUndefined(v);
-  if (n === undefined) throw badRequest("clockMinutes must be a number of minutes between 0 and 1439.");
-  return n;
+// Legacy clockMinutes from older front-ends: present but nonsense is still a 400, but the VALUE is never used - the booking
+// rules read the server clock in the location's time zone (see zoneMinutesForService).
+function checkLegacyClock(v) {
+  if (v === undefined || v === null) return;
+  if (clockMinutesOrUndefined(v) === undefined) throw badRequest("clockMinutes must be a number of minutes between 0 and 1439.");
 }
-const callMessage = (roomLabel) => `It's your turn! Please come to ${roomLabel}.`;
+// The time zone of the location a service belongs to.
+async function tzOfService(serviceId) {
+  const r = await query(`select l.timezone from services s join locations l on l.id = s.location_id where s.id=$1`, [serviceId]);
+  return r.rows[0]?.timezone || DEFAULT_TIMEZONE;
+}
+// "Now" as wall-clock minutes at the service's location, from the server clock.
+async function zoneMinutesForService(serviceId) {
+  return zoneNowMinutes(await tzOfService(serviceId));
+}
+const callMessage = (roomLabel) => tr(resolveLang(), "whatsapp.call", { room: roomLabel });
 
 router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   const roomLabel = parseRoom(req.body.roomLabel);
   const date = reqDate(req.body.date, "date");
-  const clockMinutes = parseClock(req.body.clockMinutes);
+  checkLegacyClock(req.body.clockMinutes);
+  // A booked patient is callable once their slot has started: slot <= the location's wall clock now (server clock).
+  const clockMinutes = await zoneMinutesForService(req.params.id);
   // Hybrid services: staff choose to work the queue, the appointments, or both.
   const workType = optEnum(req.body.workType, "workType", ["queue", "appointments", "both"]);
   const takeWalkIns = workType !== "appointments";
@@ -867,14 +927,15 @@ router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
 }));
 
 router.post("/tickets/:id/return-to-queue", asyncHandler(async (req, res) => {
-  const clockMinutes = parseClock(req.body.clockMinutes);
+  checkLegacyClock(req.body.clockMinutes);
   const ticket = await loadOwnTicket(req);
   if (ticket.status !== "serving") throw conflict("Only a ticket that has been called can be returned to the queue.");
+  const clockMinutes = await zoneMinutesForService(ticket.service_id);
   const service = (await query(`select * from services where id=$1`, [ticket.service_id])).rows[0];
   const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [ticket.service_id, ticket.visit_date])).rows[0];
   let hourBlock = ticket.hour_block;
   if (day?.hours?.length) {
-    const cfg = { hours: day.hours, slotMinutes: service.slot_minutes, staffCount: day.staff_count, bookingStaffCount: day.booking_staff_count };
+    const cfg = dayCfg(service, day, await tzOfService(service.id));
     hourBlock = currentHourBlock(cfg, clockMinutes);
   }
   const result = await query(
@@ -909,7 +970,7 @@ router.post("/tickets/:id/no-show", asyncHandler(async (req, res) => {
 
 router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
   const { newServiceId } = req.body;
-  const clockMinutes = parseClock(req.body.clockMinutes);
+  checkLegacyClock(req.body.clockMinutes);
   const ticket = await loadOwnTicket(req);
   const oldService = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   const newService = isUuid(newServiceId)
@@ -924,17 +985,21 @@ router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
   const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [newService.id, ticket.visit_date])).rows[0];
   let hourBlock = null;
   if (day?.hours?.length) {
-    const cfg = { hours: day.hours, slotMinutes: newService.slot_minutes, staffCount: day.staff_count, bookingStaffCount: day.booking_staff_count };
-    hourBlock = currentHourBlock(cfg, clockMinutes);
+    const cfg = dayCfg(newService, day, await tzOfService(newService.id));
+    hourBlock = currentHourBlock(cfg, await zoneMinutesForService(newService.id));
   }
+  // Moving to another LOCATION may clash with a number already issued there that day; then the ticket is renumbered.
+  const newNumber = newService.location_id === ticket.location_id
+    ? ticket.ticket_number
+    : await numberForLocation({ query }, newService.location_id, ticket.visit_date, ticket.ticket_number);
   const result = await query(
-    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3, called_at=null, finished_at=null
+    `update tickets set service_id=$1, location_id=$2, status='waiting', type='walk_in', slot_time=null, hour_block=$3, called_at=null, finished_at=null, ticket_number=$5
      where id=$4 and status in ('waiting','booked','serving') returning *`,
-    [newService.id, newService.location_id, hourBlock, ticket.id]
+    [newService.id, newService.location_id, hourBlock, ticket.id, newNumber]
   );
   if (!result.rows[0]) throw conflict("This ticket has already ended, so it can't be sent to another service.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
-    [req.tenant.id, `Ticket ${ticket.ticket_number} routed from ${oldService?.name || "service"} to ${newService.name}`]);
+    [req.tenant.id, `Ticket ${ticket.ticket_number} routed from ${oldService?.name || "service"} to ${newService.name}${newNumber !== ticket.ticket_number ? ` (renumbered ${newNumber} - that number was already used there today)` : ""}`]);
   res.json({ ticket: result.rows[0] });
 }));
 
@@ -950,27 +1015,29 @@ router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
 
 // --- Today (day ribbon) -----------------------------------------------------------
 // Read-only snapshot of today for one service: per 30-minute block the staff on, booking and
-// walk-in capacity and how much is used. Open to staff as well as admins. The client may pass
-// clockMinutes (its local time, like the other routes); otherwise London time is used.
+// walk-in capacity and how much is used. Open to staff as well as admins. "Today" and "now" are the server's, in the
+// time zone of the service's location (a clockMinutes query parameter from an older front-end is ignored).
 router.get("/today", asyncHandler(async (req, res) => {
   const { serviceId } = req.query;
   if (!serviceId) return res.status(400).json({ error: "serviceId required." });
-  const service = isUuid(serviceId) ? (await query(`select * from services where id=$1 and tenant_id=$2`, [serviceId, req.tenant.id])).rows[0] : null;
+  const service = isUuid(serviceId) ? (await query(`select s.*, l.timezone from services s join locations l on l.id = s.location_id where s.id=$1 and s.tenant_id=$2`, [serviceId, req.tenant.id])).rows[0] : null;
   if (!service) return res.status(404).json({ error: "Service not found." });
 
-  const date = getToday();
-  const nowMinutes = clockMinutesOrUndefined(req.query.clockMinutes) ?? londonNowMinutes();
+  const tz = serviceTz(service);
+  const date = getToday(tz);
+  const nowMinutes = zoneNowMinutes(tz);
   const empty = (reason) => res.json({
-    date, serviceId: service.id, serviceName: service.name, mode: service.mode, open: false, reason,
+    date, timezone: tz, serviceId: service.id, serviceName: service.name, mode: service.mode, open: false, reason,
     blocks: [], nowMinutes, queueCount: 0, staffNow: 0, totals: { freeLeft: 0, bookedTotal: 0 },
   });
 
-  if (service.archived || !(await isServiceLicensedOn(service.id, date))) return empty("outside_license_window");
+  if (service.archived || !(await isServiceLicensedOn(service.id, date, tz))) return empty("outside_license_window");
   const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
   if (!day || !day.hours?.length) return empty("closed");
 
-  // Same mode mapping and defaults as /services/:id/availability.
-  const cfg = dayCfg(service, day);
+  // Same mode mapping and defaults as /services/:id/availability (including dropping blocks that fall in a clocks-forward gap).
+  const cfg = dayCfg(service, day, tz);
+  if (!cfg.hours.length) return empty("closed");
 
   const tix = (await query(
     `select type, status, slot_time, hour_block from tickets
@@ -978,8 +1045,8 @@ router.get("/today", asyncHandler(async (req, res) => {
     [req.tenant.id, service.id, date]
   )).rows;
   res.json({
-    date, serviceId: service.id, serviceName: service.name, mode: service.mode, open: true, reason: null,
-    slotMinutes: service.slot_minutes, ...buildTodayRibbon(cfg, tix, nowMinutes),
+    date, timezone: tz, serviceId: service.id, serviceName: service.name, mode: service.mode, open: true, reason: null,
+    slotMinutes: service.slot_minutes, dayMinutes: cfg.dayMinutes, ...buildTodayRibbon(cfg, tix, nowMinutes),
   });
 }));
 
@@ -1005,10 +1072,13 @@ router.get("/audit-log", asyncHandler(async (req, res) => {
 }));
 
 router.get("/dashboard/stats", asyncHandler(async (req, res) => {
-  const date = optDate(req.query.date, "date") ?? getToday();
+  // No ?date= means each location's own today (see GET /tickets); an explicit date is exact everywhere.
+  const date = optDate(req.query.date, "date");
   const result = await query(
-    `select status, count(*) from tickets where tenant_id=$1 and visit_date=$2 group by status`,
-    [req.tenant.id, date]
+    `select t.status, count(*) from tickets t join locations l on l.id = t.location_id
+      where t.tenant_id=$1 and t.visit_date = coalesce($2::date, $3::date, (coalesce($4::timestamptz, now()) at time zone l.timezone)::date)
+      group by t.status`,
+    [req.tenant.id, date ?? null, getSimulatedToday(), testNowParam()]
   );
   const stats = { waiting: 0, booked: 0, serving: 0, completed: 0, no_show: 0, cancelled: 0 };
   result.rows.forEach((r) => { stats[r.status] = Number(r.count); });

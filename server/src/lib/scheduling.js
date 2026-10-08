@@ -55,6 +55,12 @@ export function walkInStatusNow(cfg, walkInCountInBlock, clockMinutes) {
   return { available: walkInCountInBlock < budget, remaining: Math.max(0, budget - walkInCountInBlock), block };
 }
 
+// cfg.gaps (optional): wall-clock [from, to) minute ranges that do not exist on this day because the clocks go forward
+// (see clock.dayShape). A slot inside one is a phantom: nobody can turn up at 01:30 on the night 01:00-02:00 is skipped.
+export function inGap(cfg, minute) {
+  return (cfg.gaps || []).some(([a, b]) => minute >= a && minute < b);
+}
+
 export function getBookableSlotsForHour(cfg, hourStart) {
   const perStaff = perStaffCapacity(cfg.slotMinutes);
   if (cfg.bookingStaffCount <= 0 || perStaff <= 0) return [];
@@ -62,7 +68,7 @@ export function getBookableSlotsForHour(cfg, hourStart) {
   const slots = [];
   let t = hourStart;
   for (let i = 0; i < perStaff && t < hourStart + BLOCK_MINUTES; i++) {
-    slots.push(t);
+    if (!inGap(cfg, t)) slots.push(t);
     t += spacing;
   }
   return slots;

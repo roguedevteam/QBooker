@@ -23,6 +23,9 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  // The server hands back a fresh session token once a session is half used up, so working admins don't get signed out.
+  const fresh = auth && token ? res.headers.get("X-Session-Token") : null;
+  if (fresh) setToken("tenant_admin", fresh);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -48,7 +51,7 @@ export const api = {
   deleteStaff: (id) => request(`/api/tenant/staff/${id}`, { method: "DELETE" }),
 
   getLocations: () => request("/api/tenant/locations"),
-  addLocation: (name, address) => request("/api/tenant/locations", { method: "POST", body: { name, address } }),
+  addLocation: (name, address, timezone) => request("/api/tenant/locations", { method: "POST", body: { name, address, ...(timezone ? { timezone } : {}) } }),
   updateLocation: (id, patch) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: patch }),
   archiveLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: { archived: true } }),
   unarchiveLocation: (id) => request(`/api/tenant/locations/${id}`, { method: "PATCH", body: { archived: false } }),
@@ -70,11 +73,11 @@ export const api = {
   copyDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config/copy`, { method: "POST", body: payload }),
   clearAllDailyConfig: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/daily-config/clear-all`, { method: "POST", body: payload }),
 
-  getTickets: (date) => request(`/api/tenant/tickets?date=${date}`),
+  getTickets: (date) => request(`/api/tenant/tickets${date ? `?date=${date}` : ""}`), // no date = each location's own today
   updateTicket: (id, patch) => request(`/api/tenant/tickets/${id}`, { method: "PATCH", body: patch }),
   deleteTicket: (id) => request(`/api/tenant/tickets/${id}`, { method: "DELETE" }),
 
-  getToday: (serviceId, clockMinutes) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}${clockMinutes != null ? `&clockMinutes=${clockMinutes}` : ""}`),
+  getToday: (serviceId) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}`),
   getAuditLog: () => request("/api/tenant/audit-log"),
-  getDashboardStats: (date) => request(`/api/tenant/dashboard/stats?date=${date}`),
+  getDashboardStats: (date) => request(`/api/tenant/dashboard/stats${date ? `?date=${date}` : ""}`),
 };

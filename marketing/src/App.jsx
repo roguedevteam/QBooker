@@ -2,6 +2,22 @@ import { useState, useEffect, useRef, useId, cloneElement } from "react";
 import { priceText, exMoney, incVat } from "./lib/vat.js";
 import { api } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import { mailto } from "./lib/config.js";
+import Privacy from "./Privacy.jsx";
+
+// --- Public claims: flip these once the underlying fact is verified ---------------------------
+// Nothing here can be checked from the code, so the safe wording is the default.
+//  cyberEssentials      true ONLY once a Cyber Essentials certificate is held (add the number/date to CE_CLAIM below).
+//  ukServersAndSupport  true ONLY once the hosting regions (database, API, static hosting) are confirmed to be in the UK
+//                       and support is genuinely UK-based. false hides every "UK-based" statement on the site.
+const CERTIFICATIONS = {
+  cyberEssentials: false,
+  ukServersAndSupport: true, // TO CONFIRM before launch: Supabase, Railway and Render regions.
+};
+const CE_CLAIM = CERTIFICATIONS.cyberEssentials
+  ? "Cyber Essentials certified."
+  : "Built to Cyber Essentials-aligned practices (certification to be confirmed).";
+const UK = CERTIFICATIONS.ukServersAndSupport;
 
 const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_APP_URL || "http://localhost:5173";
 
@@ -39,7 +55,7 @@ function Logo({ size = 28, dark = false, withWord = true }) {
   );
 }
 
-export default function App() {
+function MarketingApp() {
   const [screen, setScreen] = useState("landing");
   const [error, setError] = useState("");
   const [result, setResult] = useState(null); // { tenant, demoOtp } after a successful signup
@@ -88,6 +104,32 @@ export default function App() {
 }
 
 
+// Tiny path router (Render rewrites every path to index.html). "/" is the site, "/privacy" the notice,
+// anything else gets a friendly not-found page rather than the landing page under a wrong URL.
+function NotFound() {
+  useEffect(() => {
+    document.title = "Page not found — QBooker";
+    const m = document.createElement("meta");
+    m.name = "robots"; m.content = "noindex";
+    document.head.appendChild(m);
+    return () => m.remove();
+  }, []);
+  return (
+    <main id="main" className="pv pv-nf">
+      <h1>Page not found</h1>
+      <p className="pv-lead" style={{ margin: "0 auto 20px" }}>We couldn't find that page.</p>
+      <a href="/" className="pv-back" style={{ textDecoration: "underline" }}>Go to the QBooker home page</a>
+    </main>
+  );
+}
+
+export default function App() {
+  const path = (window.location.pathname.replace(/\/+$/, "") || "/").toLowerCase();
+  if (path === "/privacy") return <Privacy />;
+  if (path === "/" || path === "/index.html") return <MarketingApp />;
+  return <NotFound />;
+}
+
 const SCENARIOS = [
   { name: "Blood clinics", text: "A morning of walk-in blood tests without a waiting room full of paper tickets." },
   { name: "Diagnostic days", text: "Scans and tests that run on set days, with patients arriving throughout the day." },
@@ -115,15 +157,15 @@ const SETUP_STEPS = [
 ];
 
 const TRUST_POINTS = [
-  { name: "No patient data", text: "Patient data and clinical records are never captured or stored." },
-  { name: "GDPR", text: "Fully compliant with GDPR." },
-  { name: "Cyber Essentials", text: "Compliant with the Cyber Essentials standard." },
-  { name: "UK servers and support", text: "Your data stays in the UK, and when you need help you talk to someone in the same time zone." },
+  { name: "No patient names or clinical records", text: "QBooker doesn't ask for or store patient names or clinical records. Queue entries are ticket numbers." },
+  { name: "Designed for GDPR", text: "Designed for GDPR: no patient names or clinical records are stored. Read our privacy notice for exactly what we hold." },
+  { name: "Cyber Essentials", text: CE_CLAIM },
+  ...(UK ? [{ name: "UK servers and support", text: "Your data stays in the UK, and when you need help you talk to someone in the same time zone." }] : []),
 ];
 
 const FAQS = [
   { q: "Do patients need to install anything?", a: "No. Patients use their phone's browser, and can add WhatsApp updates if they want them." },
-  { q: "Is it safe to use in an NHS setting?", a: "QBooker doesn't capture or store patient data or clinical records. It's GDPR and Cyber Essentials compliant, with UK-based servers and a UK-based support team." },
+  { q: "Is it safe to use in an NHS setting?", a: `QBooker is designed not to capture or store patient names or clinical records. It's designed for GDPR. ${CE_CLAIM}${UK ? " It uses UK-based servers and a UK-based support team." : ""} See our privacy notice for the detail. As with any supplier, your organisation should run its own information governance checks.` },
   { q: "Can I use it for just one day?", a: "Yes. Licences are bought per service and can run for a day, a week, a month or any custom number of days, so a one-off clinic day costs a one-day licence." },
   { q: "What's the difference between queue, appointments and hybrid?", a: "A queue is walk-ins only, first come first served. Appointments are booked slots only. Hybrid runs both together in one service, so people on site can join the queue now while others reserve a slot for later." },
   { q: "Do patients need WhatsApp?", a: "No. The queue works in any phone browser, and WhatsApp updates are optional. Anyone without a smartphone can still turn up and your team adds them by hand." },
@@ -254,8 +296,8 @@ function Landing({ onStart, simulatedBadge }) {
           <ul className="lp-checks">
             <li>Pay by invoice with a purchase order, or by card</li>
             <li>Unlimited locations, staff users and patients</li>
-            <li>No patient data or clinical records stored</li>
-            <li>UK-based servers and support</li>
+            <li>No patient names or clinical records stored</li>
+            {UK && <li>UK-based servers and support</li>}
           </ul>
         </div>
 
@@ -270,8 +312,8 @@ function Landing({ onStart, simulatedBadge }) {
         <div className="wide lp-facts">
           <div><strong>Live in under 2 minutes</strong><p>Create an account, add a service and your queue is ready.</p></div>
           <div><strong>No hardware</strong><p>No kiosks, ticket printers or installation. Your team uses a web page.</p></div>
-          <div><strong>No patient data stored</strong><p>QBooker doesn't capture patient records of any kind.</p></div>
-          <div><strong>UK-based support</strong><p>UK servers and a UK support team.</p></div>
+          <div><strong>No patient names stored</strong><p>QBooker doesn't capture patient names or clinical records.</p></div>
+          {UK && <div><strong>UK-based support</strong><p>UK servers and a UK support team.</p></div>}
           <div><strong>Pay by service only</strong><p>Unlimited locations, staff users and patients. You only pay for each service you run.</p></div>
         </div>
       </section>
@@ -364,7 +406,7 @@ function Landing({ onStart, simulatedBadge }) {
             </div>
             <div className="row" style={{ gap: 16 }}>
               <strong style={{ fontSize: 18 }}>£125 (£150 inc VAT)</strong>
-              <a href="mailto:hello@qbooker.example?subject=Setup%20assistance"><button className="btn-outline">Book a call</button></a>
+              <a href={mailto("Setup assistance")}><button className="btn-outline">Book a call</button></a>
             </div>
           </div>
         </div>
@@ -374,8 +416,8 @@ function Landing({ onStart, simulatedBadge }) {
       <section id="trust" className="lp-section lp-band-card">
         <div className="wide lp-split">
           <div>
-            <h2 className="lp-h2">No patient data, and UK-based</h2>
-            <p className="lp-lead">QBooker doesn't capture or store patient data or clinical records, which keeps information governance straightforward.</p>
+            <h2 className="lp-h2">{UK ? "No patient names, and UK-based" : "No patient names or clinical records"}</h2>
+            <p className="lp-lead">QBooker doesn't capture or store patient names or clinical records, which keeps information governance more straightforward.</p>
           </div>
           <div className="lp-rows">
             {TRUST_POINTS.map((s) => (
@@ -419,12 +461,12 @@ function Landing({ onStart, simulatedBadge }) {
                       );
                     })}
                   </div>
-                  <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>All prices are per service. Need something in between? Choose a custom number of days. Want a full year? Annual licences are priced on application, so <a href="mailto:hello@qbooker.example?subject=Annual%20licence" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>contact us</a>.</p>
+                  <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>All prices are per service. Need something in between? Choose a custom number of days. Want a full year? Annual licences are priced on application, so <a href={mailto("Annual licence")} style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>contact us</a>.</p>
                 </>
               )}
               <p className="muted" style={{ fontSize: 14, lineHeight: 1.6, marginTop: 28, maxWidth: 520 }}>
                 Already use Microsoft Bookings for appointments and only need queue management? We offer integration on request.{" "}
-                <a href="mailto:hello@qbooker.example?subject=MS%20Bookings%20integration" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>Get in touch</a> to discuss your setup.
+                <a href={mailto("MS Bookings integration")} style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>Get in touch</a> to discuss your setup.
               </p>
             </div>
           </div>
@@ -436,7 +478,7 @@ function Landing({ onStart, simulatedBadge }) {
         <div className="wide lp-faq-split">
           <div>
             <h2 className="lp-h2">Questions people ask before switching</h2>
-            <p className="lp-lead">Something else? <a href="mailto:hello@qbooker.example" style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>Email our UK support team</a>.</p>
+            <p className="lp-lead">Something else? <a href={mailto()} style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>{UK ? "Email our UK support team" : "Email our support team"}</a>.</p>
           </div>
           <div>
             {FAQS.map((f) => <FaqItem key={f.q} q={f.q} a={f.a} />)}
@@ -481,11 +523,12 @@ function Landing({ onStart, simulatedBadge }) {
           <div className="stack" style={{ gap: 10 }}>
             <strong style={{ fontSize: 13 }}>Company</strong>
             <a href="#trust" className="muted">Compliance</a>
-            <a href="mailto:hello@qbooker.example" className="muted">Support</a>
+            <a href="/privacy" className="muted">Privacy</a>
+            <a href={mailto()} className="muted">Support</a>
             <a href={ADMIN_APP_URL} className="muted">Log in</a>
           </div>
         </div>
-        <div className="wide lp-footer-base">© QBooker</div>
+        <div className="wide lp-footer-base">© QBooker · <a href="/privacy">Privacy notice</a></div>
       </footer>
     </div>
   );
@@ -530,17 +573,16 @@ function Success({ result }) {
         ) : (
           <>
             <h1 className="su-h1" tabIndex={-1} ref={headingRef}>You're set up</h1>
-            <p className="su-p">Account created for <strong>{result.tenant.business_name}</strong>.</p>
+            <p className="su-p">Thanks, <strong>{result.businessName}</strong> is being set up.</p>
           </>
         )}
-        <div className="su-code" role="group" aria-label="Demo sign-in code">
-          <span className="su-code-label">Demo sign-in code (simulated email)</span>
-          <span className="su-code-value mono">{result.demoOtp}</span>
-        </div>
-        {!existing && (
-          <p className="su-hint">
-            Head to the admin portal and sign in with <strong>{result.tenant.email}</strong> and the code above.
-          </p>
+        {/* Production never shows the code: it is emailed. A demo/test server also returns it (demoOtp) so it can be shown here. */}
+        <p className="su-p">We've emailed a 6-digit sign-in code to <strong style={{ overflowWrap: "anywhere" }}>{result.email}</strong>. Open the admin portal, enter that address and the code.</p>
+        {result.demoOtp && (
+          <div className="su-code" role="group" aria-label="Demo sign-in code">
+            <span className="su-code-label">Demo sign-in code (simulated email)</span>
+            <span className="su-code-value mono">{result.demoOtp}</span>
+          </div>
         )}
         <a href={ADMIN_APP_URL} className="su-btn su-btn-primary su-btn-block">Go to admin sign-in →</a>
       </div>
@@ -984,6 +1026,10 @@ function Signup({ onDone, setError, onBackToLanding }) {
           </div>
         )}
       </form>
+
+      <p className="su-hint" style={{ textAlign: "center", margin: "16px 0 0" }}>
+        By creating an account you confirm you have read our <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>privacy notice</a>.
+      </p>
 
       <div className="su-bar">
         <div className="su-bar-in">

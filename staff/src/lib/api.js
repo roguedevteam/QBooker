@@ -27,6 +27,9 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  // The server hands back a fresh session token once a session is half used up, so a kiosk in use never expires mid-shift.
+  const fresh = auth && token ? res.headers.get("X-Session-Token") : null;
+  if (fresh && res.ok) setToken(fresh);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (auth && token && (res.status === 401 || res.status === 403)) authLostHandler?.(res.status);
@@ -44,8 +47,8 @@ export const api = {
   me: () => request("/api/tenant/me"),
   getLocations: () => request("/api/tenant/locations"),
   getServices: () => request("/api/tenant/services"),
-  getTickets: (date) => request(`/api/tenant/tickets?date=${date}`),
-  getToday: (serviceId, clockMinutes) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}${clockMinutes != null ? `&clockMinutes=${clockMinutes}` : ""}`),
+  getTickets: (date) => request(`/api/tenant/tickets${date ? `?date=${date}` : ""}`), // no date = each location's own today
+  getToday: (serviceId) => request(`/api/tenant/today?serviceId=${encodeURIComponent(serviceId)}`),
 
   callNext: (serviceId, payload) => request(`/api/tenant/services/${serviceId}/call-next`, { method: "POST", body: payload }),
   callTicket: (ticketId, payload) => request(`/api/tenant/tickets/${ticketId}/call`, { method: "POST", body: payload }),

@@ -1,9 +1,9 @@
 import crypto from "crypto";
 import { pool } from "../db/pool.js";
-import { getToday, londonNowMinutes, testNowParam } from "./clock.js";
-import { currentHourBlock, walkInBudget } from "./scheduling.js";
+import { testNowParam } from "./clock.js";
+import { currentHourBlock, walkInBudget, BLOCK_MINUTES } from "./scheduling.js";
 import { isServiceLicensedOn } from "./serviceLicense.js";
-import { dayCfg, offeredSlots } from "./availability.js";
+import { dayCfg, offeredSlots, serviceNow } from "./availability.js";
 import { badRequest, conflict, HttpError, optEnum, optInt, reqDate, clockMinutesOrUndefined } from "./validate.js";
 
 const envMs = (name, dflt) => { const n = Number(process.env[name]); return process.env[name] && Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt; };
@@ -32,6 +32,27 @@ async function acquireSlot(key) {
   return () => { if (!released) { released = true; finish(); } };
 }
 
+// Ticket numbers are "<prefix>-<n>". The prefix belongs to the service (services.ticket_prefix: its initials, with a letter
+// added if another service at the same location already has them) and n counts per location + day + prefix, so a number
+// is unique across the whole location that day (a unique index backs this up). Next n = highest issued so far + 1, not a
+// count, so deleting or re-routing a ticket never causes a repeat. `db` is a client (inside a transaction) or the pool.
+export async function nextTicketNumber(db, locationId, date, prefix) {
+  const maxRow = (await db.query(
+    `select coalesce(max((substring(ticket_number from '-(\\d+)$'))::int), 0) as n from tickets
+      where location_id=$1 and visit_date=$2 and left(ticket_number, length($3) + 1) = $3 || '-'`,
+    [locationId, date, prefix]
+  )).rows[0];
+  return `${prefix}-${String(Number(maxRow.n) + 1).padStart(3, "0")}`;
+}
+
+// A ticket moving to another location keeps its number unless that number is already taken there that day, in which
+// case it gets the next free number with the same prefix. Returns the number the ticket should carry.
+export async function numberForLocation(db, locationId, date, ticketNumber) {
+  const taken = (await db.query(`select 1 from tickets where location_id=$1 and visit_date=$2 and ticket_number=$3 limit 1`, [locationId, date, ticketNumber])).rows[0];
+  if (!taken) return ticketNumber;
+  return nextTicketNumber(db, locationId, date, ticketNumber.replace(/-\d+$/, ""));
+}
+
 export const newPublicToken = () => crypto.randomBytes(18).toString("base64url"); // 24 chars, 144 bits
 
 // Validates the shape of a "join / book" request body (no database access).
@@ -48,6 +69,7 @@ export function parseTicketRequest(body) {
     const hb = optInt(body.hourBlock, "hourBlock", { min: 0, max: 1410 });
     hourBlock = hb === undefined ? null : hb;
   }
+  // clockMinutes is still parsed (old front-ends send it) but the booking rules never use it: the server reads the clock.
   return { type, date, slotTime, hourBlock, clockMinutes: clockMinutesOrUndefined(body.clockMinutes) };
 }
 
@@ -58,12 +80,14 @@ export function parseTicketRequest(body) {
 //   created and the device/IP caps are enforced; returns { ticket, publicToken }.
 //   opts.audit: audit-log text suffix builder.
 export async function createTicket({ tenantId, service, req, access = null, auditSuffix = "" }) {
-  const { type, date, slotTime, hourBlock: requestedBlock, clockMinutes } = req;
+  const { type, date, slotTime, hourBlock: requestedBlock } = req;
+  // Today and "now" are the server's, in the time zone of the service's location - never the client's.
+  const { tz, today } = serviceNow(service);
 
-  if (service.archived || service.location_archived || !(await isServiceLicensedOn(service.id, date))) {
+  if (service.archived || service.location_archived || !(await isServiceLicensedOn(service.id, date, tz))) {
     throw conflict("We're not taking bookings today.", { reason: "outside_license_window" });
   }
-  if (date < getToday()) throw conflict("That day has already passed.", { reason: "closed" });
+  if (date < today) throw conflict("That day has already passed.", { reason: "closed" });
 
   // Joins to the same service/day are queued here, in memory and WITHOUT holding a database connection, so a rush on one busy
   // service (250 patients pressing Join together) uses one pooled connection at a time instead of pinning the whole pool on
@@ -81,12 +105,17 @@ export async function createTicket({ tenantId, service, req, access = null, audi
 
     const day = (await client.query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
     if (!day || !day.hours?.length) throw conflict("We're closed that day.", { reason: "closed" });
-    const cfg = dayCfg(service, day);
+    const cfg = dayCfg(service, day, tz);
+    if (!cfg.hours.length) throw conflict("We're closed that day.", { reason: "closed" });
+    // Read the clock only now that we hold the lock, so "is this slot already past?" is judged at the moment of booking.
+    const nowMins = serviceNow(service).minutes;
 
     let hourBlock = null;
     if (type === "booked") {
       if (service.mode === "queue") throw conflict("This service doesn't take bookings.", { reason: "no_bookings" });
       if (!offeredSlots(cfg).includes(slotTime)) throw conflict("That time isn't available.", { reason: "slot_unavailable" });
+      // A slot can be booked right up to its own start minute; once it has begun it is gone.
+      if (date === today && slotTime < nowMins) throw conflict("That time has already passed. Please pick a later one.", { reason: "slot_passed" });
       const taken = Number((await client.query(
         `select count(*) from tickets where service_id=$1 and visit_date=$2 and type='booked' and status != 'cancelled' and slot_time=$3`,
         [service.id, date, slotTime]
@@ -97,11 +126,13 @@ export async function createTicket({ tenantId, service, req, access = null, audi
       if (service.mode === "queue" && service.queue_paused) throw conflict("The queue is paused right now. Please try again shortly.", { reason: "paused" });
       if (requestedBlock !== null) {
         if (!cfg.hours.includes(requestedBlock)) throw badRequest("That isn't one of the opening times.");
+        // Walk-ins join the half-hour they are in or a later one today; an opening block that has finished is gone.
+        if (date === today && requestedBlock + BLOCK_MINUTES <= nowMins) throw conflict("That opening time has already passed.", { reason: "block_passed" });
         hourBlock = requestedBlock;
       } else {
         // The patient app doesn't choose a block: they join the queue for the half-hour they are in now.
-        if (date !== getToday()) throw badRequest("hourBlock is required to join the queue on another day.");
-        hourBlock = currentHourBlock(cfg, clockMinutes ?? londonNowMinutes());
+        if (date !== today) throw badRequest("hourBlock is required to join the queue on another day.");
+        hourBlock = currentHourBlock(cfg, nowMins);
         if (hourBlock === null) throw conflict("We're closed for today.", { reason: "closed" });
       }
       const budget = walkInBudget(cfg);
@@ -126,13 +157,8 @@ export async function createTicket({ tenantId, service, req, access = null, audi
       }
     }
 
-    // Next number = highest issued so far today + 1 (not a count, so deleting a ticket never causes a repeat).
-    const maxRow = (await client.query(
-      `select coalesce(max((substring(ticket_number from '-(\\d+)$'))::int), 0) as n from tickets where service_id=$1 and visit_date=$2`,
-      [service.id, date]
-    )).rows[0];
-    const initials = (service.name.match(/\b\w/g) || ["S", "V"]).slice(0, 2).join("").toUpperCase();
-    const ticketNumber = `${initials}-${String(Number(maxRow.n) + 1).padStart(3, "0")}`;
+    const prefix = (await client.query(`select ticket_prefix from services where id=$1`, [service.id])).rows[0]?.ticket_prefix || "SV";
+    const ticketNumber = await nextTicketNumber(client, service.location_id, date, prefix);
 
     const ticket = (await client.query(
       `insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date, created_at)

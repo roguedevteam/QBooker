@@ -480,12 +480,14 @@ describe('4. Disabling a tenant', () => {
     assert.equal((await get('/api/tenant/services', { token: adminTok })).status, 403);
     assert.equal((await get('/api/tenant/me', { token: staffTok })).status, 403);
     assert.equal((await post('/api/tenant/call-next', { serviceId: svcId }, { token: staffTok })).status, 403);
-    assert.equal((await post('/api/auth/admin/request-otp', { email: t.email })).status, 403);
-    assert.equal((await post('/api/auth/staff/request-otp', { email: st.email })).status, 403);
-    assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '000000' })).status, 403);
+    // CHANGED (account enumeration): new sign-ins for a disabled account get the same answers as an unknown address (200 with no code / 401)
+    // instead of 403, and no sign-in code is issued; tokens already issued are still refused with 403 (above).
+    const rqA = await post('/api/auth/admin/request-otp', { email: t.email }); assert.equal(rqA.status, 200); assert.equal(rqA.json.demoOtp, undefined);
+    const rqS = await post('/api/auth/staff/request-otp', { email: st.email }); assert.equal(rqS.status, 200); assert.equal(rqS.json.demoOtp, undefined);
+    assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '000000' })).status, 401);
     const su = await post('/api/auth/signup', { businessName: 'x', firstName: 'a', lastName: 'b', email: t.email, locations: [{ name: 'a' }], services: [{ name: 'b', locationIndex: 0 }] });
-    assert.ok(su.status === 403 || su.status === 400, `signup with the disabled account's email -> ${su.status}`);
-    assert.notEqual(su.status, 200);
+    assert.ok(su.status === 200 || su.status === 400, `signup with the disabled account's email -> ${su.status}`);
+    assert.equal(su.json?.demoOtp, undefined, 'no code is issued for a disabled account');
     const P = `/api/public/tenant/${t.id}`;
     assert.equal((await get(`${P}/info`)).status, 404);
     assert.equal((await get(`${P}/locations`)).status, 404);

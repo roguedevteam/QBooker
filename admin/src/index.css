@@ -162,6 +162,8 @@ select, .input {
 .stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .stat { background: var(--surface-card); border: 1px solid var(--line); padding: 14px; }
 .stat-num { font-family: 'IBM Plex Mono', monospace; font-size: 30px; font-weight: 600; line-height: 34px; }
+.stat { min-width: 0; }
+.stat-num { overflow-wrap: anywhere; } /* a long revenue figure wraps inside its card instead of widening the page */
 .stat-num.blue { color: var(--brand); }
 .stat-label { font-size: 14px; color: var(--muted); }
 @media (min-width: 768px) { .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; } .stat { padding: 16px; } .stat-num { font-size: 32px; } }

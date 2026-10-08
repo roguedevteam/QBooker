@@ -5,6 +5,13 @@ const buckets = new Map();
 // Test helper (exposed only where the test clock is enabled): forget all counters.
 export function resetRateLimits() { buckets.clear(); }
 
+// Gives back the budget every rateLimit() on this request took. Used when the request failed through no fault of the
+// caller (e.g. we could not send their sign-in email), so a flaky provider doesn't lock people out of retrying.
+export function refundRateLimits(req) {
+  for (const f of req.rateLimitRefunds || []) f();
+  req.rateLimitRefunds = [];
+}
+
 export function rateLimit({ windowMs, max, keyFn, message = "Too many requests â€” please wait a moment and try again." }) {
   return (req, res, next) => {
     const now = Date.now();
@@ -16,6 +23,9 @@ export function rateLimit({ windowMs, max, keyFn, message = "Too many requests â
       res.set("Retry-After", String(Math.ceil((b.reset - now) / 1000)));
       return res.status(429).json({ error: message });
     }
+    // Lets a handler give the attempt back when it was our fault, not theirs (see refundRateLimits).
+    const windowEnds = b.reset;
+    (req.rateLimitRefunds ||= []).push(() => { if (b.reset === windowEnds && b.count > 0) b.count -= 1; });
     next();
   };
 }

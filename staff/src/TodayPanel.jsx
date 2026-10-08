@@ -2,7 +2,6 @@
 // staff/src (no cross-app imports) — keep the two files (and today.css) in sync.
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "./lib/api.js";
-import { nowMinutes as localMinutes } from "./lib/clock.js";
 import "./today.css";
 
 const NO_HOURS = "No hours set for today. Set them in the location's service settings.";
@@ -17,7 +16,7 @@ function fmt(min) {
 }
 function fmtDate(iso) {
   const d = new Date(`${iso}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 
 // Cells for one block (or hour): booking places first, then walk-in places. kind: b | w, state: used | free
@@ -209,8 +208,8 @@ export default function TodayPanel({ services, embedded = false, refreshMs = 300
     if (!id) return;
     try {
       const r = id === ALL
-        ? mergeToday(await Promise.all(svcRef.current.map((s) => api.getToday(s.id, localMinutes()).catch(() => null))))
-        : await api.getToday(id, localMinutes());
+        ? mergeToday(await Promise.all(svcRef.current.map((s) => api.getToday(s.id).catch(() => null))))
+        : await api.getToday(id);
       if (idRef.current === id) { setData(r); setError(""); }
     } catch (err) { if (idRef.current === id) setError(err.message || "Couldn't load today."); }
   }, []);

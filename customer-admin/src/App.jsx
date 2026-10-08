@@ -1,8 +1,12 @@
+import TimezoneSelect from "./TimezoneSelect.jsx";
 import { useState, useEffect, useRef } from "react";
-import { priceText, exMoney, incVat, VAT_RATE } from "./lib/vat.js";
+import { priceText, exMoney, incVat, vatLabel, vatPercent, setBilling } from "./lib/money.js";
 import { api, setToken, hasToken } from "./lib/api.js";
-import { todayIso, nowMinutes, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import { todayIso, nowMinutes, isSimulatedToday, refreshClock, setDefaultTimezone, getDefaultTimezone } from "./lib/clock.js";
 import TodayPanel from "./TodayPanel.jsx";
+
+// Contact address for enquiry emails; set VITE_SUPPORT_EMAIL on the static service (placeholder default).
+const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim() || "hello@qbooker.example";
 
 // --- Date & time helpers -----------------------------------------------------
 function formatClock(min) {
@@ -16,8 +20,8 @@ function formatTime(min) {
   if (h === 0) h = 12;
   return `${h}:${m.toString().padStart(2, "0")}${ampm}`;
 }
-function isDateLockedClient(dateStr) {
-  return dateStr <= todayIso();
+function isDateLockedClient(dateStr, tz) {
+  return dateStr <= todayIso(tz);
 }
 
 // Small "copy to clipboard" button — used anywhere a sign-in code is shown so staff don't
@@ -188,13 +192,21 @@ function MoreMenu({ items, label = "More actions" }) {
   );
 }
 
-function isDatePastClient(dateStr) {
-  return dateStr < todayIso();
+function isDatePastClient(dateStr, tz) {
+  return dateStr < todayIso(tz);
 }
 function addDaysIso(dateStr, n) {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
+}
+// "Europe/London (British Summer Time)": the zone's name plus what it is called on that date, in plain words.
+function zoneLabel(tz, dateStr) {
+  try {
+    const at = new Date(`${dateStr || new Date().toISOString().slice(0, 10)}T12:00:00Z`);
+    const name = new Intl.DateTimeFormat(undefined, { timeZone: tz, timeZoneName: "long" }).formatToParts(at).find((p) => p.type === "timeZoneName")?.value;
+    return name ? `${tz.replace(/_/g, " ")} (${name})` : tz.replace(/_/g, " ");
+  } catch { return tz; }
 }
 function firstOfMonth(dateStr) {
   const d = new Date(dateStr + "T00:00:00Z");
@@ -216,7 +228,7 @@ function weekdayIndex(dateStr) {
 }
 function monthLabel(firstOfMonthStr) {
   const d = new Date(firstOfMonthStr + "T00:00:00Z");
-  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
 // Every other on-screen date goes through here instead of the raw "YYYY-MM-DD" value —
 // uses the browser's own locale (no hardcoded format), so it reads dd/mm/yyyy for a UK
@@ -264,7 +276,7 @@ export default function App() {
 
   useEffect(() => {
     async function restore() {
-      await refreshClock();
+      await Promise.all([refreshClock(), api.publicPricing().then((r) => setBilling(r.billing)).catch(() => {})]); // tax rate / label from the platform; defaults are the UK ones
       if (hasToken("tenant_admin")) {
         try {
           const r = await api.me();
@@ -279,6 +291,9 @@ export default function App() {
     restore();
   }, []);
 
+  // The account's own settings drive money and time display (idempotent, so it is fine to run on every render).
+  if (tenant?.currency) setBilling({ currency: tenant.currency });
+  if (tenant?.default_timezone) setDefaultTimezone(tenant.default_timezone);
   if (restoring) return <div className="container muted" style={{ textAlign: "center", paddingTop: 60 }}>Loading…</div>;
 
   function doSignOut() {
@@ -328,7 +343,7 @@ function AdminLogin({ onSignedIn, setError }) {
     setError("");
     try {
       const r = await api.requestAdminOtp(email);
-      setDemoOtp(r.demoOtp);
+      setDemoOtp(r.demoOtp || null);
       setStep("otp");
     } catch (err) { setError(err.message); }
   }
@@ -356,7 +371,10 @@ function AdminLogin({ onSignedIn, setError }) {
         )}
         {step === "otp" && (
           <>
-            <div className="muted">We've emailed a code (demo: <strong>{demoOtp}</strong>)</div>
+            <div className="muted">
+              If <strong style={{ overflowWrap: "anywhere" }}>{email.trim()}</strong> has an account, we've emailed you a 6-digit code. It can take a minute to arrive.
+              {demoOtp && <> (demo: <strong>{demoOtp}</strong>)</>}
+            </div>
             <label className="field">
               <span className="field-label">6-digit code</span>
               <input className="input mono" autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
@@ -394,6 +412,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
   const [addingLocation, setAddingLocation] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationTz, setNewLocationTz] = useState(""); // empty = the account's default zone
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
@@ -419,7 +438,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
   const archivedLocations = locations.filter((l) => l.archived);
   async function refreshQueue() {
     try {
-      const [tixRes, statsRes] = await Promise.all([api.getTickets(date), api.getDashboardStats(date)]);
+      const [tixRes, statsRes] = await Promise.all([api.getTickets(), api.getDashboardStats()]);
       setTickets(tixRes.tickets);
       setStats(statsRes.stats);
     } catch (err) { setError(err.message); }
@@ -551,6 +570,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                 <LocationNameField key={openLoc.id} loc={openLoc} onSaved={refreshCore} setError={setError} />
               </div>
               <LocationStatusLine services={visibleServices.filter((s) => s.location_id === openLoc.id)} allLicenses={allLicenses} today={date} />
+              <LocationTimezoneField key={`${openLoc.id}-${openLoc.timezone}`} loc={openLoc} onSaved={refreshCore} setError={setError} />
             </div>
           ) : (
             <h1>{TAB_TITLES[tab]}</h1>
@@ -577,8 +597,9 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
                 <span className="field-label">Location name</span>
                 <input className="input" autoFocus value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} />
               </label>
+              <TimezoneSelect id="newloc-tz" value={newLocationTz || tenant.default_timezone || getDefaultTimezone()} onChange={setNewLocationTz} />
               <div className="form-actions">
-                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim()); setNewLocationName(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
+                <button className="btn" disabled={!newLocationName.trim()} onClick={async () => { try { await api.addLocation(newLocationName.trim(), undefined, newLocationTz || undefined); setNewLocationName(""); setNewLocationTz(""); setAddingLocation(false); refreshCore(); } catch (err) { setError(err.message); } }}>Add</button>
                 <button className="btn-outline" onClick={() => { setAddingLocation(false); setNewLocationName(""); }}>Cancel</button>
               </div>
             </div>
@@ -859,7 +880,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
           <div className="card stack" style={{ gap: 0 }}>
             <h2 style={{ marginBottom: 10 }}>Activity</h2>
             {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
-            {auditLog.map((a) => <div key={a.id} className="log-row"><time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString("en-GB", { timeZone: "Europe/London" })}</time><span>{a.message}</span></div>)}
+            {auditLog.map((a) => <div key={a.id} className="log-row"><time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString(undefined, { timeZone: getDefaultTimezone() })}</time><span>{a.message}</span></div>)}
           </div>
         </div>
       )}
@@ -939,6 +960,34 @@ function LocationNameField({ loc, onSaved, setError }) {
         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
       />
       <span className="loc-name-status" aria-live="polite">{state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}</span>
+    </div>
+  );
+}
+
+// The location's time zone: sets its clock for opening hours, "today", and when bookings close. Saved with a button
+// because changing it is a deliberate act (the server refuses it while people are waiting or being served).
+function LocationTimezoneField({ loc, onSaved, setError }) {
+  const [tz, setTz] = useState(loc.timezone || getDefaultTimezone());
+  const [saved, setSaved] = useState(loc.timezone || getDefaultTimezone());
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await api.updateLocation(loc.id, { timezone: tz });
+      setSaved(r.location?.timezone || tz); setTz(r.location?.timezone || tz);
+      setDone(true); setTimeout(() => setDone(false), 1800);
+      onSaved?.();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="card stack" style={{ gap: 8 }} data-testid="loc-timezone">
+      <TimezoneSelect id={`loctz-${loc.id}`} value={tz} onChange={setTz} />
+      <div className="form-actions">
+        <button type="button" className="btn" disabled={busy || !tz || tz === saved} onClick={save}>{busy ? "Saving…" : "Save time zone"}</button>
+        {done && <span className="muted small" role="status">Saved</span>}
+        <span className="muted small">Now: {zoneLabel(saved)}</span>
+      </div>
     </div>
   );
 }
@@ -1144,6 +1193,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
   const [line2, setLine2] = useState(initialAddress.line2);
   const [city, setCity] = useState(initialAddress.city);
   const [postcode, setPostcode] = useState(initialAddress.postcode);
+  const [defaultTz, setDefaultTz] = useState(tenant.default_timezone || getDefaultTimezone());
   const [saved, setSaved] = useState(false);
   const [payMethod, setPayMethod] = useState(null); // null | "card" | "invoice"
   const [payInvoiceEmail, setPayInvoiceEmail] = useState(tenant.invoice_email || "");
@@ -1153,7 +1203,8 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
   const dirty = businessName !== (tenant.business_name || "")
     || firstName !== (tenant.first_name || "") || lastName !== (tenant.last_name || "")
     || email !== (tenant.email || "") || website !== (tenant.website_url || "")
-    || combineAddress(line1, line2, city, postcode) !== (tenant.company_address || "");
+    || combineAddress(line1, line2, city, postcode) !== (tenant.company_address || "")
+    || defaultTz !== (tenant.default_timezone || getDefaultTimezone());
 
   async function save() {
     try {
@@ -1161,6 +1212,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
         businessName, firstName, lastName, email,
         websiteUrl: website.trim(), // "" clears it (null would mean "leave unchanged")
         companyAddress: combineAddress(line1, line2, city, postcode),
+        defaultTimezone: defaultTz,
       });
       onTenantChange?.(r.tenant);
       setSaved(true);
@@ -1261,6 +1313,11 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
             <span className="field-label">Website</span>
             <input className="input" type="url" inputMode="url" placeholder="https://yourbusiness.example" value={website} onChange={(e) => setWebsite(e.target.value)} />
           </label>
+        </div>
+
+        <h2 style={{ marginTop: 4 }}>Time zone</h2>
+        <div className="form-grid">
+          <TimezoneSelect id="profile-default-tz" label="Default time zone for new locations" value={defaultTz} onChange={setDefaultTz} help="New locations start in this zone. Each location keeps its own time zone, which you can change on the location itself." />
         </div>
 
         <h2 style={{ marginTop: 4 }}>Business address</h2>
@@ -1404,7 +1461,7 @@ function ShopTab({ tenant, locations }) {
   }
 
   function enquire(subject) {
-    window.open(`mailto:hello@qbooker.example?subject=${encodeURIComponent(subject)}`, "_blank");
+    window.open(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`, "_blank");
   }
 
   const products = [
@@ -1416,7 +1473,7 @@ function ShopTab({ tenant, locations }) {
 
   const services = [
     { name: "Remote Staff Training", price: "Get a quote", desc: "A video session with your team covering the Staff Kiosk — calling tickets, handling no-shows, day-to-day use.", action: { label: "Get a quote", onClick: () => enquire("Remote staff training enquiry") } },
-    { name: "Admin System Set-up", price: "£125 (£150 inc VAT)", desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
+    { name: "Admin System Set-up", price: priceText(125), desc: "Our team configures your services, hours, and staffing for you — done in one session.", action: { label: "Enquire", onClick: () => enquire("Admin system set-up enquiry") } },
   ];
 
   return (
@@ -1473,10 +1530,10 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
     ...(lic.start_date ? [["Dates", `${formatDateDisplay(lic.start_date)} to ${formatDateDisplay(lic.end_date)}`]] : []),
     ...(lic.price != null ? [
       ["Price", exMoney(lic.price)],
-      [`VAT (${VAT_RATE * 100}%)`, exMoney(incVat(lic.price) - Number(lic.price))],
-      ["Total (inc VAT)", exMoney(incVat(lic.price))],
+      [`${vatLabel()} (${vatPercent()}%)`, exMoney(incVat(lic.price) - Number(lic.price))],
+      [`Total (inc ${vatLabel()})`, exMoney(incVat(lic.price))],
     ] : [["Price", "—"]]),
-    ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString("en-GB", { timeZone: "Europe/London" }) : "—"],
+    ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString(undefined, { timeZone: getDefaultTimezone() }) : "—"],
   ];
   const html = `<!doctype html><html><head><title>Receipt — ${escHtml(businessName)}</title>
     <meta charset="utf-8" />
@@ -1504,7 +1561,7 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
 
 function shortDate(dateStr) {
   if (!dateStr) return "";
-  return new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return new Date(dateStr + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
 }
 // One-line licence summary for a location card, built from the licences already loaded.
 function locationLicenceText(locServices, allLicenses, today) {
@@ -1751,6 +1808,7 @@ function ServiceEditor({ service, allServices, onChange, setError, tenant, locat
 // (dates assigned, maybe in the future) can have its dates changed or cleared; Active is
 // fully locked. Shared by ServiceEditor and ServiceWizard (right after a service is created).
 function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenant, buyTrigger, showBuyButton = true, buyAtBottom = false, hideEmpty = false, onBuyingChange, hideHeader = false, onBought, onScheduled, locationName }) {
+  const tz = service.timezone; // the location's own time zone: its "today" and "now"
   const [licenses, setLicenses] = useState([]);
   const [pricing, setPricing] = useState(null);
   const [buying, setBuying] = useState(false);
@@ -1759,7 +1817,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   // plan -> start (when it begins) -> payment (skipped for free licences).
   const [buyStep, setBuyStep] = useState("plan");
   const [startChoice, setStartChoice] = useState("today"); // "today" | "pick" | "later"
-  const [pickDate, setPickDate] = useState(todayIso());
+  const [pickDate, setPickDate] = useState(todayIso(tz));
   const [buyBusy, setBuyBusy] = useState(false);
   const [planId, setPlanId] = useState("week");
   const [customDays, setCustomDays] = useState(7);
@@ -1767,12 +1825,12 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const [buyEmail, setBuyEmail] = useState(tenant?.invoice_email || "");
   const [buyPO, setBuyPO] = useState(tenant?.invoice_po || "");
   const [schedulingId, setSchedulingId] = useState(null);
-  const [startDate, setStartDate] = useState(todayIso());
+  const [startDate, setStartDate] = useState(todayIso(tz));
   const [movingId, setMovingId] = useState(null);
 
-  useEffect(() => { api.publicPricing().then((r) => setPricing(r.pricing)).catch(() => {}); }, []);
+  useEffect(() => { api.publicPricing().then((r) => { setPricing(r.pricing); setBilling({ vatRate: r.billing?.vatRate, vatLabel: r.billing?.vatLabel }); }).catch(() => {}); }, []);
   // ServiceEditor's empty state (and the Wizard) bump buyTrigger to open the plan picker here.
-  useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); } }, [buyTrigger]);
+  useEffect(() => { if (buyTrigger) { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso(tz)); } }, [buyTrigger]);
 
   useEffect(() => { onBuyingChange?.(buying); }, [buying]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1790,7 +1848,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
 
   async function buy() {
     if (buyBusy) return;
-    const wantDate = startChoice === "today" ? todayIso() : startChoice === "pick" ? pickDate : null;
+    const wantDate = startChoice === "today" ? todayIso(tz) : startChoice === "pick" ? pickDate : null;
     setBuyBusy(true);
     let lic;
     try {
@@ -1835,7 +1893,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
   const buySteps = price > 0 ? ["Plan", "Start", "Pay"] : ["Plan", "Start"];
   const stepIdx = buyStep === "plan" ? 0 : buyStep === "start" ? 1 : 2;
   const planDays = planId === "custom" ? Math.max(1, Number(customDays) || 1) : ({ day: 1, week: 7, month: 30 })[planId];
-  const pickValid = /^\d{4}-\d{2}-\d{2}$/.test(pickDate) && pickDate >= todayIso();
+  const pickValid = /^\d{4}-\d{2}-\d{2}$/.test(pickDate) && pickDate >= todayIso(tz);
   const startInvalid = startChoice === "pick" && !pickValid;
   const START_ROWS = [
     { id: "today", name: "Start today", desc: "Goes live straight away — open hours as soon as you've bought it." },
@@ -1859,7 +1917,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
       {!hideHeader && (
         <div className="row" style={{ justifyContent: "space-between" }}>
           <strong style={{ fontSize: 14 }}>Licences</strong>
-          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso()); }}>Buy a licence</button>}
+          {showBuyButton && !buying && <button className="btn-outline" onClick={() => { setBuying(true); setBuyStep("plan"); setStartChoice("today"); setPickDate(todayIso(tz)); }}>Buy a licence</button>}
         </div>
       )}
 
@@ -1900,7 +1958,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                         <span className="plan-text"><span className="plan-name">{row.name}</span><span className="plan-desc">{row.desc}</span></span>
                         <span className="plan-price">
                           <b>{Number(p) > 0 ? `${exMoney(p)}${row.id === "custom" ? "/day" : ""}` : "Free"}</b>
-                          {Number(p) > 0 && <span>({exMoney(incVat(p))} inc VAT)</span>}
+                          {Number(p) > 0 && <span>({exMoney(incVat(p))} inc {vatLabel()})</span>}
                         </span>
                       </button>
                     );
@@ -1938,12 +1996,12 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                   <div className="stack" style={{ gap: 8 }}>
                     <label className="field" style={{ maxWidth: 220 }}>
                       <span className="field-label">Start date</span>
-                      <input className="input" type="date" min={todayIso()} value={pickDate} onChange={(e) => setPickDate(e.target.value)} aria-invalid={startInvalid} />
+                      <input className="input" type="date" min={todayIso(tz)} value={pickDate} onChange={(e) => setPickDate(e.target.value)} aria-invalid={startInvalid} />
                     </label>
                     {pickValid
                       ? <span className="muted small">Ends {formatDateDisplay(addDaysIso(pickDate, planDays - 1))}</span>
                       : <span className="small" role="alert" style={{ color: "var(--danger, #B3261E)" }}>Choose today or a future date.</span>}
-                    {pickValid && pickDate === todayIso() && (
+                    {pickValid && pickDate === todayIso(tz) && (
                       <div className="notice-info" role="note">Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.</div>
                     )}
                   </div>
@@ -1987,7 +2045,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
           <div className="buy-bar">
             <div className="total">
               <div className="k">Total</div>
-              <div className="v">{price > 0 ? <>{exMoney(price)} <small>({exMoney(incVat(price))} inc VAT)</small></> : "Free"}</div>
+              <div className="v">{price > 0 ? <>{exMoney(price)} <small>({exMoney(incVat(price))} inc {vatLabel()})</small></> : "Free"}</div>
             </div>
             {buyStep === "plan" && (
               <>
@@ -2038,11 +2096,11 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     {otherServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 )}
-                {lic.status === "scheduled" && schedulingId !== lic.id && <button type="button" className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>Change dates</button>}
+                {lic.status === "scheduled" && schedulingId !== lic.id && <button type="button" className="btn-outline" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso(tz)); }}>Change dates</button>}
                 {lic.status === "scheduled" && <button type="button" className="btn-outline" onClick={() => unschedule(lic)}>Unschedule</button>}
                 {lic.status === "available" && otherServices.length > 0 && movingId !== lic.id && <button type="button" className="btn-outline" onClick={() => setMovingId(lic.id)}>Move licence</button>}
                 {lic.status === "available" && schedulingId !== lic.id && (
-                <button type="button" className="btn btn-accent lic-assign" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso()); }}>
+                <button type="button" className="btn btn-accent lic-assign" onClick={() => { setSchedulingId(lic.id); setStartDate(lic.start_date || todayIso(tz)); }}>
                   Assign dates
                 </button>
               )}
@@ -2054,7 +2112,7 @@ function ServiceLicensesPanel({ service, allServices, setError, onChanged, tenan
                     <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                   </label>
                   <span className="muted small">Ends {formatDateDisplay(addDaysIso(startDate, lic.plan_days - 1))}</span>
-                  {startDate === todayIso() && (
+                  {startDate === todayIso(tz) && (
                     <div className="notice-info" role="note">
                       Starting today uses a full day of this licence, even though part of today has already passed. You can open hours from now onwards.
                     </div>
@@ -2084,11 +2142,12 @@ function clampStaffSplit(staff, booking, walkIn) {
 }
 
 function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
+  const tz = service.timezone; // the location's own time zone: its "today" and "now"
   // No day is selected until the admin picks one on the calendar — picking is only
   // possible for a day actually covered by a license (see the calendar button's
   // `inWindow` guard below), so the hours panel never opens onto an uncovered day.
   const [selectedDate, setSelectedDate] = useState(focusDay?.date || null);
-  const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(focusDay?.date || todayIso()));
+  const [calendarMonth, setCalendarMonth] = useState(firstOfMonth(focusDay?.date || todayIso(tz)));
   const focusRef = useRef(focusDay?.date || null); // a just-requested day is kept even before its window has loaded
   const [monthConfigs, setMonthConfigs] = useState({});
   const [windows, setWindows] = useState([]); // this service's scheduled/active license windows — gaps allowed, never overlapping
@@ -2099,6 +2158,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved", "error"
   const [staffError, setStaffError] = useState(""); // server rejection of a staff/hours change, shown beside the staff controls
   const [windowsLoaded, setWindowsLoaded] = useState(false);
+  const [dayShapes, setDayShapes] = useState({}); // date -> { gaps, folds } for days when the clocks change in this location's zone
   const [rangeConfigs, setRangeConfigs] = useState(null); // date -> config from today to the end of the last licence window, for the "still need hours" count
   const [rangeTick, setRangeTick] = useState(0);
 
@@ -2130,6 +2190,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
       r.dailyConfig.forEach((d) => { map[d.date] = d; });
       setMonthConfigs(map);
       setWindows(r.windows || []);
+      setDayShapes(r.dayShapes || {});
       setWindowsLoaded(true);
     } catch (err) { setError(err.message); }
   }
@@ -2150,7 +2211,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   const windowsKey = JSON.stringify(windows.map((w) => [w.start, w.end]));
   useEffect(() => {
     if (!windows.length) { setRangeConfigs(null); return; }
-    const t = todayIso();
+    const t = todayIso(tz);
     const first = windows.map((w) => w.start).sort()[0];
     const last = windows.map((w) => w.end).sort().slice(-1)[0];
     const from = first > t ? first : t;
@@ -2191,7 +2252,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
       return;
     }
     if (selectedDate && isWithinAnyWindow(selectedDate)) return;
-    const target = isWithinAnyWindow(todayIso()) ? todayIso() : overallStart;
+    const target = isWithinAnyWindow(todayIso(tz)) ? todayIso(tz) : overallStart;
     if (target) {
       setSelectedDate(target);
       const m = firstOfMonth(target);
@@ -2211,12 +2272,13 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   }, [selectedDate, monthConfigs]);
   useEffect(() => { setStaffError(""); }, [selectedDate]);
 
-  const selectedIsPast = !!selectedDate && isDatePastClient(selectedDate);
-  const selectedIsToday = !!selectedDate && selectedDate === todayIso();
+  const shape = selectedDate ? dayShapes[selectedDate] : null;
+  const selectedIsPast = !!selectedDate && isDatePastClient(selectedDate, tz);
+  const selectedIsToday = !!selectedDate && selectedDate === todayIso(tz);
   // A day is "live" once it is today or earlier. Live days: no Set 9-5 / Clear day, started hours are frozen,
   // staff can go up any time but only down while nothing is booked or queued (the server enforces the same).
-  const selectedIsLive = !!selectedDate && selectedDate <= todayIso();
-  const currentMinutes = nowMinutes();
+  const selectedIsLive = !!selectedDate && selectedDate <= todayIso(tz);
+  const currentMinutes = nowMinutes(tz);
 
   function isBlockEditable(hourMin) {
     if (selectedIsPast) return false;
@@ -2233,7 +2295,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current, walkInStaffCount: walkInRef.current, nowMinutes: nowMinutes() });
+        await api.putDailyConfig(service.id, { date: dateToSave, hours: hoursToSave, staffCount: staffCountRef.current, bookingStaffCount: bookingRef.current, walkInStaffCount: walkInRef.current });
         putLocal(dateToSave, { date: dateToSave, hours: hoursToSave, staff_count: staffCountRef.current, booking_staff_count: bookingRef.current, walkin_staff_count: walkInRef.current });
         setSaveStatus("saved");
         savedIndicatorRef.current = setTimeout(() => setSaveStatus(""), 1500);
@@ -2280,7 +2342,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     setSaveStatus("saving");
     setStaffError("");
     try {
-      await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn, nowMinutes: nowMinutes() });
+      await api.putDailyConfig(service.id, { date: selectedDate, hours, staffCount: nextStaff, bookingStaffCount: nextBooking, walkInStaffCount: nextWalkIn });
       putLocal(selectedDate, { date: selectedDate, hours, staff_count: nextStaff, booking_staff_count: nextBooking, walkin_staff_count: nextWalkIn });
       setSaveStatus("saved");
       if (savedIndicatorRef.current) clearTimeout(savedIndicatorRef.current);
@@ -2316,13 +2378,13 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
   async function copyToWeek() {
     const idx = weekdayIndex(selectedDate);
     const monday = addDaysIso(selectedDate, -idx);
-    const targets = Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i)).filter((d) => d !== selectedDate && d > todayIso());
+    const targets = Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i)).filter((d) => d !== selectedDate && d > todayIso(tz));
     try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
   async function copyToMonth() {
     const fm = firstOfMonth(selectedDate);
     const n = daysInMonthOf(fm);
-    const targets = Array.from({ length: n }, (_, i) => addDaysIso(fm, i)).filter((d) => d !== selectedDate && d > todayIso());
+    const targets = Array.from({ length: n }, (_, i) => addDaysIso(fm, i)).filter((d) => d !== selectedDate && d > todayIso(tz));
     try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
   async function copyToWholePeriod() {
@@ -2331,13 +2393,13 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     for (const w of windows) {
       let d = w.start;
       let guard = 0;
-      while (d <= w.end && guard < 400) { if (d !== selectedDate && d > todayIso()) targets.push(d); d = addDaysIso(d, 1); guard++; }
+      while (d <= w.end && guard < 400) { if (d !== selectedDate && d > todayIso(tz)) targets.push(d); d = addDaysIso(d, 1); guard++; }
     }
     try { await api.copyDailyConfig(service.id, { fromDate: selectedDate, toDates: targets }); loadMonth(calendarMonth); setRangeTick((t) => t + 1); } catch (err) { setError(err.message); }
   }
 
   const calendarWeeks = buildCalendarWeeks(calendarMonth);
-  const today = todayIso();
+  const today = todayIso(tz);
 
   if (!windowsLoaded) return <div className="muted small">Loading calendar…</div>;
   // Nothing to schedule hours against yet — don't show an empty calendar control.
@@ -2371,7 +2433,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
     }
   }
   const dayHeading = (d) => {
-    const parts = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).formatToParts(new Date(d + "T00:00:00Z"));
+    const parts = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).formatToParts(new Date(d + "T00:00:00Z"));
     const g = (t) => parts.find((x) => x.type === t)?.value;
     const label = `${g("weekday")} ${g("day")} ${g("month")}`;
     return d === today ? `Today, ${label}` : d === addDaysIso(today, 1) ? `Tomorrow, ${label}` : label;
@@ -2391,7 +2453,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
             if (!d) return <div key={`b${i}`} />;
             const st = windowStatusOn(d);
             const inWindow = !!st;
-            const past = isDatePastClient(d);
+            const past = isDatePastClient(d, tz);
             const count = monthConfigs[d]?.hours?.length || 0;
             const isSelected = d === selectedDate;
             const isToday = d === today;
@@ -2436,6 +2498,9 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
                     : selectedIsToday ? "Earlier hours are locked. Tap the rest to open or close them."
                     : "Tap blocks to open or close them, or drag across a range."}
                 </div>
+                <div className="muted small" data-testid="hours-zone">Times are local to {service.timezone ? zoneLabel(service.timezone, selectedDate) : "this location"}.</div>
+                {shape?.gaps?.length > 0 && <div className="muted small" role="note">The clocks go forward on this day, so {shape.gaps.map(([a, b]) => `${formatClock(a)}-${formatClock(b)}`).join(", ")} does not exist and cannot be opened.</div>}
+                {shape?.folds?.length > 0 && <div className="muted small" role="note">The clocks go back on this day, so {shape.folds.map(([a, b]) => `${formatClock(a)}-${formatClock(b)}`).join(", ")} happens twice; it is offered once.</div>}
               </div>
               <span role="status" aria-live="polite">
                 {saveStatus === "saving" && <span className="muted small">Saving…</span>}
@@ -2500,7 +2565,8 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
             <div className="hour-grid" role="group" aria-label={`Half-hour blocks for ${dayHeading(selectedDate)}`}>
               {GRID_HOURS.map((h) => {
                 const open = draftHours.includes(h);
-                const editable = isBlockEditable(h);
+                const inGap = !!shape?.gaps?.some(([a, b]) => h >= a && h < b);
+                const editable = isBlockEditable(h) && !inGap;
                 return (
                   <button
                     key={h}
@@ -2512,7 +2578,7 @@ function ServiceCalendar({ service, setError, refreshToken, focusDay }) {
                     aria-pressed={open}
                     aria-label={formatTime(h)}
                     disabled={!editable}
-                    title={!editable && selectedIsToday ? "Already passed" : undefined}
+                    title={inGap ? "This time does not exist: the clocks go forward" : !editable && selectedIsToday ? "Already passed" : undefined}
                   >
                     {formatClock(h)}
                   </button>

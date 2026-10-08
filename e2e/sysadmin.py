@@ -187,8 +187,8 @@ def journey(env):
         wait_text(p, "Locations, all customers")
         stats = p.locator(".stat").all_inner_texts()
         flat = " | ".join(s.replace("\n", " ") for s in stats)
-        assert f"£{ov['totalRevenue']:.2f}" in flat, flat
-        assert f"£{ov['pendingRevenue']:.2f}" in flat, flat
+        assert f"£{ov['totalRevenue']:,.2f}" in flat, flat
+        assert f"£{ov['pendingRevenue']:,.2f}" in flat, flat
         assert re.search(rf"\b{ov['customerCount']}\b", flat) and re.search(rf"\b{ov['totalLocations']}\b", flat), flat
     with T.step("adm-D", "revenue chart is exposed to assistive tech with its figures", p):
         lab = p.locator("[role=img]").first.get_attribute("aria-label") or ""

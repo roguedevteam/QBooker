@@ -26,7 +26,7 @@ node + `npm install` in each app, python `playwright` with chromium in PLAYWRIGH
 ## Caveats
 - Full phone+desktop run takes >2 minutes; run per viewport if your shell has a timeout.
 - Today's hours are set via the API because the UI grid stops at 19:30 and freezes past blocks.
-- The private API runs on a TEST CLOCK (NODE_ENV=test + QB_TEST_NOW, default today 12:00Z; `--now ISO` to change, `--real-clock` to use the real clock), so after-hours checks are deterministic. The server's business day is Europe/London.
-- Extra journeys: G accessibility (brand contrast, keyboard-only join and call-next, live regions, 320px reflow, axe), H multi-location (3 locations, isolation, archive mid-day), T midnight/BST/DST nights (moves the test clock; restores it).
+- The private API runs on a TEST CLOCK (NODE_ENV=test + QB_TEST_NOW, default today 12:00Z; `--now ISO` to change, `--real-clock` to use the real clock), so after-hours checks are deterministic. Each location has its own time zone (default Europe/London), and the server's business day is that location's.
+- Extra journeys: G accessibility (brand contrast, keyboard-only join and call-next, live regions, 320px reflow, axe), H multi-location (3 locations, isolation, archive mid-day), T midnight/BST/DST nights (moves the test clock; restores it); H also covers the customer-admin time-zone select and a New York location showing open/closed on its own clock (test clock moves, restored afterwards).
 - axe-core: `npm install --no-save axe-core` in e2e/ (or E2E_AXE=/path/axe.min.js); without it the axe checks are skipped. `E2E_BASE_PORT` sets the first port (default 4210).
 - Not covered: print/QR windows, real WhatsApp/email.

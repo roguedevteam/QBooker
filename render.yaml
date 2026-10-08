@@ -10,10 +10,35 @@
         sync: false
       - key: VITE_ADMIN_APP_URL
         sync: false
+      - key: VITE_SUPPORT_EMAIL
+        sync: false
+      - key: VITE_MARKETING_URL
+        sync: false
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+    # Security headers. connect-src allows any *.up.railway.app API; if the API is served from a custom
+    # domain, add it to connect-src below (Render header values cannot read env vars).
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.up.railway.app; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
   - type: web
     name: qbooker-customer-admin
@@ -30,10 +55,34 @@
         sync: false
       - key: VITE_CUSTOMER_APP_URL
         sync: false
+      - key: VITE_SUPPORT_EMAIL
+        sync: false
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+    # Security headers. connect-src allows any *.up.railway.app API; if the API is served from a custom
+    # domain, add it to connect-src below (Render header values cannot read env vars).
+    # img-src also allows api.qrserver.com, which draws the QR codes on the printable posters.
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.up.railway.app; img-src 'self' data: https://api.qrserver.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
   - type: web
     name: qbooker-staff
@@ -48,6 +97,27 @@
       - type: rewrite
         source: /*
         destination: /index.html
+    # Security headers. connect-src allows any *.up.railway.app API; if the API is served from a custom
+    # domain, add it to connect-src below (Render header values cannot read env vars).
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.up.railway.app; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
   - type: web
     name: qbooker-customer
@@ -58,10 +128,33 @@
     envVars:
       - key: VITE_API_URL
         sync: false
+      - key: VITE_MARKETING_URL
+        sync: false
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+    # Security headers. connect-src allows any *.up.railway.app API; if the API is served from a custom
+    # domain, add it to connect-src below (Render header values cannot read env vars).
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.up.railway.app; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
   - type: web
     name: qbooker-system-admin
@@ -76,3 +169,24 @@
       - type: rewrite
         source: /*
         destination: /index.html
+    # Security headers. connect-src allows any *.up.railway.app API; if the API is served from a custom
+    # domain, add it to connect-src below (Render header values cannot read env vars).
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.up.railway.app; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"

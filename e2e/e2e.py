@@ -143,6 +143,8 @@ class Infra:
                "CORS_ORIGIN": origins, "SYSTEM_ADMIN_PASSWORD_HASH": hash_}
         env.pop("QB_TEST_NOW", None)
         env.pop("NODE_ENV", None)
+        # No real email in the sandbox: the "log" provider + DEMO_MODE returns the sign-in code in the response (never true in production).
+        env["DEMO_MODE"] = "true"
         self.test_clock = not self.args.real_clock
         if self.test_clock:
             # The private API runs on a TEST CLOCK (honoured only with NODE_ENV=test / QB_TEST_NOW): midday UTC today, so the
@@ -671,8 +673,15 @@ def journey_A(env):
         with a.mon.expect("401", "Failed to load resource"):
             btn(p, "Verify & sign in").click()
             wait_text(p, "Incorrect or expired code")
-    with T.step(A, "admin sign-in: the code from the sign-up page signs the owner in", p, critical=True):
+    with T.step(A, "admin sign-in: asking for a new code cancels the earlier (sign-up) code", p):
+        # CHANGED: the sign-up code used to keep working next to a later one; now each new code replaces the previous.
         p.get_by_label("6-digit code").fill(S["signup_otp"])
+        with a.mon.expect("401", "Failed to load resource"):
+            btn(p, "Verify & sign in").click()
+            wait_text(p, "Incorrect or expired code")
+    with T.step(A, "admin sign-in: the newest emailed (demo) code signs the owner in", p, critical=True):
+        demo_code = p.locator("strong").filter(has_text=re.compile(r"^\d{6}$")).first.inner_text().strip()
+        p.get_by_label("6-digit code").fill(demo_code)
         btn(p, "Verify & sign in").click()
         wait_text(p, "Customer admin")
         assert has_text(p, S["biz"])
@@ -1683,6 +1692,7 @@ def journey_H(env):
             sp.get_by_role("button", name=n).wait_for()
         sp.get_by_role("button", name="e2e Alpha").click()
         sp.get_by_label("Room or desk").wait_for()
+        sp.locator("label.opt").filter(has_text="Alpha Clinic").wait_for()   # the service list loads after the form appears
         labs = sp.locator("label.opt").all_inner_texts()
         assert any("Alpha Desk" in x for x in labs) and any("Alpha Clinic" in x for x in labs), labs
         assert not any("Beta" in x or "Gamma" in x for x in labs), labs
@@ -1726,6 +1736,109 @@ def journey_H(env):
         assert st in (404, 409), (st, js)
     with T.step(H, "Alpha's staff list is unchanged and still shows only Alpha's ticket", sp):
         assert sp.locator(".wrow").filter(has_text=a1["ticket_number"]).count() == 1
+    h_timezones(env)
+
+
+def h_timezones(env):
+    """H extension: a location in another time zone. The zone is chosen in customer-admin (curated list, 'Other...',
+    server-side validation); the patient app then shows open/closed on THAT location's clock, with the test clock
+    moved so that London is open while New York has not opened yet."""
+    T, api, H = env.T, env.api, "H"
+    if not env.infra.test_clock:
+        T.skip(H, "time-zone location journey", "needs the suite's own API on its test clock (not --api-url / --real-clock)")
+        return
+    base = env.infra.base_now
+    cust = env.urls["customer"]
+    try:
+        api.set_now("2026-10-08T12:00:00Z")          # 13:00 BST in London, 08:00 EDT in New York
+        fx = api.make_tenant(f"e2e-{RUN}-{env.vp}-Zones", ["e2e Home Clinic", "e2e Harbour NYC"],
+                             [("Home Desk", "queue", 0), ("NYC Desk", "queue", 1)], hours=None)
+        tok, tid = fx["token"], fx["id"]
+        svc = {x["name"]: x for x in fx["services"]}
+        assert all(x["timezone"] == "Europe/London" for x in fx["locations"]), fx["locations"]   # default for a new location
+        for sv in svc.values():                       # both open 06:00-12:30 on their own clocks (blocks 06:00 ... 12:30)
+            api.set_hours(tok, sv, list(range(360, 780, 30)))
+        a = env.actor()
+        p = a.page
+        with T.step(H, "customer-admin: the location's time zone is a plain-language select (curated list + Other...), default London", p, critical=True):
+            inject_admin_session(a, tok)
+            nav(a, "Locations")
+            p.get_by_role("button", name="Open e2e Harbour NYC").click()
+            wait_text(p, "Choose where the clinic is, not where you are")
+            sel = p.get_by_label("Time zone", exact=True)
+            assert sel.input_value() == "Europe/London", sel.input_value()
+            assert "Other…" in sel.locator("option").all_inner_texts()
+            assert p.get_by_role("button", name="Save time zone").is_disabled()
+        a.scan(H, "customer-admin: location time zone", focus=True)
+        with T.step(H, "an unknown zone typed under Other... is refused by the server with a message, nothing is saved", p):
+            sel.select_option("__other__")
+            p.get_by_label("Time zone: name of the zone").fill("Mars/Olympus_Mons")
+            with a.mon.expect("400", "Failed to load resource"):
+                btn(p, "Save time zone").click()
+                p.get_by_role("alert").filter(has_text="time zone").first.wait_for()
+            assert [x for x in api.ok("GET", "/api/tenant/locations", token=tok)["locations"] if x["name"] == "e2e Harbour NYC"][0]["timezone"] == "Europe/London"
+            p.get_by_role("button", name="Dismiss").click()
+        with T.step(H, "choosing New York and saving updates the location", p, critical=True):
+            sel.select_option("America/New_York")
+            btn(p, "Save time zone").click()
+            wait_text(p, "Now: America/New York")
+            nyc = [x for x in api.ok("GET", "/api/tenant/locations", token=tok)["locations"] if x["name"] == "e2e Harbour NYC"][0]
+            assert nyc["timezone"] == "America/New_York", nyc
+        with T.step(H, "the hours editor names the location's zone next to the opening hours", p):
+            p.reload()
+            wait_text(p, "Customer admin")
+            nav(a, "Locations")
+            p.get_by_role("button", name="Open e2e Harbour NYC").click()
+            card = p.locator(".svc-card").first
+            if card.get_by_role("tab", name=re.compile("Calendar", re.I)).count():
+                card.get_by_role("tab", name=re.compile("Calendar", re.I)).first.click()
+            zone = card.locator('[data-testid="hours-zone"]').first
+            zone.wait_for()
+            assert "America/New York" in zone.inner_text(), zone.inner_text()
+        a.scan(H, "customer-admin: hours with the zone name")
+        a.close()
+        # --- the patient app: London's day is over at 13:00 (last block 12:30), New York (08:00 local) is mid-morning ----------
+        pa = env.actor()
+        with T.step(H, "13:00 London / 08:00 New York: the chooser shows London not available (hours over) and New York open", pa.page, critical=True):
+            pa.goto(f"{cust}/?t={tid}")
+            wait_text(pa.page, "Which location are you at?")
+            for n, open_ in (("e2e Home Clinic", False), ("e2e Harbour NYC", True)):
+                b = pa.page.get_by_role("button", name=re.compile(re.escape(n) + ".*" + ("Open now" if open_ else "Not available")))
+                b.wait_for()
+                assert b.is_enabled() == open_, (n, open_)
+        pa.scan(H, "patient: London closed, New York open (time zones)", focus=True)
+        with T.step(H, "the server uses each location's own clock: London refuses a join even if the client claims it is midnight; New York accepts one even if it claims it is late", pa.page):
+            st, js = api.req("POST", f"/api/public/tenant/{tid}/services/{svc['Home Desk']['id']}/tickets", dict(type="walk_in", date="2026-10-08", hourBlock=None, clockMinutes=0))
+            assert st == 409, (st, js)
+            st, js = api.req("POST", f"/api/public/tenant/{tid}/services/{svc['NYC Desk']['id']}/tickets", dict(type="walk_in", date="2026-10-08", hourBlock=None, clockMinutes=1400))
+            assert st == 200, (st, js)
+        api.set_now("2026-10-08T15:30:00Z")          # 16:30 BST, 11:30 EDT: New York is in its last hours, London closed
+        pb = env.actor()
+        with T.step(H, "15:30Z (16:30 London / 11:30 New York): New York is still open and takes a join from the patient app", pb.page):
+            pb.goto(f"{cust}/?t={tid}")
+            wait_text(pb.page, "Which location are you at?")
+            pb.page.get_by_role("button", name=re.compile("e2e Home Clinic.*Not available")).wait_for()
+            pb.page.get_by_role("button", name=re.compile("e2e Harbour NYC.*Open now")).wait_for()
+            choice(pb.page, "e2e Harbour NYC").click()
+            wait_text(pb.page, "Ready to join the queue?")
+            choice(pb.page, "Join the queue now").click()
+            pb.page.locator(".ticket-band-num").wait_for()
+            d, hb, stt = db_ticket(tid, ticket_number(pb.page))
+            assert d == "2026-10-08" and stt == "waiting", (d, stt)
+        api.set_now("2026-10-08T17:00:00Z")          # 18:00 BST, 13:00 EDT: New York's day is now over too
+        pc = env.actor()
+        with T.step(H, "17:00Z (13:00 New York): its hours are over as well, so both locations show not available", pc.page):
+            pc.goto(f"{cust}/?t={tid}")
+            wait_text(pc.page, "We're not open right now")
+            for n in ("e2e Home Clinic", "e2e Harbour NYC"):
+                b = pc.page.get_by_role("button", name=re.compile(re.escape(n) + ".*Not available"))
+                b.wait_for()
+                assert b.is_disabled()
+        for x in (pa, pb, pc):
+            x.close()
+    finally:
+        if base:
+            api.set_now(base)
 
 
 # ==========================================================================================================
@@ -2008,7 +2121,9 @@ def journey_T(env):
         with T.step(TT, "00:00:30 on the 26th: the trial licence has expired and the patient app says nothing is available", pd.page):
             assert api.clock_today() == "2026-10-26"
             pd.goto(f"{cust}/?t={fx['id']}")
-            wait_text(pd.page, "license doesn't cover today's date")
+            # The services list is date-bounded on the server now (a licence window that is over never lists), so the patient
+            # sees the empty-state message rather than the older per-service "license doesn't cover today's date" line.
+            wait_text(pd.page, "Nothing is available here today.")
         pd.scan(TT, "patient: licence expired at midnight")
         with T.step(TT, "the patient who joined on the 25th now sees their ticket has expired (end of day), not 'waiting'", pb.page):
             pb.page.reload()

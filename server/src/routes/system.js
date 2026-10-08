@@ -3,8 +3,9 @@ import { resetRateLimits } from "../lib/rateLimit.js";
 import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday, nowSql, now as clockNow, testClockEnabled, setTestNow, clearTestNow, isTestClockActive } from "../lib/clock.js";
-import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing, effectivePricing } from "../lib/serviceLicense.js";
+import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday, nowSql, now as clockNow, testClockEnabled, setTestNow, clearTestNow, isTestClockActive, nowMinutes as zoneNowMinutes, DEFAULT_TIMEZONE } from "../lib/clock.js";
+import { canonicalTimezone, optTimezone } from "../lib/timezones.js";
+import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing, effectivePricing, effectiveBilling } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 import {
   badRequest, uuidParams, reqDate, optString, optEmail, optInt, optBool, optEnum, EMAIL_RE,
@@ -60,7 +61,17 @@ router.delete("/tenants/:id/staff/:staffId", asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-const TENANT_FIELD_LABELS = { business_name: "business name", first_name: "first name", last_name: "last name", email: "email", company_address: "address", location_count: "location count" };
+const TENANT_FIELD_LABELS = { business_name: "business name", first_name: "first name", last_name: "last name", email: "email", company_address: "address", location_count: "location count", default_timezone: "default time zone", currency: "currency" };
+
+// ISO 4217 code: three capital letters that Intl knows as a currency (so the front-ends can format it). undefined/null -> unchanged.
+function optCurrency(v) {
+  if (v === undefined || v === null) return undefined;
+  const c = typeof v === "string" ? v.trim().toUpperCase() : "";
+  let ok = /^[A-Z]{3}$/.test(c);
+  if (ok) { try { new Intl.NumberFormat("en", { style: "currency", currency: c }); } catch { ok = false; } }
+  if (!ok) throw badRequest("Currency must be a three-letter ISO 4217 code such as GBP, EUR or USD.");
+  return c;
+}
 
 router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   const businessName = optString(req.body.businessName, "Business name");
@@ -70,6 +81,8 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
   const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
   const locationCount = optInt(req.body.locationCount, "locationCount", { min: 0, max: 100000 });
   const status = optEnum(req.body.status, "status", ["pending", "active", "disabled"]);
+  const defaultTimezone = await optTimezone(req.body.defaultTimezone, "Default time zone");
+  const currency = optCurrency(req.body.currency);
   const prev = (await query(`select * from tenants where id=$1`, [req.params.id])).rows[0];
   if (!prev) return res.status(404).json({ error: "Customer not found." });
   const result = await query(
@@ -80,9 +93,11 @@ router.patch("/tenants/:id", asyncHandler(async (req, res) => {
        email = coalesce($4, email),
        company_address = coalesce($5, company_address),
        location_count = coalesce($6, location_count),
-       status = coalesce($7, status)
+       status = coalesce($7, status),
+       default_timezone = coalesce($9, default_timezone),
+       currency = coalesce($10, currency)
      where id=$8 returning *`,
-    [businessName, firstName, lastName, email, companyAddress, locationCount, status, req.params.id]
+    [businessName, firstName, lastName, email, companyAddress, locationCount, status, req.params.id, defaultTimezone ?? null, currency ?? null]
   );
   const cur = result.rows[0];
   if (!cur) return res.status(404).json({ error: "Customer not found." });
@@ -149,12 +164,13 @@ router.get("/tenants/:id/detail", asyncHandler(async (req, res) => {
 router.patch("/tenants/:id/locations/:locId", asyncHandler(async (req, res) => {
   const name = optString(req.body.name, "Name");
   const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
+  const timezone = await optTimezone(req.body.timezone);
   const result = await query(
-    `update locations set name=coalesce($1,name), address=coalesce($2,address) where id=$3 and tenant_id=$4 returning *`,
-    [name, address, req.params.locId, req.params.id]
+    `update locations set name=coalesce($1,name), address=coalesce($2,address), timezone=coalesce($5,timezone) where id=$3 and tenant_id=$4 returning *`,
+    [name, address, req.params.locId, req.params.id, timezone ?? null]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Location not found." });
-  if (name !== undefined || address !== undefined) await audit(req.params.id, `Location "${result.rows[0].name}" updated by platform admin`);
+  if (name !== undefined || address !== undefined || timezone !== undefined) await audit(req.params.id, `Location "${result.rows[0].name}" updated by platform admin`);
   res.json({ location: result.rows[0] });
 }));
 
@@ -262,6 +278,9 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
 // held as "pending" has nothing left unpaid, it goes active — same effect the old account-level
 // "Mark paid" had.
 router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (req, res) => {
+  // Bring the licence's status up to date first, so what is reported back is never stale.
+  const pre = (await query(`select service_id from service_licenses where id=$1 and tenant_id=$2`, [req.params.licenseId, req.params.id])).rows[0];
+  if (pre) await resolveServiceLicenses(pre.service_id);
   const cur = (await query(`select * from service_licenses where id=$1 and tenant_id=$2`, [req.params.licenseId, req.params.id])).rows[0];
   if (!cur) return res.status(404).json({ error: "License not found." });
   // Already paid: nothing to do (a double click or retry must not move paid_at or log a second payment).
@@ -330,11 +349,14 @@ router.delete("/tenants/:id", asyncHandler(async (req, res) => {
 async function storedPricing() {
   return effectivePricing((await query(`select value from platform_settings where key='plan_prices'`)).rows[0]?.value);
 }
+async function storedBilling() {
+  return effectiveBilling((await query(`select value from platform_settings where key='billing'`)).rows[0]?.value);
+}
 
 // What the console shows is exactly what customers see and are charged (built-in defaults fill in
 // anything never saved).
 router.get("/pricing", asyncHandler(async (req, res) => {
-  res.json({ pricing: await storedPricing() });
+  res.json({ pricing: await storedPricing(), billing: await storedBilling() });
 }));
 
 router.put("/pricing", asyncHandler(async (req, res) => {
@@ -370,12 +392,31 @@ router.put("/pricing", asyncHandler(async (req, res) => {
     if (cleanSale[k] != null && cleanSale[k] > next[k]) throw badRequest(`The sale price for ${k} can't be higher than its regular price — lower or clear the sale price first.`);
   }
   const value = { ...next, sale: cleanSale };
+  // Optional billing display settings (currency / tax rate / tax name). Omitted keys keep their current value.
+  let billing = await storedBilling();
+  if (req.body.billing !== undefined) {
+    const b = req.body.billing;
+    if (!b || typeof b !== "object" || Array.isArray(b)) throw badRequest("billing must be an object.");
+    const nextBilling = { ...billing };
+    if (b.currency !== undefined) nextBilling.currency = optCurrency(b.currency) ?? billing.currency;
+    if (b.vatRate !== undefined) {
+      if (typeof b.vatRate !== "number" || !Number.isFinite(b.vatRate) || b.vatRate < 0 || b.vatRate > 1) throw badRequest("vatRate must be a fraction between 0 and 1 (0.2 means 20%).");
+      nextBilling.vatRate = b.vatRate;
+    }
+    if (b.vatLabel !== undefined) nextBilling.vatLabel = optString(b.vatLabel, "vatLabel", { max: 20 }) ?? billing.vatLabel;
+    billing = nextBilling;
+    await query(
+      `insert into platform_settings (key, value) values ('billing', $1)
+       on conflict (key) do update set value = excluded.value`,
+      [JSON.stringify(billing)]
+    );
+  }
   await query(
     `insert into platform_settings (key, value) values ('plan_prices', $1)
      on conflict (key) do update set value = excluded.value`,
     [JSON.stringify(value)]
   );
-  res.json({ pricing: value });
+  res.json({ pricing: value, billing });
 }));
 
 // Revenue lives on service_licenses (one purchase per service), not on the tenant as a whole — a
@@ -466,7 +507,7 @@ router.post("/test-reset-limits", (req, res) => {
 // Public (unauthenticated) pricing lookup, used by the signup screen.
 export const publicRouter = Router();
 publicRouter.get("/pricing", asyncHandler(async (req, res) => {
-  res.json({ pricing: await storedPricing() });
+  res.json({ pricing: await storedPricing(), billing: await storedBilling() });
 }));
 // Public read-only clock, so the marketing/web/admin apps can all agree on "today"
 // (which may be a simulated date set from System Admin for testing).
@@ -475,9 +516,17 @@ publicRouter.get("/clock", (req, res) => {
 });
 // The same plus the server's current instant, so the apps agree with the server about "now" (a phone with a wrong
 // clock or time zone, or a test clock) and can work out London's date and wall-clock minutes from it.
-publicRouter.get("/time", (req, res) => {
+// With ?tz=<IANA zone> (a location's time zone) `today` and `minutes` are that zone's calendar date and wall-clock minutes;
+// without it, `today` is the platform default zone's (Europe/London). The `now` instant is the same either way, so a
+// front-end can work out any location's local time itself from it.
+publicRouter.get("/time", asyncHandler(async (req, res) => {
   res.set("Cache-Control", "no-store");
-  res.json({ today: getToday(), simulated: isSimulated(), now: clockNow().toISOString() });
-});
+  let tz = DEFAULT_TIMEZONE;
+  if (req.query.tz !== undefined) {
+    tz = await canonicalTimezone(typeof req.query.tz === "string" ? req.query.tz : "");
+    if (!tz) return res.status(400).json({ error: "tz must be a valid IANA time zone name such as Europe/London." });
+  }
+  res.json({ today: getToday(tz), simulated: isSimulated(), now: clockNow().toISOString(), timezone: tz, minutes: zoneNowMinutes(tz) });
+}));
 
 export default router;

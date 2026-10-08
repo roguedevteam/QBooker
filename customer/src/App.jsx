@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "./lib/api.js";
-import { todayIso, nowMinutes, refreshClock } from "./lib/clock.js";
+import { todayIso, nowMinutes, refreshClock, setDefaultTimezone } from "./lib/clock.js";
+
+// A service is open in its location's own time zone (sent as `timezone` on services and locations).
+const tzOf = (svc) => svc?.timezone || undefined;
 import { getSavedToken, saveToken, clearSavedToken, setUrlToken, urlParam, getDeviceId } from "./lib/storage.js";
 import Returning from "./Returning.jsx";
 import Shell, { Bubble, Choices, POWERED_BY } from "./Shell.jsx";
@@ -69,6 +72,7 @@ function Patient({ tenantId }) {
       try {
         const [info, l, sv] = await Promise.all([api.getInfo(tenantId), api.getLocations(tenantId), api.getServices(tenantId)]);
         if (cancelled) return;
+        setDefaultTimezone(info.defaultTimezone);
         setBusinessName(info.businessName);
         setWebsiteUrl(info.websiteUrl || "");
         setLocations(l.locations);
@@ -123,7 +127,7 @@ function Patient({ tenantId }) {
       const locServices = services.filter((s) => s.location_id === l.id);
       if (locServices.length === 0) return { location: l, open: false };
       const results = await Promise.all(locServices.map((s) =>
-        api.getAvailability(tenantId, s.id, todayIso(), nowMinutes()).catch(() => ({ open: false }))
+        api.getAvailability(tenantId, s.id, todayIso(tzOf(s))).catch(() => ({ open: false }))
       ));
       return { location: l, open: results.some((r) => r.open) };
     }));
@@ -152,7 +156,7 @@ function Patient({ tenantId }) {
     if (list.length === 0) { welcomeHere(); bot("Nothing is available here today.", siteLink); return; }
     const checks = await Promise.all(list.map(async (s) => {
       try {
-        const r = await api.getAvailability(tenantId, s.id, todayIso(), nowMinutes());
+        const r = await api.getAvailability(tenantId, s.id, todayIso(tzOf(s)));
         return { service: s, open: r.open, reason: r.reason, r };
       } catch {
         return { service: s, open: false, reason: "error" };
@@ -184,7 +188,7 @@ function Patient({ tenantId }) {
     const another = [...(manyServicesRef.current ? [{ label: "Choose another service", variant: "secondary", action: "restart" }] : []), ...websiteOpts(locations.find((l) => l.id === (currentLoc || svc.location_id)))];
     let r = avail;
     if (!r) {
-      try { r = await api.getAvailability(tenantId, svc.id, todayIso(), nowMinutes()); }
+      try { r = await api.getAvailability(tenantId, svc.id, todayIso(tzOf(svc))); }
       catch (err) { if (run === runRef.current) bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" }))); return; }
       if (run !== runRef.current) return;
     }
@@ -208,7 +212,7 @@ function Patient({ tenantId }) {
 
   // Planners see a 2-hour window starting 2 hours from now; other times are one tap away.
   function showSlots(serviceId, slots) {
-    const winStart = nowMinutes() + 120;
+    const winStart = nowMinutes(tzOf(services.find((s) => s.id === serviceId))) + 120;
     let shown = slots.filter((t) => t >= winStart && t < winStart + 120);
     if (shown.length === 0) shown = slots.filter((t) => t >= winStart).slice(0, 3);
     if (shown.length === 0) shown = slots.slice(0, 3);
@@ -253,7 +257,7 @@ function Patient({ tenantId }) {
       const svc = services.find((s) => s.id === payload.serviceId);
       user(`${formatTime(payload.slotTime)} today`);
       try {
-        const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(), slotTime: payload.slotTime, deviceId: getDeviceId() });
+        const r = await api.createTicket(tenantId, svc.id, { type: "booked", date: todayIso(tzOf(svc)), slotTime: payload.slotTime, deviceId: getDeviceId() });
         openTicket(r.publicToken);
       } catch (err) { bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" }))); }
     } else if (action === "website") {
@@ -281,7 +285,7 @@ function Patient({ tenantId }) {
   async function doJoin(svc, code = onsiteCodeRef.current) {
     setJoining(true);
     try {
-      const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(), hourBlock: null, clockMinutes: nowMinutes(), deviceId: getDeviceId(), onsiteCode: code || undefined });
+      const r = await api.createTicket(tenantId, svc.id, { type: "walk_in", date: todayIso(tzOf(svc)), hourBlock: null, deviceId: getDeviceId(), onsiteCode: code || undefined });
       openTicket(r.publicToken);
     } catch (err) {
       if (err.reason === "onsite_code_required" || err.reason === "onsite_code_invalid") {

@@ -952,7 +952,7 @@ describe('C. multi-location tenant', () => {
       for (const s of [svc.dentA, svc.hygA, svc.dentB, svc.eyeB, svc.injC]) assert.ok(ids.has(s.id), s.name);
       assert.equal(ids.has(svc.xrayC.id), false, 'unlicensed X Ray is not offered');
       for (const s of r) assert.equal(s.location_id, t.services.find((x) => x.id === s.id).location_id);
-      assert.deepEqual(Object.keys(r[0]).sort(), ['id', 'location_id', 'mode', 'name']);
+      assert.deepEqual(Object.keys(r[0]).sort(), ['id', 'location_id', 'mode', 'name', 'timezone']);
     });
     it('mixed open / closed locations: each service answers for itself', async () => {
       await at(`${D}T10:30:00Z`); // 10:30 GMT: Minor Injuries (09:00-10:00) is over, the rest of the day is open
@@ -982,6 +982,7 @@ describe('C. multi-location tenant', () => {
     let a1, a2, b1, c1, tokA, tokB;
     it('same-named services at two locations number independently and carry their own location', async () => {
       a1 = await walkIn(t, svc.dentA.id, D); b1 = await walkIn(t, svc.dentB.id, D); a2 = await walkIn(t, svc.dentA.id, D);
+      await at(`${D}T09:20:00Z`); // Minor Injuries is open 09:00-10:00; the SERVER clock decides (a client clockMinutes is ignored)
       c1 = await walkIn(t, svc.injC.id, D, { clockMinutes: 560 });
       for (const r of [a1, b1, a2, c1]) assert.equal(r.status, 200, r.text);
       assert.deepEqual([a1.json.ticket.ticket_number, a2.json.ticket.ticket_number, b1.json.ticket.ticket_number], ['DC-001', 'DC-002', 'DC-001']);
@@ -1008,6 +1009,7 @@ describe('C. multi-location tenant', () => {
       const cb = await callNext(staff.token, svc.dentB.id, D, { roomLabel: 'Room B' });
       assert.equal(cb.status, 200, cb.text); assert.equal(cb.json.ticket.id, b1.json.ticket.id);
       const cc = await callNext(staff.token, svc.injC.id, D, { roomLabel: 'Room C', clockMinutes: 560 });
+      assert.equal(cc.status, 200, cc.text);
       assert.equal(cc.json.ticket.id, c1.json.ticket.id);
       assert.equal((await callNext(staff.token, svc.dentB.id, D)).status, 404, 'B has nobody left');
       assert.equal((await callNext(staff.token, svc.hygA.id, D)).status, 404);
@@ -1249,16 +1251,17 @@ describe('E. security', () => {
       assert.equal((await get('/api/tenant/me', { headers: { authorization: good } })).status, 401, 'no "Bearer " prefix');
       assert.equal((await get('/api/tenant/me', { headers: { authorization: `bearer ${good}` } })).status, 401, 'scheme is case-sensitive here: documented');
     });
-    it('session lifetimes are bounded: system admin <= 12h, staff <= 12h, tenant admin <= 31 days (30d is long - noted in the report)', async () => {
+    it('session lifetimes are bounded: system admin <= 12h, staff <= 16h, tenant admin <= 12h', async () => {
       const sys = decodeJwt(await systemToken()); assert.ok(sys.exp - sys.iat <= 12 * 3600, `system ${sys.exp - sys.iat}s`);
-      const st = decodeJwt(staff.token); assert.ok(st.exp - st.iat <= 12 * 3600, `staff ${st.exp - st.iat}s`);
-      const ad = decodeJwt(t.token); assert.ok(ad.exp - ad.iat <= 31 * 86400, `admin ${ad.exp - ad.iat}s`);
+      // CHANGED: staff 16h (was 10h, bound 12h) and admin 12h (was 30 days), both configurable and slid forward while in use.
+      const st = decodeJwt(staff.token); assert.ok(st.exp - st.iat <= 16 * 3600, `staff ${st.exp - st.iat}s`);
+      const ad = decodeJwt(t.token); assert.ok(ad.exp - ad.iat <= 12 * 3600, `admin ${ad.exp - ad.iat}s`);
       for (const tok of [await systemToken(), staff.token, t.token]) assert.equal(JSON.parse(Buffer.from(tok.split('.')[0], 'base64url')).alg, 'HS256');
     });
     it('session tokens carry no secrets or PII (ids and role only)', () => {
       for (const tok of [t.token, staff.token]) {
         const c = decodeJwt(tok);
-        assert.deepEqual(Object.keys(c).filter((k) => !['role', 'tenantId', 'staffId', 'iat', 'exp'].includes(k)), []);
+        assert.deepEqual(Object.keys(c).filter((k) => !['role', 'tenantId', 'staffId', 'iat', 'exp', 'tv', 'at'].includes(k)), []);
       }
     });
     it('the server refuses to start without JWT_SECRET', async () => {
@@ -1304,7 +1307,7 @@ describe('E. security', () => {
     });
     it('the token view reveals only ticket details: no account, staff, e-mail, pricing or other-ticket data; never cached', async () => {
       const r = await pubTicket(tokens[1]);
-      assert.deepEqual(Object.keys(r.json).sort(), ['arrived', 'businessName', 'calledRoom', 'estimatedMinutes', 'locationName', 'peopleAhead', 'serviceName', 'slotTime', 'state', 'ticketNumber', 'type', 'updatedAt', 'whatsappUpdatesOffer', 'whatsappUpdatesRequested']);
+      assert.deepEqual(Object.keys(r.json).sort(), ['arrived', 'businessName', 'calledRoom', 'estimatedMinutes', 'locationName', 'peopleAhead', 'serviceName', 'slotTime', 'state', 'ticketNumber', 'timezone', 'type', 'updatedAt', 'whatsappUpdatesOffer', 'whatsappUpdatesRequested']);
       assert.match(r.headers.get('cache-control'), /no-store/);
       assert.doesNotMatch(r.text, new RegExp(`${t.id}|${t.email}|tenant_id|access_code`));
     });
@@ -1545,13 +1548,24 @@ describe('E. security', () => {
       }
       for (const f of walk(path.join(SERVER_DIR, 'src'), ['.js'])) assert.doesNotMatch(fs.readFileSync(f, 'utf8'), /\.redirect\(/, f);
     });
-    it('the server makes no outbound requests on behalf of users (SSRF): no fetch/http client; the only network call is an MX lookup of an e-mail domain', () => {
+    it('the server makes no outbound requests on behalf of users (SSRF): the only fetch() calls are the operator-configured email and WhatsApp providers (fixed URLs from env, never request data); the only other network call is an MX lookup', () => {
+      // CHANGED: real email/WhatsApp delivery adds fetch() in lib/email.js and lib/whatsapp.js. Their targets come from environment variables
+      // (RESEND_API_URL / WHATSAPP_API_URL), not from anything a visitor sends; nothing else may use a network client.
+      const allowed = new Set(['src/lib/email.js', 'src/lib/whatsapp.js']);
       const hits = [];
       for (const f of walk(path.join(SERVER_DIR, 'src'), ['.js'])) {
+        const rel = path.relative(SERVER_DIR, f);
         const src = fs.readFileSync(f, 'utf8');
-        for (const re of [/\bfetch\(/, /\baxios\b/, /http\.request|https\.request|http\.get|https\.get/, /require\(["']node-fetch/, /from ["']node-fetch/, /\bnet\.connect|\bnet\.Socket/]) if (re.test(src)) hits.push(`${path.relative(SERVER_DIR, f)}: ${re}`);
+        const fetchOk = allowed.has(rel);
+        for (const re of [/\bfetch\(/, /\baxios\b/, /http\.request|https\.request|http\.get|https\.get/, /require\(["']node-fetch/, /from ["']node-fetch/, /\bnet\.connect|\bnet\.Socket/]) {
+          if (re.test(src) && !(fetchOk && re.source === /\bfetch\(/.source)) hits.push(`${rel}: ${re}`);
+        }
       }
       assert.deepEqual(hits, []);
+      for (const rel of allowed) {
+        const src = fs.readFileSync(path.join(SERVER_DIR, rel), 'utf8');
+        assert.doesNotMatch(src, /req\.(body|query|params)/, `${rel} must not build a request target from request data`);
+      }
       const mail = fs.readFileSync(path.join(SERVER_DIR, 'src/lib/emailCheck.js'), 'utf8');
       assert.match(mail, /resolveMx/);
     });
@@ -1657,13 +1671,6 @@ describe('E. security', () => {
         fs.readFileSync(f, 'utf8').split('\n').forEach((ln, i) => { if (/console\.log\(/.test(ln)) hits.push(`${path.relative(SERVER_DIR, f)}:${i + 1} ${ln.trim().slice(0, 70)}`); });
       }
       for (const h of hits) assert.match(h, /listening on port|Found |Applying|Applied|All migrations/, h);
-    });
-    it('known accepted risks (reported, not asserted as passing)', { todo: 'see report' }, () => {
-      // 1. sign-in codes are returned in the HTTP response ("demoOtp") because e-mail delivery is simulated: anyone who knows an address can sign in.
-      // 2. /api/auth/admin/request-otp answers 404 for unknown addresses (account enumeration); sign-up reveals alreadyExists.
-      // 3. OTP codes and the simulated message log are stored in clear text.
-      // 4. /api/whatsapp/webhook is unauthenticated (stub) with open CORS.
-      assert.fail('production sign-in must not return the code and must not enumerate accounts');
     });
   });
 });

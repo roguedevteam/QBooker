@@ -95,6 +95,8 @@ button { cursor: pointer; }
   padding: 10px calc(16px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(16px + var(--safe-left));
 }
 
+.foot-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
 /* Bubbles */
 .msg { display: flex; max-width: 88%; min-width: 0; animation: pop 160ms ease-out; }
 .msg-bot { align-self: flex-start; }

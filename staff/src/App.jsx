@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api, setToken, hasToken, setAuthLostHandler } from "./lib/api.js";
-import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import { todayIso, isSimulatedToday, refreshClock, setDefaultTimezone } from "./lib/clock.js";
 import SignIn from "./SignIn.jsx";
 import Shift from "./Shift.jsx";
 
@@ -54,6 +54,7 @@ export default function App() {
     return () => setAuthLostHandler(null);
   }, []);
 
+  if (tenant?.default_timezone) setDefaultTimezone(tenant.default_timezone); // idempotent; the account's default zone for anything without a location of its own
   if (restoring) return <div className="container muted center-text" role="status">Loading…</div>;
 
   return (

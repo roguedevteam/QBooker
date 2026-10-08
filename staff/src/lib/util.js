@@ -1,7 +1,10 @@
 // Small shared helpers for the staff kiosk.
-export { nowMinutes } from "./clock.js"; // London wall-clock minutes (the clinic's time, whatever the device says)
-export function formatClock(iso) {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+import { getDefaultTimezone } from "./clock.js";
+export { nowMinutes } from "./clock.js"; // wall-clock minutes in a location's time zone (the clinic's time, whatever the device says)
+// A time of day in the location's zone (browser locale: 24-hour in the UK).
+export function formatClock(iso, tz) {
+  const opts = { hour: "2-digit", minute: "2-digit", timeZone: tz || getDefaultTimezone() };
+  try { return new Date(iso).toLocaleTimeString(undefined, opts); } catch { return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
 }
 export function formatTime(min) {
   let h = Math.floor(min / 60);

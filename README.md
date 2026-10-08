@@ -6,14 +6,14 @@ One backend, five frontends — one URL per audience:
 |---|---|---|---|
 | `/server` | — (the API, talks to the database) | 4000 | — |
 | `/marketing` | Public visitors | 5175 | none |
-| `/customer-admin` | The business owner / their team | 5173 | Email + OTP, persistent (30 days) |
-| `/staff` | Front-of-house staff | 5176 | Access code + OTP, persistent (10h shift) |
+| `/customer-admin` | The business owner / their team | 5173 | Email + OTP, 12 h session that renews while in use |
+| `/staff` | Front-of-house staff | 5176 | Email + OTP, 16 h session that renews while in use |
 | `/customer` | End customers (the WhatsApp simulator) | 5177 | **none** — public link, `?t=<businessId>` |
 | `/admin` | QBooker's own platform team (System Admin) | 5174 | Password, not linked from anywhere else |
 
-Supabase is used purely as the Postgres database — not Supabase Auth. All sign-in codes are
-simulated (shown on screen, logged to `simulated_messages`) rather than emailed for real, so the
-Express API enforces access itself.
+Supabase is used purely as the Postgres database — not Supabase Auth. Sign-in codes are emailed
+(Resend; see `docs/EMAIL_AND_SECURITY_SETUP.md`) and stored hashed; the Express API enforces access itself.
+With `DEMO_MODE=true` (never in production) the "log" email provider returns the code on screen instead.
 
 ## How the apps find each other
 

@@ -192,7 +192,7 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
   const booked = data.type === "booked";
   const ahead = data.peopleAhead;
   const mins = data.estimatedMinutes;
-  const minsToGo = booked && typeof data.slotTime === "number" ? data.slotTime - nowMinutes() : null;
+  const minsToGo = booked && typeof data.slotTime === "number" ? data.slotTime - nowMinutes(data.timezone) : null;
   const soon = minsToGo != null && minsToGo > 0 && minsToGo <= 15;
   const subtitle = called ? "It's your turn" : booked ? "Your appointment" : "You're in the queue";
   const waNotedNow = data.whatsappUpdatesRequested || waNoted;

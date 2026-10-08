@@ -3,3 +3,16 @@ node_modules/
 dist/
 .DS_Store
 __pycache__/
+.env.*
+!.env.example
+*.env
+*.log
+# e2e / load-test output (these write to /tmp by default; ignore if redirected into the repo)
+e2e/out/
+e2e/shots/
+e2e/report.*
+loadtest/out/
+loadtest/*.log
+loadtest/*.json
+# local scratch copies of env files
+envs*/

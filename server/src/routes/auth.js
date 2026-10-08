@@ -1,14 +1,17 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { query, pool } from "../db/pool.js";
-import { signSession } from "../lib/auth.js";
-import { genOtp, genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
+import { signSession, issueTenantSession, requireAuth } from "../lib/auth.js";
+import { genOtp, genAccessCode } from "../lib/simulate.js";
+import { sendTemplatedEmail, emailStatus, demoOtpAllowed, createLatencyMirror, EmailError, SEND_FAILED_MESSAGE, NOT_CONFIGURED_MESSAGE } from "../lib/email.js";
+import { hashOtp, otpMatches, otpTtlMinutes } from "../lib/otp.js";
+import { resolveLang } from "../lib/i18n.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import { domainAcceptsMail } from "../lib/emailCheck.js";
 import { countryForIp } from "../lib/geo.js";
 import { sanitizeTenant } from "../lib/tenantView.js";
-import { rateLimit, failureLimit } from "../lib/rateLimit.js";
+import { rateLimit, failureLimit, refundRateLimits } from "../lib/rateLimit.js";
 import { badRequest, reqString, optString, reqEmail, optEnum, optInt } from "../lib/validate.js";
 
 const router = Router();
@@ -17,10 +20,16 @@ const router = Router();
 // Each wrong guess burns one of an OTP's attempts, so the real brake on guessing is limiting how
 // many fresh codes can be requested: per address, and per connection.
 const OTP_WINDOW_MS = 10 * 60 * 1000;
-const emailKey = (req) => (typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase().slice(0, 254) : "-");
+// A body with no usable email isn't charged to one shared bucket (that would let junk requests lock everyone out); it counts against the connection.
+const emailKey = (req) => (typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase().slice(0, 254) : `ip:${req.ip}`);
 const otpRequestLimits = [
   rateLimit({ windowMs: OTP_WINDOW_MS, max: 12, message: "Too many sign-in code requests from this connection. Please wait a few minutes and try again." }),
   rateLimit({ windowMs: OTP_WINDOW_MS, max: 10, keyFn: emailKey, message: "Too many sign-in codes requested for this address. Please wait a few minutes and try again." }),
+];
+// Sign-up emails the address owner too (a code, or "you already have an account"), so it is throttled the same way.
+const signupLimits = [
+  rateLimit({ windowMs: OTP_WINDOW_MS, max: Number(process.env.SIGNUP_IP_MAX) > 0 ? Number(process.env.SIGNUP_IP_MAX) : 30, message: "Too many sign-up attempts from this connection. Please wait a few minutes and try again." }),
+  rateLimit({ windowMs: OTP_WINDOW_MS, max: 10, keyFn: emailKey, message: "Too many sign-up attempts for this address. Please wait a few minutes and try again." }),
 ];
 const MAX_OTP_ATTEMPTS = 5;
 
@@ -30,19 +39,60 @@ function reqEmailLoose(v) {
   return email;
 }
 
-// Issues an admin sign-in code for a tenant and logs the (simulated) email.
-async function issueAdminOtp(tenant, email) {
+// --- Email delivery plumbing ----------------------------------------------------------------------------------
+// Nothing can be signed in if no code can be delivered, and handing codes out in the HTTP response instead is exactly the
+// hole we must not open. So when email isn't configured these endpoints refuse (503) before doing any work or using any throttle budget.
+function requireEmailReady(req, res, next) {
+  if (emailStatus().ready) return next();
+  res.set("Retry-After", "60");
+  return res.status(503).json({ error: NOT_CONFIGURED_MESSAGE });
+}
+const langOf = (req) => resolveLang(typeof req.body?.lang === "string" ? req.body.lang : req.headers["accept-language"]);
+// "We couldn't send it": 503, and the attempt doesn't count against the caller's throttles.
+function sendFailed(req, res) {
+  refundRateLimits(req);
+  res.set("Retry-After", "10");
+  return res.status(503).json({ error: SEND_FAILED_MESSAGE });
+}
+const demoFields = (code) => (code && demoOtpAllowed() ? { demoOtp: code } : {});
+// Known and unknown addresses must take about the same time: the unknown path sleeps for the recent average of the known one.
+const adminMirror = createLatencyMirror();
+const staffMirror = createLatencyMirror();
+const signupMirror = createLatencyMirror();
+
+// Issues an admin sign-in code (stored hashed; any earlier unused code is cancelled) and emails it. Returns the code.
+async function issueAdminOtp(tenant, email, { lang, template = "otp" } = {}) {
   const code = genOtp();
-  await query(`insert into admin_otp (tenant_id, code, expires_at) values ($1,$2, now() + interval '10 minutes')`, [tenant.id, code]);
-  await logSimulatedMessage({ tenantId: tenant.id, channel: "email", toReference: email, body: `Your QBooker admin sign-in code is ${code}.` });
+  await query(
+    `with cancelled as (update admin_otp set consumed=true where tenant_id=$1 and consumed=false)
+     insert into admin_otp (tenant_id, code, expires_at) values ($1,$2, now() + make_interval(mins => $3))`,
+    [tenant.id, hashOtp("admin", tenant.id, code), otpTtlMinutes()]
+  );
+  await sendTemplatedEmail({ to: email, template, lang, code, minutes: otpTtlMinutes(), tenantId: tenant.id });
   return code;
+}
+const sendDisabledNotice = (tenant, email, lang) => sendTemplatedEmail({ to: email, template: "disabled", lang, tenantId: tenant.id });
+
+// Signup with an address that already has an account (see the comment where it is called).
+async function answerExistingSignup(req, res, tenant, email, businessName, lang) {
+  await signupMirror.mimic();
+  let code = null;
+  try {
+    if (tenant.status === "disabled") await sendDisabledNotice(tenant, tenant.email, lang);
+    else code = await issueAdminOtp(tenant, tenant.email, { lang, template: "exists" });
+  } catch (err) {
+    if (err instanceof EmailError) return sendFailed(req, res);
+    throw err;
+  }
+  return res.json({ ok: true, email, businessName, ...(demoOtpAllowed() ? { alreadyExists: true, businessName: tenant.business_name, ...demoFields(code) } : {}) });
 }
 
 // --- Signup ---------------------------------------------------------------
 // Four steps on the client: account details -> free locations -> services (each assigned
 // to a location, with its own license) -> payment. Locations cost nothing and don't limit
 // anything; what's bought here is one license per service.
-router.post("/signup", asyncHandler(async (req, res) => {
+router.post("/signup", requireEmailReady, ...signupLimits, asyncHandler(async (req, res) => {
+  const lang = langOf(req);
   const businessName = reqString(req.body.businessName, "Business name");
   const firstName = reqString(req.body.firstName, "First name", { max: 100 });
   const lastName = reqString(req.body.lastName, "Last name", { max: 100 });
@@ -83,17 +133,11 @@ router.post("/signup", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "That email address doesn't look like it can receive mail — check for a typo." });
   }
 
-  // One email = one account. If it already exists, don't create a duplicate — just send
-  // them straight back to sign in, same as if they'd used the admin login screen directly.
+  // One email = one account. If it already exists, don't create a duplicate - and don't say so on screen either (that would let
+  // anyone find out who has an account). The visitor gets the same "check your email" answer as a new customer; the owner of the
+  // address gets an email saying an account already exists, with a code to sign in. A switched-off account just gets a notice.
   const existing = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
-  if (existing.rows.length > 0) {
-    const tenant = existing.rows[0];
-    if (tenant.status === "disabled") {
-      return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
-    }
-    const code = await issueAdminOtp(tenant, email);
-    return res.json({ alreadyExists: true, demoOtp: code, businessName: tenant.business_name });
-  }
+  if (existing.rows.length > 0) return answerExistingSignup(req, res, existing.rows[0], email, businessName, lang);
 
   // Every new account gets one free 2-day trial license, no card needed. It's issued as an
   // ordinary Available license (movable between services), so the admin picks the two days.
@@ -105,11 +149,12 @@ router.post("/signup", asyncHandler(async (req, res) => {
     client = await pool.connect();
     await client.query("BEGIN");
 
+    const createStarted = Date.now();
     const accessCode = genAccessCode();
     // Trial accounts are fully active. Buying further licenses needs payment details first.
     const paymentMethod = "card"; // nothing is charged or stored at signup; payment is chosen when buying a license
     const status = "active";
-    const signupCountry = countryForIp(req.ip);
+    const signupCountry = await countryForIp(req.ip);
     const tenantResult = await client.query(
       `insert into tenants
         (business_name, email, location_count, access_code, payment_method, status, invoice_email, invoice_po,
@@ -160,11 +205,15 @@ router.post("/signup", asyncHandler(async (req, res) => {
     );
 
     await client.query("COMMIT");
+    signupMirror.record(Date.now() - createStarted);
 
-    // Immediately issue an admin OTP so the frontend can go straight to verification, same as the prototype's flow.
-    const code = await issueAdminOtp(tenant, email);
+    // Email the first sign-in code. If that fails the account still exists; signing up again with the same address
+    // takes the "already exists" path below and sends a fresh code.
+    let code;
+    try { code = await issueAdminOtp(tenant, email, { lang, template: "signup" }); }
+    catch (err) { if (err instanceof EmailError) return sendFailed(req, res); throw err; }
 
-    res.json({ tenant: sanitizeTenant(tenant), demoOtp: code });
+    res.json({ ok: true, email, businessName, ...(demoOtpAllowed() ? { tenant: sanitizeTenant(tenant), demoOtp: code } : {}) });
   } catch (err) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     // Deliberate 400s thrown inside the transaction pass straight through.
@@ -172,10 +221,7 @@ router.post("/signup", asyncHandler(async (req, res) => {
     // A simultaneous signup with the same address won the race: behave as the "already exists" path.
     if (err.code === "23505" && /idx_tenants_email_unique/.test(err.constraint || "")) {
       const tenant = (await query(`select * from tenants where lower(email) = lower($1)`, [email])).rows[0];
-      if (tenant && tenant.status !== "disabled") {
-        const code = await issueAdminOtp(tenant, email);
-        return res.json({ alreadyExists: true, demoOtp: code, businessName: tenant.business_name });
-      }
+      if (tenant) return answerExistingSignup(req, res, tenant, email, businessName, lang);
     }
     console.error(err);
     res.status(500).json({ error: "Signup failed — check the server's DATABASE_URL and Supabase connection." });
@@ -185,86 +231,124 @@ router.post("/signup", asyncHandler(async (req, res) => {
 }));
 
 // --- Tenant admin OTP login -------------------------------------------------
-router.post("/admin/request-otp", ...otpRequestLimits, asyncHandler(async (req, res) => {
+// request-otp answers every address the same way (200 { ok: true }): it never says whether an account exists. The code, or a
+// notice that the account is switched off, goes to the address's owner by email.
+const GENERIC_BAD_CODE = "Incorrect or expired code.";
+router.post("/admin/request-otp", requireEmailReady, ...otpRequestLimits, asyncHandler(async (req, res) => {
   const email = reqEmailLoose(req.body.email);
-  const result = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
-  if (result.rows.length === 0) return res.status(404).json({ error: "No account found with that email." });
-  const tenant = result.rows[0];
-  if (tenant.status === "disabled") {
-    return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+  const lang = langOf(req);
+  const tenant = (await query(`select * from tenants where lower(email) = lower($1)`, [email])).rows[0];
+  if (!tenant) {
+    await adminMirror.mimic();
+    return res.json({ ok: true });
   }
-  const code = await issueAdminOtp(tenant, email);
-  res.json({ demoOtp: code });
+  try {
+    // Always mail the address on file (not the spelling the visitor typed).
+    const code = await adminMirror.track(async () => (tenant.status === "disabled" ? (await sendDisabledNotice(tenant, tenant.email, lang), null) : issueAdminOtp(tenant, tenant.email, { lang })));
+    res.json({ ok: true, ...demoFields(code) });
+  } catch (err) {
+    if (err instanceof EmailError) return sendFailed(req, res);
+    throw err;
+  }
 }));
 
 router.post("/admin/verify-otp", asyncHandler(async (req, res) => {
   const email = reqEmailLoose(req.body.email);
   const code = typeof req.body.code === "string" ? req.body.code.trim().slice(0, 20) : "";
-  const tenantResult = await query(`select * from tenants where lower(email) = lower($1)`, [email]);
-  if (tenantResult.rows.length === 0) return res.status(404).json({ error: "No account found with that email." });
-  const tenant = tenantResult.rows[0];
-  if (tenant.status === "disabled") {
-    return res.status(403).json({ error: "This account has been disabled — contact us to unlock it." });
+  const tenant = (await query(`select * from tenants where lower(email) = lower($1)`, [email])).rows[0];
+  // Unknown address and switched-off account both look like a wrong code (and cost a similar amount of work).
+  if (!tenant || tenant.status === "disabled") {
+    otpMatches("0", "admin", "0", code);
+    return res.status(401).json({ error: GENERIC_BAD_CODE });
   }
-  // Any unused, unexpired code that was emailed to this owner works (e.g. the one shown at sign-up
-  // as well as a later "send login code"), but every wrong guess burns an attempt on all of them,
-  // and a code that has used its attempts is dead. New codes are throttled (see otpRequestLimits).
+  // Any unused, unexpired code that was emailed to this owner works, but every wrong guess burns an attempt on all of them,
+  // and a code that has used its attempts is dead. New codes are throttled (see otpRequestLimits) and cancel older ones.
   const active = (await query(
     `select * from admin_otp where tenant_id=$1 and consumed=false and expires_at > now() order by created_at desc`,
     [tenant.id]
   )).rows;
-  const latest = active.find((o) => o.attempts < MAX_OTP_ATTEMPTS && o.code === code);
+  const matches = active.map((o) => o.attempts < MAX_OTP_ATTEMPTS && otpMatches(o.code, "admin", tenant.id, code));
+  const latest = active.find((o, i) => matches[i]);
   if (!latest) {
     if (active.length) await query(`update admin_otp set attempts = attempts + 1 where id = any($1::uuid[])`, [active.map((o) => o.id)]);
-    return res.status(401).json({ error: "Incorrect or expired code." });
+    return res.status(401).json({ error: GENERIC_BAD_CODE });
   }
   const used = await query(`update admin_otp set consumed=true where id=$1 and consumed=false returning id`, [latest.id]);
-  if (!used.rows[0]) return res.status(401).json({ error: "Incorrect or expired code." });
-  const token = signSession({ role: "tenant_admin", tenantId: tenant.id }, "30d");
+  if (!used.rows[0]) return res.status(401).json({ error: GENERIC_BAD_CODE });
+  const token = issueTenantSession({ role: "tenant_admin", tenantId: tenant.id, tokenVersion: tenant.token_version });
   res.json({ token, tenant: sanitizeTenant(tenant) });
 }));
 
 // --- Staff login: email + emailed code (staff are named users on the customer's staff list) ---
-router.post("/staff/request-otp", ...otpRequestLimits, asyncHandler(async (req, res) => {
+// Same answer for a listed, an unlisted, a switched-off or a disabled-business address: 200 { ok: true }.
+router.post("/staff/request-otp", requireEmailReady, ...otpRequestLimits, asyncHandler(async (req, res) => {
   const email = optString(req.body.email, "email", { max: 254, allowEmpty: true }) || "";
+  const lang = langOf(req);
   const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
-  if (staff && staff.active) {
-    const tenant = (await query(`select status from tenants where id=$1`, [staff.tenant_id])).rows[0];
-    if (tenant?.status === "disabled") {
-      return res.status(403).json({ error: "This account has been disabled — contact your manager." });
-    }
-    const code = genOtp();
-    await query(`insert into staff_otp (tenant_id, staff_id, code, expires_at) values ($1,$2,$3, now() + interval '10 minutes')`, [staff.tenant_id, staff.id, code]);
-    const body = `Your QBooker staff sign-in code is ${code}.`;
-    await logSimulatedMessage({ tenantId: staff.tenant_id, channel: "email", toReference: staff.email, body });
-    // Demo only: real email delivery isn't wired up yet, so the code is returned for testing.
-    return res.json({ ok: true, demoOtp: code });
+  const tenant = staff && staff.active ? (await query(`select status from tenants where id=$1`, [staff.tenant_id])).rows[0] : null;
+  if (!staff || !staff.active || !tenant || tenant.status === "disabled") {
+    await staffMirror.mimic();
+    return res.json({ ok: true });
   }
-  // Same response whether or not the address is registered, so it can't be used to find out who is.
-  res.json({ ok: true });
+  try {
+    const code = await staffMirror.track(async () => {
+      const c = genOtp();
+      await query(
+        `with cancelled as (update staff_otp set consumed=true where staff_id=$2 and consumed=false)
+         insert into staff_otp (tenant_id, staff_id, code, expires_at) values ($1,$2,$3, now() + make_interval(mins => $4))`,
+        [staff.tenant_id, staff.id, hashOtp("staff", staff.id, c), otpTtlMinutes()]
+      );
+      await sendTemplatedEmail({ to: staff.email, template: "otp", lang, code: c, minutes: otpTtlMinutes(), tenantId: staff.tenant_id });
+      return c;
+    });
+    res.json({ ok: true, ...demoFields(code) });
+  } catch (err) {
+    if (err instanceof EmailError) return sendFailed(req, res);
+    throw err;
+  }
 }));
 
 router.post("/staff/verify-otp", asyncHandler(async (req, res) => {
   const email = optString(req.body.email, "email", { max: 254, allowEmpty: true }) || "";
   const code = optString(req.body.code, "code", { max: 20, allowEmpty: true }) || "";
-  const bad = () => res.status(401).json({ error: "Incorrect or expired code." });
+  const bad = () => res.status(401).json({ error: GENERIC_BAD_CODE });
   const staff = email ? (await query(`select * from staff_members where lower(email)=lower($1)`, [email])).rows[0] : null;
-  if (!staff || !staff.active) return bad();
-  const tenant = (await query(`select * from tenants where id=$1`, [staff.tenant_id])).rows[0];
-  if (tenant.status === "disabled") {
-    return res.status(403).json({ error: "This account has been disabled — contact your manager." });
-  }
+  const tenant = staff && staff.active ? (await query(`select * from tenants where id=$1`, [staff.tenant_id])).rows[0] : null;
+  if (!staff || !staff.active || !tenant || tenant.status === "disabled") { otpMatches("0", "staff", "0", code); return bad(); }
   const latest = (await query(
     `select * from staff_otp where staff_id=$1 and consumed=false and expires_at > now() order by created_at desc limit 1`, [staff.id]
   )).rows[0];
-  if (!latest || latest.attempts >= MAX_OTP_ATTEMPTS) return res.status(401).json({ error: "Incorrect or expired code — request a new one." });
-  if (latest.code !== code) {
+  if (!latest || latest.attempts >= MAX_OTP_ATTEMPTS) { otpMatches("0", "staff", "0", code); return res.status(401).json({ error: "Incorrect or expired code — request a new one." }); }
+  if (!otpMatches(latest.code, "staff", staff.id, code)) {
     await query(`update staff_otp set attempts = attempts + 1 where id=$1`, [latest.id]);
     return bad();
   }
-  await query(`update staff_otp set consumed=true where id=$1`, [latest.id]);
-  const token = signSession({ role: "staff", tenantId: tenant.id, staffId: staff.id }, "10h");
+  const used = await query(`update staff_otp set consumed=true where id=$1 and consumed=false returning id`, [latest.id]);
+  if (!used.rows[0]) return bad();
+  const token = issueTenantSession({ role: "staff", tenantId: tenant.id, staffId: staff.id, tokenVersion: staff.token_version });
   res.json({ token, tenant: sanitizeTenant(tenant, "staff"), staff: { id: staff.id, firstName: staff.first_name, lastName: staff.last_name } });
+}));
+
+// --- Sign out everywhere ---------------------------------------------------------------------------------------
+// Session tokens carry the account's token_version; bumping it refuses every token issued before. An admin ends all their
+// own sessions (optionally every staff member's too); a staff member ends their own; an admin can end one staff member's.
+router.post("/sign-out-everywhere", requireAuth("tenant_admin", "staff"), asyncHandler(async (req, res) => {
+  const { role, tenantId, staffId } = req.auth;
+  if (role === "tenant_admin") {
+    await query(`update tenants set token_version = token_version + 1 where id=$1`, [tenantId]);
+    if (req.body.includeStaff === true) await query(`update staff_members set token_version = token_version + 1 where tenant_id=$1`, [tenantId]);
+    await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [tenantId, req.body.includeStaff === true ? "Signed out of all admin and staff sessions" : "Signed out of all admin sessions"]);
+  } else {
+    await query(`update staff_members set token_version = token_version + 1 where id=$1 and tenant_id=$2`, [staffId, tenantId]);
+  }
+  res.json({ ok: true });
+}));
+
+router.post("/staff/:id/sign-out", requireAuth("tenant_admin"), asyncHandler(async (req, res) => {
+  const r = await query(`update staff_members set token_version = token_version + 1 where id=$1 and tenant_id=$2 returning first_name, last_name`, [req.params.id, req.auth.tenantId]);
+  if (!r.rows[0]) return res.status(404).json({ error: "Staff member not found." });
+  await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.auth.tenantId, `Signed ${r.rows[0].first_name} ${r.rows[0].last_name} out of all sessions`]);
+  res.json({ ok: true });
 }));
 
 // --- System admin login (real password, not simulated) -----------------------

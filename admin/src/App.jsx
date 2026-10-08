@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { priceText, exMoney as gbp } from "./lib/vat.js";
+import { priceText, exMoney as gbp, moneyTick, vatLabel, vatPercent, getBilling, setBilling, currencySymbol } from "./lib/money.js";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import { api, setToken, hasToken, onSessionEnded } from "./lib/api.js";
 
@@ -213,6 +213,7 @@ function Dashboard({ setError, error, onSignOut }) {
     try {
       const [t, p, o] = await Promise.all([api.getTenants(), api.getPricing(), api.getReportsOverview()]);
       setTenants(t.tenants);
+      setBilling(p.billing);
       setPricing(p.pricing);
       setOverview(o);
     } catch (err) {
@@ -303,9 +304,10 @@ function Dashboard({ setError, error, onSignOut }) {
           {tab === "dashboard" && !overview && !error && <div className="card muted">Loading…</div>}
           {tab === "dashboard" && overview && (
             <div className="stack" style={{ gap: 16 }}>
+              <p className="muted small" style={{ margin: 0 }}>Revenue is in {getBilling().currency}. Dates and revenue periods in these reports are UTC, whatever time zone a customer's clinics are in.</p>
               <section className="stat-grid" aria-label="Key figures">
-                <div className="stat"><div className="stat-num">{gbp(overview.totalRevenue)}</div><div className="stat-label">Revenue, ex VAT (active)</div></div>
-                <div className="stat"><div className="stat-num warn">{gbp(overview.pendingRevenue)}</div><div className="stat-label">Pending invoices, ex VAT</div></div>
+                <div className="stat"><div className="stat-num">{gbp(overview.totalRevenue)}</div><div className="stat-label">Revenue, ex {vatLabel()} (active)</div></div>
+                <div className="stat"><div className="stat-num warn">{gbp(overview.pendingRevenue)}</div><div className="stat-label">Pending invoices, ex {vatLabel()}</div></div>
                 <div className="stat"><div className="stat-num">{overview.customerCount}</div><div className="stat-label">Customers</div></div>
                 <div className="stat"><div className="stat-num">{overview.totalLocations}</div><div className="stat-label">Locations, all customers</div></div>
               </section>
@@ -320,13 +322,13 @@ function Dashboard({ setError, error, onSignOut }) {
               )}
 
               <section className="card stack" aria-labelledby="rev-plan">
-                <h2 id="rev-plan">Revenue by plan type, ex VAT (active customers)</h2>
+                <h2 id="rev-plan">Revenue by plan type, ex {vatLabel()} (active customers)</h2>
                 {chartData.length > 0 ? (
                   <div className="chart-wrap" style={{ height: Math.max(160, chartData.length * 56 + 30) }} role="img" aria-label={`Revenue by plan: ${chartData.map((d) => `${d.name} ${gbp(d.Revenue)}`).join(", ")}`}>
                     <ResponsiveContainer>
                       <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E1E1DB" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 13 }} tickFormatter={(v) => `£${v}`} />
+                        <XAxis type="number" tick={{ fontSize: 13 }} tickFormatter={moneyTick} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 14 }} width={64} />
                         <Tooltip formatter={(v) => gbp(v)} cursor={{ fill: "#EEEEE9" }} />
                         <Bar dataKey="Revenue" fill="#1D5C8A" radius={[0, 0, 0, 0]}>
@@ -342,7 +344,7 @@ function Dashboard({ setError, error, onSignOut }) {
 
               {overview.deletedCustomerCount > 0 && (
                 <div className="muted small">
-                  Includes {gbp(overview.deletedRevenue)} (ex VAT) from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
+                  Includes {gbp(overview.deletedRevenue)} (ex {vatLabel()}) from {overview.deletedCustomerCount} deleted customer{overview.deletedCustomerCount === 1 ? "" : "s"} — retained as an anonymised revenue record (no name/email/address) when their account was deleted.
                 </div>
               )}
             </div>
@@ -427,7 +429,7 @@ function Dashboard({ setError, error, onSignOut }) {
 
                   <div className="table-card show-wide">
                     <table>
-                      <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>Licence spend, ex VAT</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                      <thead><tr><th>Business</th><th>Email</th><th>Country</th><th>Services</th><th>Locations</th><th>Licence spend, ex {vatLabel()}</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
                       <tbody>
                         {filteredTenants.map((t) => (
                           <tr key={t.id}>
@@ -495,6 +497,10 @@ function parseAmount(text, label, { blankOk = false } = {}) {
 }
 
 function PricingPanel({ pricing, onSaved, setError }) {
+  const billing = getBilling();
+  const [bCurrency, setBCurrency] = useState(billing.currency);
+  const [bRate, setBRate] = useState(String(vatPercent()));
+  const [bLabel, setBLabel] = useState(billing.vatLabel);
   const [prices, setPrices] = useState(() => ({ day: toBox(pricing.day), week: toBox(pricing.week), month: toBox(pricing.month), year: toBox(pricing.year), customDailyRate: toBox(pricing.customDailyRate) }));
   const [saleActive, setSaleActive] = useState(!!pricing.sale?.active);
   const [salePrices, setSalePrices] = useState(() => Object.fromEntries(PLAN_KEYS.map((k) => [k, toBox(pricing.sale?.[k])])));
@@ -509,12 +515,17 @@ function PricingPanel({ pricing, onSaved, setError }) {
       if (which === "prices") {
         body = { customDailyRate: parseAmount(prices.customDailyRate, "Custom (per location/day)") };
         for (const k of PLAN_KEYS) body[k] = parseAmount(prices[k], `${PLAN_LABELS[k]} (per location)`);
+      } else if (which === "billing") {
+        const pct = Number(bRate);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error("The tax rate must be between 0 and 100.");
+        body = { billing: { currency: bCurrency.trim().toUpperCase(), vatRate: Math.round(pct * 100) / 10000, vatLabel: bLabel.trim() } };
       } else {
         const sale = { active: saleActive };
         for (const k of PLAN_KEYS) sale[k] = parseAmount(salePrices[k], `${PLAN_LABELS[k]} sale price`, { blankOk: true });
         body = { sale };
       }
-      await api.putPricing(body);
+      const res = await api.putPricing(body);
+      if (res?.billing) setBilling(res.billing);
       setSaved(which);
       await onSaved();
     } catch (err) {
@@ -526,7 +537,7 @@ function PricingPanel({ pricing, onSaved, setError }) {
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <p className="muted small" style={{ margin: 0 }}>Enter prices without VAT. Customers see the VAT-inclusive amount (20%) in brackets.</p>
+      <p className="muted small" style={{ margin: 0 }}>Enter prices without {vatLabel()}. Customers see the {vatLabel()}-inclusive amount ({vatPercent()}%) in brackets.</p>
       <section className="card stack" aria-labelledby="plan-prices">
         <h2 id="plan-prices">Plan prices</h2>
         <div className="price-grid">
@@ -548,6 +559,29 @@ function PricingPanel({ pricing, onSaved, setError }) {
           {saved === "prices" && <span role="status" className="muted small">Saved — new sign-ups pay these prices now.</span>}
         </div>
         <div className="field-hint">Applies to new sign-ups immediately. Existing customers keep the price they signed up at.</div>
+      </section>
+
+      <section className="card stack" aria-labelledby="billing-h">
+        <h2 id="billing-h">Currency and tax</h2>
+        <div className="price-grid">
+          <label className="field">
+            <span className="field-label">Pricing currency (ISO code)</span>
+            <input className="input" maxLength={3} value={bCurrency} onChange={(e) => { setSaved(""); setBCurrency(e.target.value); }} />
+          </label>
+          <label className="field">
+            <span className="field-label">Tax rate (%)</span>
+            <input className="input" type="number" min={0} max={100} step="0.1" inputMode="decimal" value={bRate} onChange={(e) => { setSaved(""); setBRate(e.target.value); }} />
+          </label>
+          <label className="field">
+            <span className="field-label">Tax name</span>
+            <input className="input" maxLength={20} value={bLabel} onChange={(e) => { setSaved(""); setBLabel(e.target.value); }} />
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="btn" disabled={!!saving} onClick={() => save("billing")}>{saving === "billing" ? "Saving…" : "Save currency and tax"}</button>
+          {saved === "billing" && <span role="status" className="muted small">Saved.</span>}
+        </div>
+        <div className="field-hint">Only how prices are shown changes. Amounts already stored, prices and billing are not converted or recalculated. Default: GBP, 20%, VAT.</div>
       </section>
 
       <section className="card stack" aria-labelledby="sale-h">
@@ -697,7 +731,7 @@ function AddAnnualLicense({ tenantId, service, onAdded, setError }) {
   return (
     <div className="inline-form" role="group" aria-label={`Add annual license on ${service.name}`}>
       <label className="field">
-        <span className="field-label">Agreed price £ (ex VAT)</span>
+        <span className="field-label">Agreed price {currencySymbol()} (ex {vatLabel()})</span>
         <input className="input" type="number" min={1} inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
       </label>
       <div className="form-actions">

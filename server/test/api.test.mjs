@@ -9,6 +9,11 @@
 //       SERVER_LOG      (default /tmp/pgtest/server.log) - scanned for 'Error' lines at the end.
 //       QB_TEST_CLEANUP=1  delete every tenant this run created via the system API (off by default).
 //
+// THE CLOCK. The server reads the time itself (in the time zone of the service's location) and ignores any clockMinutes /
+// nowMinutes a client sends, so tests that depend on the time of day move the server's TEST CLOCK (POST /api/system/test-now,
+// which exists only when the API runs with NODE_ENV=test). The suite starts it at 00:00 London on today's date (it then runs on in real time, so
+// created_at ordering still works) and `setClock` / `atMinutes` move it; it is released at the end. Run this suite against an API started with NODE_ENV=test.
+//
 // Conventions: everything created is prefixed `api-test-`. The suite never deletes other tenants and never
 // touches the simulated clock. Every request carries a random X-Forwarded-For so the in-memory per-IP rate
 // limiter / per-IP ticket cap used by other concurrent clients is not consumed (the server trusts one proxy hop, so a single X-Forwarded-For entry is taken as the client address).
@@ -78,6 +83,29 @@ function decodeJwt(t) { return JSON.parse(Buffer.from(t.split('.')[1], 'base64ur
 function addDays(dateStr, n) { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 async function today() { return (await get('/api/public/clock')).json.today; }
 
+// --- the server's test clock (see the header) ---
+const londonParts = (ms) => Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+function londonInstant(date, minutes) {
+  const guess = Date.parse(`${date}T00:00:00Z`) + minutes * 60000;
+  const p = londonParts(guess);
+  const offset = (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(guess / 1000) * 1000) / 60000;
+  return new Date(guess - offset * 60000).toISOString();
+}
+const DEFAULT_MINUTES = 0;
+let CLOCK_DATE = null; // the London date the clock is frozen on
+let CLOCK_OK = false;
+async function setClock(minutes) {
+  if (!CLOCK_OK) return;
+  const r = await post('/api/system/test-now', { now: londonInstant(CLOCK_DATE, minutes) }, { token: await systemToken() });
+  assert.equal(r.status, 200, `could not move the server's test clock: ${r.text}`);
+}
+// Runs fn with the server clock at `minutes` past London midnight, then puts it back at the default. (undefined = leave it.)
+async function atMinutes(minutes, fn) {
+  if (minutes === undefined || minutes === null || Number.isNaN(Number(minutes)) || !CLOCK_OK) return fn();
+  await setClock(Number(minutes));
+  try { return await fn(); } finally { await setClock(DEFAULT_MINUTES); }
+}
+
 // Runs fn over every case, collecting failures so one test reports every offending input.
 async function forAll(cases, fn) {
   const bad = [];
@@ -108,6 +136,15 @@ const needsSignup = { skip: dnsDown ? 'signup blocked: no DNS/MX in this environ
 if (dnsDown) console.log('# NOTE: signup is blocked by the MX check (no DNS) - seeding tenants via psql, signup-success tests skipped');
 const q = (v) => `'${String(v).replace(/'/g, "''")}'`;
 const code6 = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[ri(32)]).join('');
+
+// Start the server's clock at 00:00 on today's London date for the run (skipped, with a note, if this API has no test clock).
+{
+  CLOCK_DATE = londonParts(Date.now()); CLOCK_DATE = `${CLOCK_DATE.year}-${CLOCK_DATE.month}-${CLOCK_DATE.day}`;
+  const tok = (await post('/api/auth/system/login', { password: SYSTEM_PASSWORD })).json?.token;
+  const r = tok ? await post('/api/system/test-now', { now: londonInstant(CLOCK_DATE, DEFAULT_MINUTES) }, { token: tok }) : { status: 0 };
+  CLOCK_OK = r.status === 200;
+  if (!CLOCK_OK) console.log('# NOTE: this API has no test clock (needs NODE_ENV=test): time-of-day tests will use the real clock and may fail');
+}
 
 function seedTenant(body) {
   const tid = sql(`insert into tenants (business_name,email,location_count,access_code,payment_method,status,first_name,last_name)
@@ -155,8 +192,10 @@ async function schedule(t, svcId, licId, startDate) {
   return patch(`/api/tenant/services/${svcId}/licenses/${licId}`, { startDate }, { token: t.token });
 }
 async function putDay(t, svcId, date, o = {}) {
-  return put(`/api/tenant/services/${svcId}/daily-config`,
-    { date, hours: ALLDAY, staffCount: 3, bookingStaffCount: 2, walkInStaffCount: 1, nowMinutes: 0, ...o }, { token: t.token });
+  // `nowMinutes` here is not sent to the server (it ignores it): it is the time of day the SERVER clock is moved to for this call.
+  const { nowMinutes, ...rest } = o;
+  return atMinutes(nowMinutes, () => put(`/api/tenant/services/${svcId}/daily-config`,
+    { date, hours: ALLDAY, staffCount: 3, bookingStaffCount: 2, walkInStaffCount: 1, ...rest }, { token: t.token }));
 }
 // Month licence starting today + hours on today..today+days-1. Returns { today, dates, licence }.
 async function goLive(t, svc, { days = 4, hours = ALLDAY, staffCount = 3, bookingStaffCount = 2, walkInStaffCount = 1 } = {}) {
@@ -202,6 +241,7 @@ const booked = (t, svcId, date, slotTime = 540, extra = {}, ip) => join(t, svcId
 const logStart = (() => { try { return fs.statSync(SERVER_LOG).size; } catch { return null; } })();
 
 after(async () => {
+  if (CLOCK_OK) await del('/api/system/test-now', { token: await systemToken() }); // back to the real clock
   if (process.env.QB_TEST_CLEANUP === '1') {
     const token = await systemToken();
     for (const id of createdTenants) await del(`/api/system/tenants/${id}`, { token });
@@ -328,13 +368,14 @@ describe('1. Sign-up & auth', () => {
       assert.ok(codes.every((c) => c === 200), `statuses ${codes}`);
       if (PSQL_OK) assert.equal(tenantCount(b.email), 1);
     });
-    it('a disabled account cannot re-signup / sign in (403)', async () => {
+    it('a disabled account cannot re-signup / sign in, and nothing reveals that it exists (uniform 200 / 401)', async () => {
       const t = await signup({ label: 'disabled' });
       const st = await systemToken();
       assert.equal((await patch(`/api/system/tenants/${t.id}`, { status: 'disabled' }, { token: st })).status, 200);
-      if (!dnsDown) assert.equal((await post('/api/auth/signup', { ...validBody(), email: t.email })).status, 403);
-      assert.equal((await post('/api/auth/admin/request-otp', { email: t.email })).status, 403);
-      assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '123456' })).status, 403);
+      // CHANGED (account enumeration): these used to answer 403 "disabled"; now the same 200 / 401 as an unknown address, no code issued.
+      if (!dnsDown) { const r = await post('/api/auth/signup', { ...validBody(), email: t.email }); assert.equal(r.status, 200); assert.ok(!r.json.demoOtp); }
+      const rq = await post('/api/auth/admin/request-otp', { email: t.email }); assert.equal(rq.status, 200); assert.ok(!rq.json.demoOtp);
+      assert.equal((await post('/api/auth/admin/verify-otp', { email: t.email, code: '123456' })).status, 401);
       // an already-issued token is blocked too
       assert.equal((await get('/api/tenant/me', { token: t.token })).status, 403);
       // public side hides it
@@ -351,8 +392,10 @@ describe('1. Sign-up & auth', () => {
     const reqOtp = async (email = t.email) => (await post('/api/auth/admin/request-otp', { email })).json.demoOtp;
     const wrongCode = (c) => (c === '111111' ? '222222' : '111111');
 
-    it('request-otp: unknown email -> 404, valid -> 6-digit demoOtp, case-insensitive', async () => {
-      assert.equal((await post('/api/auth/admin/request-otp', { email: `api-test-nobody-${rnd()}@example.com` })).status, 404);
+    it('request-otp: unknown email -> same 200 as a known one (no code), valid -> 6-digit demoOtp, case-insensitive', async () => {
+      // CHANGED (account enumeration): unknown used to be 404 "No account found".
+      const unknown = await post('/api/auth/admin/request-otp', { email: `api-test-nobody-${rnd()}@example.com` });
+      assert.equal(unknown.status, 200); assert.equal(unknown.json.ok, true); assert.ok(!unknown.json.demoOtp);
       const r = await post('/api/auth/admin/request-otp', { email: t.email.toUpperCase() });
       assert.equal(r.status, 200);
       assert.match(r.json.demoOtp, /^\d{6}$/);
@@ -363,13 +406,13 @@ describe('1. Sign-up & auth', () => {
       assert.equal(r.status, 401);
       assert.ok(!r.json.token);
     });
-    it('verify: right code -> token (tenant_admin, 30d) + tenant; no signup_country', async () => {
+    it('verify: right code -> token (tenant_admin, 12h by default) + tenant; no signup_country', async () => {
       const c = await reqOtp();
       const r = await post('/api/auth/admin/verify-otp', { email: t.email, code: c });
       assert.equal(r.status, 200);
       const p = decodeJwt(r.json.token);
       assert.equal(p.role, 'tenant_admin'); assert.equal(p.tenantId, t.id);
-      assert.ok(p.exp - p.iat >= 29 * 86400 && p.exp - p.iat <= 31 * 86400);
+      assert.ok(p.exp - p.iat >= 12 * 3600 - 5 && p.exp - p.iat <= 12 * 3600 + 5, `lifetime ${p.exp - p.iat}s`); // CHANGED: was 30 days
       assert.ok(!('signup_country' in r.json.tenant));
     });
     it('verify: an OTP cannot be reused', async () => {
@@ -423,14 +466,14 @@ describe('1. Sign-up & auth', () => {
       assert.equal((await post('/api/tenant/staff', { firstName: '', lastName: 'b', email: `api-test-${rnd()}@example.com` }, { token: t.token })).status, 400);
       if (!dnsDown) assert.equal((await post('/api/tenant/staff', { firstName: 'a', lastName: 'b', email: staff.email.toUpperCase() }, { token: t.token })).status, 409);
     });
-    it('happy path: request -> verify returns 10h staff token + staff info', async () => {
+    it('happy path: request -> verify returns 16h staff token + staff info', async () => {
       const c = await reqOtp();
       assert.match(c, /^\d{6}$/);
       const v = await post('/api/auth/staff/verify-otp', { email: staff.email, code: c });
       assert.equal(v.status, 200);
       const p = decodeJwt(v.json.token);
       assert.equal(p.role, 'staff'); assert.equal(p.tenantId, t.id); assert.equal(p.staffId, staff.id);
-      assert.ok(p.exp - p.iat <= 10 * 3600 + 5);
+      assert.ok(p.exp - p.iat <= 16 * 3600 + 5); // CHANGED: was 10h; now STAFF_SESSION_HOURS (default 16) with sliding refresh
       assert.equal(v.json.staff.firstName, 'Sally');
       assert.equal((await get('/api/tenant/me', { token: v.json.token })).json.staff.email, staff.email);
     });
@@ -502,14 +545,15 @@ describe('1. Sign-up & auth', () => {
       assert.equal((await get('/api/tenant/me', { token: sessionToken })).status, 401);
       assert.ok(!(await post('/api/auth/staff/request-otp', { email })).json.demoOtp);
     });
-    it('staff of a disabled tenant: request/verify -> 403 and the session is blocked', async () => {
+    it('staff of a disabled tenant: request gets the uniform 200 (no code), verify -> 401, and the session is blocked (403)', async () => {
       const t2 = await signup({ label: 'staffdis' }); const s2 = await addStaff(t2);
       const tok = await staffLogin(s2.email);
       const code = (await post('/api/auth/staff/request-otp', { email: s2.email })).json.demoOtp;
       const st = await systemToken();
       await patch(`/api/system/tenants/${t2.id}`, { status: 'disabled' }, { token: st });
-      assert.equal((await post('/api/auth/staff/request-otp', { email: s2.email })).status, 403);
-      assert.equal((await post('/api/auth/staff/verify-otp', { email: s2.email, code })).status, 403);
+      // CHANGED (account enumeration): these used to answer 403 "disabled".
+      const rq = await post('/api/auth/staff/request-otp', { email: s2.email }); assert.equal(rq.status, 200); assert.ok(!rq.json.demoOtp);
+      assert.equal((await post('/api/auth/staff/verify-otp', { email: s2.email, code })).status, 401);
       assert.equal((await get('/api/tenant/me', { token: tok })).status, 403);
     });
     it('staff-token forged for a staff id of a different tenant is rejected', async () => {
@@ -808,7 +852,8 @@ describe('2. Tenant isolation & access control', () => {
       assert.equal((await del('/api/tenant/me', { token: T.token })).status, 200);
       assert.equal((await get('/api/tenant/me', { token: T.token })).status, 404);
       assert.equal((await get(`/api/public/tenant/${T.id}/info`)).status, 404);
-      assert.equal((await post('/api/auth/admin/request-otp', { email: T.email })).status, 404);
+      // CHANGED (account enumeration): a deleted account answers like any unknown address (200, no code) instead of 404.
+      const rq = await post('/api/auth/admin/request-otp', { email: T.email }); assert.equal(rq.status, 200); assert.ok(!rq.json.demoOtp);
     });
   });
 });
@@ -1180,7 +1225,8 @@ describe('3. Licences & hours', () => {
 describe('4. Patient journey (public API)', () => {
   let P_, D0, hy, qs, ap, loc2;
   const HOURS = [540, 570, 600, 630];
-  const avail = async (svc, date, clock) => (await get(`${P(P_)}/services/${svc.id}/availability?date=${date}&clockMinutes=${clock}`)).json;
+  // (`clock` moves the SERVER clock for the call; the clockMinutes also sent is ignored by the server, as a lying client's would be)
+  const avail = async (svc, date, clock) => atMinutes(clock, async () => (await get(`${P(P_)}/services/${svc.id}/availability?date=${date}&clockMinutes=${clock}`)).json);
   const day = (i) => addDays(D0, i);
   const call = (id, room = 'Room 1') => post(`/api/tenant/tickets/${id}/call`, { roomLabel: room }, { token: P_.token });
   const devId = () => `dev${rnd()}${rnd()}${rnd()}`;
@@ -1202,9 +1248,9 @@ describe('4. Patient journey (public API)', () => {
   });
 
   describe('read-only public endpoints', () => {
-    it('info exposes only business name, status and website', async () => {
+    it('info exposes only business name, status, website and the account\'s time zone / currency', async () => {
       const r = await get(`${P(P_)}/info`);
-      assert.equal(r.status, 200); assert.deepEqual(Object.keys(r.json).sort(), ['businessName', 'status', 'websiteUrl']);
+      assert.equal(r.status, 200); assert.deepEqual(Object.keys(r.json).sort(), ['businessName', 'currency', 'defaultTimezone', 'status', 'websiteUrl']);
       assert.equal(r.json.businessName, P_.businessName);
     });
     it('locations lists active locations without the on-site code', async () => {
@@ -1231,8 +1277,9 @@ describe('4. Patient journey (public API)', () => {
       const a = await avail(hy, day(1), 1300); assert.equal(a.open, true); assert.equal(a.bookableSlots[0], 540);
     });
     it('after hours: today past the last block + 30 minutes is closed; one minute before is still open', async () => {
-      assert.deepEqual(await avail(hy, D0, 660), { open: false, reason: 'closed' });
-      assert.deepEqual(await avail(hy, D0, 1400), { open: false, reason: 'closed' });
+      const closed = async (m) => { const a = await avail(hy, D0, m); return { open: a.open, reason: a.reason }; };
+      assert.deepEqual(await closed(660), { open: false, reason: 'closed' });
+      assert.deepEqual(await closed(1400), { open: false, reason: 'closed' });
       const a = await avail(hy, D0, 659); assert.equal(a.open, true);
       assert.equal((await avail(hy, D0, 100)).open, true, 'before opening is not closed');
     });
@@ -1539,8 +1586,8 @@ describe('5. Staff & queue operations', () => {
   const day = (i) => addDays(D0, i);
   const tix = async (date, tok = aTok) => (await get(`/api/tenant/tickets?date=${date}`, { token: tok })).json.tickets;
   const byId = async (id, date) => (await tix(date)).find((t) => t.id === id);
-  const callNext = (svc, date, body = {}, tok = sTok) => post(`/api/tenant/services/${svc.id}/call-next`, { date, clockMinutes: 620, roomLabel: 'Room 1', ...body }, { token: tok });
-  const op = (id, ep, body = {}, tok = aTok) => post(`/api/tenant/tickets/${id}/${ep}`, { roomLabel: 'Room 2', clockMinutes: 620, ...body }, { token: tok });
+  const callNext = (svc, date, body = {}, tok = sTok) => atMinutes(body.clockMinutes ?? 620, () => post(`/api/tenant/services/${svc.id}/call-next`, { date, clockMinutes: 620, roomLabel: 'Room 1', ...body }, { token: tok }));
+  const op = (id, ep, body = {}, tok = aTok) => atMinutes(body.clockMinutes ?? 620, () => post(`/api/tenant/tickets/${id}/${ep}`, { roomLabel: 'Room 2', clockMinutes: 620, ...body }, { token: tok }));
   const mkWalk = async (svc, date, n = 1) => { const out = []; for (let i = 0; i < n; i++) out.push((await walkIn(S, svc.id, date, 600)).json.ticket); return out; };
   const mkBook = async (svc, date, slot) => (await booked(S, svc.id, date, slot)).json.ticket;
 
@@ -1724,7 +1771,7 @@ describe('5. Staff & queue operations', () => {
       await goLive(S, svc, { days: 1, hours: HOURS, staffCount: 20, bookingStaffCount: 10, walkInStaffCount: 10 });
     });
     const stats = async () => (await get(`/api/tenant/dashboard/stats?date=${D0}`, { token: aTok })).json.stats;
-    const today_ = async (clock = 560) => (await get(`/api/tenant/today?serviceId=${svc.id}&clockMinutes=${clock}`, { token: sTok })).json;
+    const today_ = async (clock = 560) => atMinutes(clock, async () => (await get(`/api/tenant/today?serviceId=${svc.id}&clockMinutes=${clock}`, { token: sTok })).json);
     it('counts follow every state change', async () => {
       const s0 = await stats();
       const w = []; for (let i = 0; i < 3; i++) w.push((await walkIn(S, svc.id, D0, 540)).json.ticket);
@@ -1905,7 +1952,7 @@ describe('6. Security & robustness', () => {
     });
     it('prototype-pollution style bodies do not break anything', async () => {
       const r = await api('POST', '/api/auth/admin/request-otp', { rawBody: '{"__proto__":{"admin":true},"constructor":{"prototype":{"x":1}},"email":"nobody@example.com"}' });
-      assert.equal(r.status, 404);
+      assert.equal(r.status, 200); // CHANGED: unknown address is now the uniform 200 (was 404)
       assert.equal(({}).admin, undefined);
       assert.equal((await get('/api/tenant/me', { token: R.token })).status, 200);
     });

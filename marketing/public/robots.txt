@@ -1,0 +1,4 @@
+# Generic version. When VITE_MARKETING_URL is set at build time, vite.config.js rewrites this file
+# in dist/ to add the Sitemap line (and writes sitemap.xml).
+User-agent: *
+Allow: /

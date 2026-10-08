@@ -10,7 +10,9 @@ import customerPublicRoutes, { publicTicketRouter } from "./routes/customerPubli
 import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { closeStaleTickets } from "./lib/closeStaleTickets.js";
+import { sweepLicences } from "./lib/serviceLicense.js";
 import { HttpError } from "./lib/validate.js";
+import { reportEmailConfig } from "./lib/email.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -40,13 +42,18 @@ app.use((req, res, next) => {
 app.use(["/api/auth", "/api/tenant", "/api/system"], (req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim());
-const restrictedCors = cors({ origin: allowedOrigins, credentials: true });
+// X-Session-Token carries the refreshed session token (sliding sessions); browsers only let the apps read it if exposed.
+const restrictedCors = cors({ origin: allowedOrigins, credentials: true, exposedHeaders: ["X-Session-Token"] });
 // Public data (service names, opening hours, location codes) is meant to be reachable from
 // anywhere, so it isn't restricted to the fixed origin list the authenticated apps use.
 const openCors = cors();
 
 // Every real request body here is a small JSON object; 100 kB is generous and caps what one request can make the server buffer.
-app.use(express.json({ limit: process.env.BODY_LIMIT || "100kb" }));
+// The WhatsApp webhook is signed over the exact bytes Meta sent, so keep the raw body for that path only.
+app.use(express.json({
+  limit: process.env.BODY_LIMIT || "100kb",
+  verify: (req, res, buf) => { if (req.originalUrl.startsWith("/api/whatsapp/")) req.rawBody = Buffer.from(buf); },
+}));
 // Bodies are always JSON objects; an array (or anything else) is a malformed request.
 app.use((req, res, next) => {
   if (Array.isArray(req.body)) return res.status(400).json({ error: "Request body must be a JSON object." });
@@ -62,7 +69,8 @@ app.use("/api/public", openCors, publicRouter);
 app.use("/api/public/tenant", openCors, customerPublicRoutes);
 app.use("/api/public/ticket", openCors, publicTicketRouter);
 app.use("/api/public/code", openCors, publicCodesRoutes);
-app.use("/api/whatsapp", openCors, whatsappRoutes);
+// Server-to-server (Meta calls it): no CORS at all, requests are authenticated by signature instead.
+app.use("/api/whatsapp", whatsappRoutes);
 
 // Anything that matched no route: a JSON 404 (Express' default is an HTML page that echoes the path and replaces our headers).
 app.use((req, res) => res.status(404).json({ error: "Not found." }));
@@ -114,6 +122,7 @@ if (!process.env.JWT_SECRET) {
 if (process.env.NODE_ENV === "production" && process.env.JWT_SECRET.length < 32) {
   console.warn("JWT_SECRET is shorter than 32 characters - use a long random value in production.");
 }
+reportEmailConfig(); // loud warning (not a crash) when sign-in emails can't be delivered; the sign-in endpoints then answer 503
 if (process.env.QB_TEST_NOW) console.warn(`TEST CLOCK ACTIVE (QB_TEST_NOW=${process.env.QB_TEST_NOW}) - never set this in production.`);
 
 const port = process.env.PORT || 4000;
@@ -130,6 +139,10 @@ server.listen(port, () => console.log(`QBooker API listening on port ${port}`));
 // End-of-day sweep: tickets still in progress after their day are system-closed.
 setInterval(() => { closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err)); }, 10 * 60 * 1000);
 closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err));
+// Licence status sweep: scheduled/active licences are moved on (expired, activated, or returned to Available) per location time zone,
+// so the stored status never goes stale just because nobody opened a screen. Cheap: it only touches licences that are due.
+setInterval(() => { sweepLicences().catch((err) => console.error("sweepLicences failed", err)); }, 5 * 60 * 1000);
+sweepLicences().catch((err) => console.error("sweepLicences failed", err));
 
 // Safety net: an unhandled promise rejection (e.g. a database call that wasn't
 // wrapped in try/catch) would otherwise crash the whole process on Node 15+.

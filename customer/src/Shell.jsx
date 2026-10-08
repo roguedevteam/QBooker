@@ -9,10 +9,14 @@ export function Mark() {
   );
 }
 
+// Optional link to the privacy notice on the marketing site. Hidden unless VITE_MARKETING_URL is set.
+const MARKETING_URL = (import.meta.env.VITE_MARKETING_URL || "").trim().replace(/\/+$/, "");
+const PRIVACY_URL = MARKETING_URL ? `${MARKETING_URL}/privacy` : null;
+
 export const POWERED_BY = "Powered by QBooker · No sign-up, no app to install";
 
 function clockText(at) {
-  try { return new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }); } catch { return ""; }
+  try { return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
 }
 
 // A chat bubble. "bot" = the clinic (left, white); "user" = the patient's reply (right, blue, ticked).
@@ -47,7 +51,10 @@ export default function Shell({ title, subtitle, footer, scrollKey, top = false,
       <div className="chat-scroll" ref={scrollRef}>
         <div className={`chat-list${top ? " chat-list-top" : ""}`} {...listProps}>{children}</div>
       </div>
-      <footer className="foot">{footer}</footer>
+      <footer className="foot">
+        {footer}
+        {PRIVACY_URL && <>{" · "}<a className="foot-link" href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy</a></>}
+      </footer>
     </div>
   );
 }

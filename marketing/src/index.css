@@ -377,3 +377,26 @@ html { scroll-padding-top: 80px; }
 .lp-shot figcaption{display:flex;flex-direction:column;gap:4px;margin-top:14px;max-width:640px}
 .lp-shot figcaption span{color:#4a5560;line-height:1.55}
 @media (min-width:900px){.lp-shots{grid-template-columns:1fr 1fr;align-items:start}}
+
+/* Privacy notice and not-found pages */
+.pv { min-height: 100vh; background: var(--surface-page); color: var(--ink); }
+.pv-banner { background: var(--warn-weak); border-bottom: 1px solid var(--warn-line); color: var(--warn-ink); text-align: center; padding: 10px 20px; font-size: 14px; }
+.pv-head { background: var(--surface-card); border-bottom: 1px solid var(--line); }
+.pv-wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+.pv-head .pv-wrap { display: flex; align-items: center; min-height: 56px; }
+.pv-back { font-size: 14px; font-weight: 600; color: var(--brand); display: inline-flex; align-items: center; min-height: 44px; }
+.pv-main { padding-top: 32px; padding-bottom: 72px; }
+.pv h1 { font-size: 34px; margin: 0 0 6px; }
+.pv h2 { font-size: 20px; margin: 0 0 10px; }
+.pv-meta { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.pv-lead { font-size: 17px; line-height: 1.6; color: var(--muted); }
+.pv-section { margin-top: 32px; }
+.pv p, .pv li { font-size: 15.5px; line-height: 1.65; }
+.pv ul { padding-left: 20px; }
+.pv a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+.pv-table-wrap { overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); background: var(--surface-card); }
+.pv-table th, .pv-table td { text-align: left; vertical-align: top; padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--line); }
+.pv-table th { background: var(--blue-weak); font-weight: 600; }
+.pv-table tr:last-child td { border-bottom: 0; }
+.pv-nf { text-align: center; padding: 96px 20px; }
+.pv-nf h1 { margin-bottom: 12px; }
