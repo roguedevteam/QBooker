@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "./lib/api.js";
-import { todayIso, isSimulatedToday } from "./lib/clock.js";
+import { todayIso, isSimulatedToday, nowMs, refreshClock } from "./lib/clock.js";
 import { nowMinutes, formatClock, formatTime, formatElapsed, minutesSince, loadPref, savePref } from "./lib/util.js";
 import TodayPanel from "./TodayPanel.jsx";
 
@@ -42,7 +42,7 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
   const [started, setStarted] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [calling, setCalling] = useState(false); // a call/finish request is in flight
-  const [clock, setClock] = useState(() => Date.now());
+  const [clock, setClock] = useState(() => nowMs());
   const [tab, setTab] = useState("waiting"); // phone tabs
   const [view, setView] = useState("queue"); // tablet/desktop: queue | today
   const [panel, setPanel] = useState(null); // inside "With you now": null | "away" | "route"
@@ -60,16 +60,24 @@ export default function Shift({ tenant, staff, locationId, setError, onSignOut, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshTickets() {
-    try { const r = await api.getTickets(date); setTickets(r.tickets); } catch (err) { setError(err.message); }
+  const lastSync = useRef(Date.now());
+  async function refreshTickets(force) {
+    // Re-measure the server's clock about once a minute so a drifting device clock can't strand the kiosk on yesterday.
+    if (force === true || Date.now() - lastSync.current > 60000) { lastSync.current = Date.now(); await refreshClock(); }
+    // todayIso() is read on every poll (not captured once): a kiosk left open overnight must move on to the new day by itself.
+    try { const r = await api.getTickets(todayIso()); setTickets(r.tickets); } catch (err) { setError(err.message); }
   }
   useEffect(() => {
     refreshTickets();
-    const id = setInterval(refreshTickets, 8000); // polling, not a live subscription
-    return () => clearInterval(id);
+    const id = setInterval(() => refreshTickets(), 8000); // polling, not a live subscription
+    // A tablet waking up / the tab coming back re-reads the server's clock straight away.
+    const wake = () => refreshTickets(true);
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => { clearInterval(id); window.removeEventListener("focus", wake); document.removeEventListener("visibilitychange", wake); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { const id = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(id); }, []);
+  useEffect(() => { const id = setInterval(() => setClock(nowMs()), 1000); return () => clearInterval(id); }, []);
 
   const locServices = services.filter((s) => s.location_id === locationId);
   const locationName = locations.find((l) => l.id === locationId)?.name;

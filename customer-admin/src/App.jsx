@@ -1,14 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { priceText, exMoney, incVat, VAT_RATE } from "./lib/vat.js";
 import { api, setToken, hasToken } from "./lib/api.js";
-import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
+import { todayIso, nowMinutes, isSimulatedToday, refreshClock } from "./lib/clock.js";
 import TodayPanel from "./TodayPanel.jsx";
 
 // --- Date & time helpers -----------------------------------------------------
-function nowMinutes() {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
 function formatClock(min) {
   return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
 }
@@ -863,7 +859,7 @@ function AdminDashboard({ tenant, onTenantChange, onAccountDeleted, onSignOut, s
           <div className="card stack" style={{ gap: 0 }}>
             <h2 style={{ marginBottom: 10 }}>Activity</h2>
             {auditLog.length === 0 && <div className="muted">No activity yet.</div>}
-            {auditLog.map((a) => <div key={a.id} className="log-row"><time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString()}</time><span>{a.message}</span></div>)}
+            {auditLog.map((a) => <div key={a.id} className="log-row"><time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString("en-GB", { timeZone: "Europe/London" })}</time><span>{a.message}</span></div>)}
           </div>
         </div>
       )}
@@ -1163,7 +1159,7 @@ function ProfileTab({ tenant, onTenantChange, onAccountDeleted, licenses, onLice
     try {
       const r = await api.updateMe({
         businessName, firstName, lastName, email,
-        websiteUrl: website.trim() || null,
+        websiteUrl: website.trim(), // "" clears it (null would mean "leave unchanged")
         companyAddress: combineAddress(line1, line2, city, postcode),
       });
       onTenantChange?.(r.tenant);
@@ -1390,15 +1386,15 @@ function ShopTab({ tenant, locations }) {
     }
     const cards = withCodes.map((l) => `
       <div style="border:2px solid #1B1D1F;border-radius:14px;padding:32px;margin-bottom:28px;text-align:center;page-break-inside:avoid;">
-        <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${tenant.business_name}</div>
-        <div style="font-size:14px;color:#5F615B;margin-bottom:20px;">${l.name}</div>
+        <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escHtml(tenant.business_name)}</div>
+        <div style="font-size:14px;color:#5F615B;margin-bottom:20px;">${escHtml(l.name)}</div>
         <div style="font-size:17px;font-weight:600;margin-bottom:10px;">📱 Message us on WhatsApp to get started</div>
         <div style="font-size:15px;color:#1B1D1F;margin-bottom:6px;">Send this code:</div>
-        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F7F7F4;border-radius:8px;padding:10px 0;">${l.code}</div>
+        <div style="font-size:28px;font-weight:700;letter-spacing:2px;background:#F7F7F4;border-radius:8px;padding:10px 0;">${escHtml(l.code)}</div>
         <div style="font-size:12px;color:#5F615B;margin-top:18px;">Join the queue or book a slot instantly — no app to download.</div>
       </div>
     `).join("");
-    const html = `<!doctype html><html><head><title>QBooker brochure — ${tenant.business_name}</title>
+    const html = `<!doctype html><html><head><title>QBooker brochure — ${escHtml(tenant.business_name)}</title>
       <meta charset="utf-8" />
       <style>body{font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;color:#1B1D1F;}</style>
       </head><body>${cards}<p style="text-align:center;color:#5F615B;font-size:11px;">Print this page and display it in your waiting area.</p></body></html>`;
@@ -1480,9 +1476,9 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
       [`VAT (${VAT_RATE * 100}%)`, exMoney(incVat(lic.price) - Number(lic.price))],
       ["Total (inc VAT)", exMoney(incVat(lic.price))],
     ] : [["Price", "—"]]),
-    ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString() : "—"],
+    ["Purchased", lic.purchased_at ? new Date(lic.purchased_at).toLocaleDateString("en-GB", { timeZone: "Europe/London" }) : "—"],
   ];
-  const html = `<!doctype html><html><head><title>Receipt — ${businessName}</title>
+  const html = `<!doctype html><html><head><title>Receipt — ${escHtml(businessName)}</title>
     <meta charset="utf-8" />
     <style>
       body{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:40px auto;color:#1B1D1F;}
@@ -1495,10 +1491,10 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
       td:last-child{font-weight:600;text-align:right;}
     </style>
     </head><body>
-      <h1>${businessName}</h1>
-      ${businessAddress ? `<div class="addr">${businessAddress}</div>` : ""}
+      <h1>${escHtml(businessName)}</h1>
+      ${businessAddress ? `<div class="addr">${escHtml(businessAddress)}</div>` : ""}
       <div class="sub">License receipt</div>
-      <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+      <table>${rows.map(([k, v]) => `<tr><td>${escHtml(k)}</td><td>${escHtml(v)}</td></tr>`).join("")}</table>
     </body></html>`;
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);

@@ -1,8 +1,8 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { query } from "../db/pool.js";
-import { rateLimit } from "../lib/rateLimit.js";
-import { getToday } from "../lib/clock.js";
+import { rateLimit, failureLimit } from "../lib/rateLimit.js";
+import { getToday, nowSql, now as clockNow } from "../lib/clock.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { estimateWalkInWaitMinutes } from "../lib/scheduling.js";
 import { loadService, getAvailability } from "../lib/availability.js";
@@ -103,14 +103,10 @@ router.get("/:tenantId/services/:serviceId/availability", asyncHandler(async (re
 router.get("/:tenantId/tickets/:ticketId/status", asyncHandler(async (req, res) => {
   const ticket = (await query(`select * from tickets where id=$1 and tenant_id=$2`, [req.params.ticketId, req.tenant.id])).rows[0];
   if (!ticket) return res.status(404).json({ error: "Ticket not found." });
-  let message = null;
-  if (ticket.status === "serving" || ticket.status === "completed") {
-    const m = (await query(
-      `select body from simulated_messages where tenant_id=$1 and to_reference=$2 and channel='whatsapp' order by created_at desc limit 1`,
-      [req.tenant.id, ticket.ticket_number]
-    )).rows[0];
-    message = m?.body || null;
-  }
+  // The call message is rebuilt from THIS ticket's room. (It used to be looked up by ticket number in the message log,
+  // but numbers repeat across services, locations and days, so a patient could be shown another patient's room.)
+  const message = (ticket.status === "serving" || ticket.status === "completed") && ticket.called_room
+    ? `It's your turn! Please come to ${ticket.called_room}.` : null;
   const queue = await getQueueInfo(ticket);
   res.json({ status: ticket.status, ticketNumber: ticket.ticket_number, message, queue, arrived: !!ticket.arrived_at });
 }));
@@ -139,7 +135,7 @@ router.post("/:tenantId/tickets/:ticketId/check-in", asyncHandler(async (req, re
   if (ticket.type !== "booked" || ticket.status !== "booked") {
     return res.status(409).json({ error: "This booking can't be checked in." });
   }
-  const result = await query(`update tickets set arrived_at=coalesce(arrived_at, now()) where id=$1 returning *`, [ticket.id]);
+  const result = await query(`update tickets set arrived_at=coalesce(arrived_at, ${nowSql()}) where id=$1 returning *`, [ticket.id]);
   const service = (await query(`select name from services where id=$1`, [ticket.service_id])).rows[0];
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} checked in for ${service?.name || "service"}`]);
@@ -188,10 +184,18 @@ router.post("/:tenantId/services/:serviceId/tickets", rateLimit({ windowMs: 10 *
 // or clinical data are held on a ticket in the first place.
 export const publicTicketRouter = Router();
 publicTicketRouter.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
-publicTicketRouter.use(rateLimit({ windowMs: 60 * 1000, max: 90 }));
+// Patients poll every ~10 s, and a whole waiting room often shares ONE public IP (clinic wifi, carrier NAT), so a flat
+// per-IP cap of 90/min locked out everyone beyond ~15 patients (load test: 93% of polls got 429 with 300 patients on one IP).
+// The credential is the ticket token, so the tight limit is per token (30/min = 5x the normal rate); the per-IP limit is only
+// a high flood ceiling.
+publicTicketRouter.use(rateLimit({ windowMs: 60 * 1000, max: 3000, message: "Too many requests from this connection — please wait a moment." }));
+publicTicketRouter.use(rateLimit({ windowMs: 60 * 1000, max: 30, keyFn: (req) => `tok:${req.path.split("/")[1] || ""}` }));
+// Guessing tokens is what the per-IP limit really has to stop: count only lookups that MISS (valid polling never does).
+const tokenMisses = failureLimit({ windowMs: 60 * 1000, max: 30 });
+publicTicketRouter.use(tokenMisses.guard);
 
 async function loadByToken(req, res, next) {
-  if (!TOKEN_RE.test(req.params.token)) return res.status(404).json({ error: "Ticket not found.", state: "unknown" });
+  if (!TOKEN_RE.test(req.params.token)) { tokenMisses.fail(req); return res.status(404).json({ error: "Ticket not found.", state: "unknown" }); }
   const row = (await query(
     `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, te.whatsapp_updates_offer, te.business_name
      from ticket_web_access a
@@ -202,7 +206,7 @@ async function loadByToken(req, res, next) {
      where a.token=$1`,
     [req.params.token]
   )).rows[0];
-  if (!row) return res.status(404).json({ error: "Ticket not found.", state: "unknown" });
+  if (!row) { tokenMisses.fail(req); return res.status(404).json({ error: "Ticket not found.", state: "unknown" }); }
   req.ticketRow = row;
   next();
 }
@@ -236,7 +240,7 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
     arrived: !!t.arrived_at,
     whatsappUpdatesOffer: true, // every patient can opt in to WhatsApp updates
     whatsappUpdatesRequested: !!t.whatsapp_updates_requested,
-    updatedAt: new Date().toISOString(),
+    updatedAt: clockNow().toISOString(),
   });
 }));
 
@@ -244,7 +248,7 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
 publicTicketRouter.post("/:token/check-in", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
   const t = req.ticketRow;
   if (t.type !== "booked" || t.status !== "booked") return res.status(409).json({ error: "This booking can't be checked in." });
-  await query(`update tickets set arrived_at=coalesce(arrived_at, now()) where id=$1`, [t.id]);
+  await query(`update tickets set arrived_at=coalesce(arrived_at, ${nowSql()}) where id=$1`, [t.id]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [t.tenant_id, `Ticket ${t.ticket_number} checked in for ${t.service_name || "service"}`]);
   res.json({ ok: true, arrived: true });

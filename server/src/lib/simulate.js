@@ -9,7 +9,7 @@ export function genOtp() {
 
 export function genAccessCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const part = () => Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const part = () => Array.from({ length: 3 }, () => chars[crypto.randomInt(chars.length)]).join("");
   return `${part()}-${part()}`;
 }
 

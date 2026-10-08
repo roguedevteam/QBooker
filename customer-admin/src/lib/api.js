@@ -29,7 +29,7 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
 }
 
 export const api = {
-  getClock: () => request("/api/public/clock", { auth: false }),
+  getClock: () => request("/api/public/time", { auth: false }),
   publicPricing: () => request("/api/public/pricing", { auth: false }),
 
   requestAdminOtp: (email) => request("/api/auth/admin/request-otp", { method: "POST", body: { email }, auth: false }),

@@ -1,10 +1,36 @@
 import crypto from "crypto";
 import { pool } from "../db/pool.js";
-import { getToday, londonNowMinutes } from "./clock.js";
+import { getToday, londonNowMinutes, testNowParam } from "./clock.js";
 import { currentHourBlock, walkInBudget } from "./scheduling.js";
 import { isServiceLicensedOn } from "./serviceLicense.js";
 import { dayCfg, offeredSlots } from "./availability.js";
 import { badRequest, conflict, HttpError, optEnum, optInt, reqDate, clockMinutesOrUndefined } from "./validate.js";
+
+const envMs = (name, dflt) => { const n = Number(process.env[name]); return process.env[name] && Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt; };
+const LOCK_TIMEOUT_MS = envMs("DB_LOCK_TIMEOUT_MS", 8000);
+const TX_STATEMENT_TIMEOUT_MS = envMs("DB_TX_STATEMENT_TIMEOUT_MS", 15000);
+
+// In-process FIFO queue per key. Waiting costs no database connection. If a queue gets absurdly long (a flood, or a stalled
+// database) new arrivals are refused with a lock_not_available-style error, which the API reports as 503.
+const slotTails = new Map(); // key -> { tail: Promise, waiting: number }
+const MAX_QUEUED_PER_SERVICE = envMs("TICKET_QUEUE_MAX", 400);
+async function acquireSlot(key) {
+  let q = slotTails.get(key);
+  if (!q) { q = { tail: Promise.resolve(), waiting: 0 }; slotTails.set(key, q); }
+  if (q.waiting >= MAX_QUEUED_PER_SERVICE) throw Object.assign(new Error("Too many joins queued for this service"), { code: "55P03" });
+  q.waiting++;
+  const prev = q.tail;
+  let release;
+  q.tail = new Promise((r) => { release = r; });
+  const finish = () => { q.waiting--; release(); if (q.waiting === 0 && slotTails.get(key) === q) slotTails.delete(key); };
+  // Don't wait longer than the database would have (lock_timeout): an abandoned place still hands the turn on once its predecessor is done.
+  let timer;
+  const timedOut = await Promise.race([prev.then(() => false), new Promise((r) => { timer = setTimeout(() => r(true), LOCK_TIMEOUT_MS); })]);
+  clearTimeout(timer);
+  if (timedOut) { prev.then(finish); throw Object.assign(new Error("Timed out waiting for this service's join queue"), { code: "55P03" }); }
+  let released = false;
+  return () => { if (!released) { released = true; finish(); } };
+}
 
 export const newPublicToken = () => crypto.randomBytes(18).toString("base64url"); // 24 chars, 144 bits
 
@@ -39,9 +65,18 @@ export async function createTicket({ tenantId, service, req, access = null, audi
   }
   if (date < getToday()) throw conflict("That day has already passed.", { reason: "closed" });
 
-  const client = await pool.connect();
+  // Joins to the same service/day are queued here, in memory and WITHOUT holding a database connection, so a rush on one busy
+  // service (250 patients pressing Join together) uses one pooled connection at a time instead of pinning the whole pool on
+  // the advisory lock below and starving every other clinic. The advisory lock stays: it is what keeps several API instances correct.
+  const releaseSlot = await acquireSlot(`${service.id}|${date}`);
+  let client;
+  try { client = await pool.connect(); } catch (err) { releaseSlot(); throw err; }
   try {
+    // Bound how long this transaction may wait for the per-service lock or run at all (SET LOCAL via set_config; works through a
+    // transaction-mode pooler too). Without it a stalled lock holder would pin pooled connections
+    // indefinitely. Failures surface as 503 (see index.js). The two numbers are validated integers, never user input.
     await client.query("BEGIN");
+    await client.query("select set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)", [String(LOCK_TIMEOUT_MS), String(TX_STATEMENT_TIMEOUT_MS)]);
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [`ticket|${service.id}|${date}`]);
 
     const day = (await client.query(`select * from service_daily_config where service_id=$1 and date=$2`, [service.id, date])).rows[0];
@@ -100,9 +135,9 @@ export async function createTicket({ tenantId, service, req, access = null, audi
     const ticketNumber = `${initials}-${String(Number(maxRow.n) + 1).padStart(3, "0")}`;
 
     const ticket = (await client.query(
-      `insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-      [tenantId, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime, hourBlock, date]
+      `insert into tickets (tenant_id, service_id, location_id, ticket_number, type, status, slot_time, hour_block, visit_date, created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9, coalesce($10::timestamptz, now())) returning *`,
+      [tenantId, service.id, service.location_id, ticketNumber, type, type === "booked" ? "booked" : "waiting", slotTime, hourBlock, date, testNowParam()]
     )).rows[0];
     let publicToken = null;
     if (access) {
@@ -121,5 +156,6 @@ export async function createTicket({ tenantId, service, req, access = null, audi
     throw err;
   } finally {
     client.release();
+    releaseSlot();
   }
 }

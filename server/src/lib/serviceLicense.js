@@ -1,5 +1,5 @@
 import { query } from "../db/pool.js";
-import { getToday } from "./clock.js";
+import { getToday, londonDate, now } from "./clock.js";
 import { addDays, isDateFullyPast } from "./plan.js";
 import { badRequest } from "./validate.js";
 
@@ -58,9 +58,14 @@ export function resolvePlan(planId, customDays, pricing) {
 // are pure date comparisons — unlike the old location-level model, dates are chosen
 // explicitly by an admin, never auto-assigned, so there's no "wait for opening hours" step.
 // Called on every read that needs an accurate status, since there's no background job.
-export async function resolveServiceLicenses(serviceId) {
+// The London calendar day a licence's dates were assigned on (scheduled_at is a timestamptz).
+function scheduledOn(ts) {
+  return londonDate(ts instanceof Date ? ts : new Date(ts));
+}
+
+export async function resolveServiceLicenses(serviceId, db = query) {
   const today = getToday();
-  const result = await query(
+  const result = await db(
     `select * from service_licenses where service_id=$1 order by purchased_at desc`,
     [serviceId]
   );
@@ -68,7 +73,7 @@ export async function resolveServiceLicenses(serviceId) {
   for (const lic of result.rows) {
     if (lic.status === "scheduled" || lic.status === "active") {
       if (lic.end_date < today && lic.status !== "expired") {
-        const r = await query(`update service_licenses set status='expired' where id=$1 returning *`, [lic.id]);
+        const r = await db(`update service_licenses set status='expired' where id=$1 returning *`, [lic.id]);
         resolved.push(r.rows[0]);
         continue;
       }
@@ -76,21 +81,21 @@ export async function resolveServiceLicenses(serviceId) {
       // start date has arrived (and the dates weren't only assigned today, so same-day set-up
       // still works) the licence goes back to Available with its dates cleared, so it isn't
       // used up by a service that never opened.
-      if (lic.start_date <= today && (!lic.scheduled_at || String(lic.scheduled_at.toISOString?.() ?? lic.scheduled_at).slice(0, 10) < today)) {
-        const has = await query(
+      if (lic.start_date <= today && (!lic.scheduled_at || scheduledOn(lic.scheduled_at) < today)) {
+        const has = await db(
           `select 1 from service_daily_config where service_id=$1 and date >= $2 and date <= $3 and coalesce(array_length(hours,1),0) > 0 limit 1`,
           [lic.service_id, lic.start_date, lic.end_date]
         );
         if (!has.rows.length) {
-          const r = await query(`update service_licenses set status='available', start_date=null, end_date=null, scheduled_at=null where id=$1 returning *`, [lic.id]);
-          await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
+          const r = await db(`update service_licenses set status='available', start_date=null, end_date=null, scheduled_at=null where id=$1 returning *`, [lic.id]);
+          await db(`insert into audit_log (tenant_id, message) values ($1,$2)`,
             [lic.tenant_id, `Licence returned to Available — no hours were set for its dates (${lic.start_date} to ${lic.end_date})`]);
           resolved.push(r.rows[0]);
           continue;
         }
       }
       if (lic.status === "scheduled" && lic.start_date <= today) {
-        const r = await query(`update service_licenses set status='active' where id=$1 returning *`, [lic.id]);
+        const r = await db(`update service_licenses set status='active' where id=$1 returning *`, [lic.id]);
         resolved.push(r.rows[0]);
         continue;
       }
@@ -127,11 +132,16 @@ export function windowsOverlap(aStart, aEnd, bStart, bEnd) {
 // Returns { ok: true } if scheduling `start`..`end` on this service is safe — i.e. it
 // doesn't land entirely in the past and doesn't overlap another of the service's own
 // scheduled/active licenses — or { ok: false, error } with a message fit to show the user.
-export async function checkSchedulable(serviceId, start, end, excludeLicenseId) {
+// `db` is the query function to use (a transaction client's bound query when called under a lock).
+export async function checkSchedulable(serviceId, start, end, excludeLicenseId, db = query) {
   if (isDateFullyPast(end)) {
     return { ok: false, error: "That window has already passed." };
   }
-  const licenses = await resolveServiceLicenses(serviceId);
+  // A window that began before today would be bought, then partly used up before it could ever be served.
+  if (isDateFullyPast(start)) {
+    return { ok: false, error: "That start date has already passed — pick today or a later date." };
+  }
+  const licenses = await resolveServiceLicenses(serviceId, db);
   const conflict = activeAndScheduledWindows(
     licenses.filter((l) => l.id !== excludeLicenseId)
   ).find((w) => windowsOverlap(start, end, w.start, w.end));
@@ -148,5 +158,5 @@ export function computeEndDate(startDate, planDays) {
 export function isWithinRefundWindow(license) {
   const purchasedAt = new Date(license.purchased_at);
   const cutoff = new Date(purchasedAt.getTime() + REFUND_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  return new Date() <= cutoff;
+  return now() <= cutoff;
 }

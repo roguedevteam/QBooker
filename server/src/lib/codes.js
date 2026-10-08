@@ -1,9 +1,12 @@
+import crypto from "crypto";
+
 // Short codes like QB-7F3K2A — one per location. Encoded into QR codes and wa.me links so
 // a single shared WhatsApp number can tell which business + location a message belongs to.
 export function genLocationCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I — avoids QR/manual-entry mixups
   let s = "QB-";
-  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  // crypto, not Math.random: a location code is also the on-site secret, so it must not be predictable.
+  for (let i = 0; i < 6; i++) s += chars[crypto.randomInt(chars.length)];
   return s;
 }
 

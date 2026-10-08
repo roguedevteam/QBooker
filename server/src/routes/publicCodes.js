@@ -1,10 +1,13 @@
 import { Router } from "express";
 import { query } from "../db/pool.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { rateLimit } from "../lib/rateLimit.js";
 
 const router = Router();
 
-router.get("/:code", asyncHandler(async (req, res) => {
+// A code names a business and location, so guessing them must be slow: 60 lookups a minute per connection
+// (a patient scanning a QR poster needs one).
+router.get("/:code", rateLimit({ windowMs: 60 * 1000, max: 60 }), asyncHandler(async (req, res) => {
   if (!/^[A-Za-z0-9-]{3,20}$/.test(req.params.code)) return res.status(404).json({ error: "That code wasn't recognised." });
   const result = await query(
     `select lc.code, lc.tenant_id, lc.location_id, t.business_name, l.name as location_name

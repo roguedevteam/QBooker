@@ -8,12 +8,12 @@ import {
   currentHourBlock, buildTodayRibbon, BLOCK_MINUTES,
 } from "../lib/scheduling.js";
 import { isDateFullyPast, addDays } from "../lib/plan.js";
-import { getToday, londonNowMinutes } from "../lib/clock.js";
+import { getToday, londonNowMinutes, nowSql, now as clockNow } from "../lib/clock.js";
 import { dayCfg, getAvailability, loadService as loadServiceForTenant } from "../lib/availability.js";
 import { createTicket, parseTicketRequest } from "../lib/tickets.js";
 import {
   badRequest, notFound, conflict, isUuid, uuidParams, reqDate, optDate, reqString, optString, optEmail, optInt, optBool, optEnum,
-  clockMinutesOrUndefined, parseHours, EMAIL_RE,
+  clockMinutesOrUndefined, parseHours, EMAIL_RE, optWebUrl,
 } from "../lib/validate.js";
 import {
   resolveServiceLicenses, resolveServiceLicense, activeAndScheduledWindows,
@@ -123,7 +123,7 @@ router.patch("/me", adminOnly, asyncHandler(async (req, res) => {
   const lastName = optString(req.body.lastName, "Last name", { max: 100, allowEmpty: true }) || undefined;
   const email = optEmail(req.body.email);
   const companyAddress = optString(req.body.companyAddress, "Company address", { max: 500, allowEmpty: true });
-  const websiteUrl = optString(req.body.websiteUrl, "Website", { max: 300, allowEmpty: true });
+  const websiteUrl = optWebUrl(req.body.websiteUrl, "Website");
   // "How patients join" is account-wide. Validated strictly (undefined = leave unchanged).
   const channelMode = optEnum(req.body.channelMode, "channelMode", ["whatsapp", "web", "both"]);
   const whatsappUpdatesOffer = optBool(req.body.whatsappUpdatesOffer, "whatsappUpdatesOffer");
@@ -214,9 +214,16 @@ router.get("/locations", asyncHandler(async (req, res) => {
   res.json({ locations: result.rows });
 }));
 
+// Location names are how staff and patients tell locations apart: unique per account (case-insensitive), as at sign-up.
+async function assertLocationNameFree(tenantId, name, exceptId = null) {
+  const dup = await query(`select 1 from locations where tenant_id=$1 and lower(name)=lower($2) and ($3::uuid is null or id<>$3) limit 1`, [tenantId, name, exceptId]);
+  if (dup.rows.length) throw conflict("You already have a location with that name. Location names must be unique.");
+}
+
 router.post("/locations", adminOnly, asyncHandler(async (req, res) => {
   const name = reqString(req.body.name, "Name");
   const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
+  await assertLocationNameFree(req.tenant.id, name);
   const t = req.tenant;
   const staffAccessCode = genAccessCode();
   const loc = await query(
@@ -235,6 +242,7 @@ router.patch("/locations/:id", adminOnly, asyncHandler(async (req, res) => {
   const name = optString(req.body.name, "Name");
   const address = optString(req.body.address, "Address", { max: 500, allowEmpty: true });
   const archived = optBool(req.body.archived, "archived");
+  if (name !== undefined) await assertLocationNameFree(req.tenant.id, name, req.params.id);
   // Join settings (channel mode etc.) are account-wide now — see PATCH /me; any sent here are ignored.
   const result = await query(
     `update locations set name=coalesce($1,name), address=coalesce($2,address), archived=coalesce($3,archived)
@@ -375,9 +383,9 @@ router.post("/services/:id/licenses", adminOnly, asyncHandler(loadService), asyn
   const licMethod = isFree ? null : method;
   const licPaid = isFree || method === "card";
   const result = await query(
-    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid, paid_at, invoice_po)
-     values ($1,$2,$3,$4,$5,$6,'available',$7,$8,$9,$10) returning *`,
-    [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price, licMethod, licPaid, licPaid && !isFree ? new Date() : null,
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid, paid_at, invoice_po, purchased_at)
+     values ($1,$2,$3,$4,$5,$6,'available',$7,$8,$9,$10,${nowSql()}) returning *`,
+    [req.tenant.id, req.service.id, plan.planId, plan.planLabel, plan.planDays, plan.price, licMethod, licPaid, licPaid && !isFree ? clockNow() : null,
       method === "invoice" ? (invoicePO?.trim() || req.tenant.invoice_po || null) : null]
   );
   if (method === "invoice" && Number(plan.price) > 0) {
@@ -427,8 +435,6 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
     return res.status(409).json({ error: "An active license's dates can't be changed." });
   }
   const endDate = computeEndDate(startDate, license.plan_days);
-  const check = await checkSchedulable(req.service.id, startDate, endDate, license.id);
-  if (!check.ok) return res.status(409).json({ error: check.error });
 
   const wasScheduled = license.status === "scheduled";
   const status = startDate <= getToday() ? "active" : "scheduled";
@@ -442,8 +448,17 @@ router.patch("/services/:id/licenses/:licenseId", adminOnly, asyncHandler(loadSe
   let result, hoursMoved = false;
   try {
     await client.query("BEGIN");
+    // One scheduler at a time per service: the overlap check and the update must not interleave with another
+    // request's, or two licences could both claim the same days. (The check reads committed rows, so it sees
+    // whatever the previous lock holder just committed.)
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`license|${req.service.id}`]);
+    const check = await checkSchedulable(req.service.id, startDate, endDate, license.id, client.query.bind(client));
+    if (!check.ok) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: check.error });
+    }
     result = await client.query(
-      `update service_licenses set start_date=$1, end_date=$2, status=$3, scheduled_at=now() where id=$4 returning *`,
+      `update service_licenses set start_date=$1, end_date=$2, status=$3, scheduled_at=${nowSql()} where id=$4 returning *`,
       [startDate, endDate, status, license.id]
     );
     if (wasScheduled && license.start_date && license.end_date) {
@@ -516,7 +531,7 @@ router.post("/services/:id/licenses/:licenseId/pay", adminOnly, asyncHandler(loa
   if (!lic) return res.status(404).json({ error: "License not found." });
   if (lic.paid) return res.status(409).json({ error: "This license is already paid." });
   if (paymentMethod === "card") {
-    const r = await query(`update service_licenses set payment_method='card', paid=true, paid_at=now() where id=$1 returning *`, [lic.id]);
+    const r = await query(`update service_licenses set payment_method='card', paid=true, paid_at=${nowSql()} where id=$1 returning *`, [lic.id]);
     await query(`insert into audit_log (tenant_id, message) values ($1,$2)`, [req.tenant.id, `${lic.plan_label} license for "${req.service.name}" paid by card`]);
     return res.json({ license: r.rows[0] });
   }
@@ -546,7 +561,7 @@ router.post("/services/:id/licenses/:licenseId/refund", adminOnly, asyncHandler(
     await query(`delete from service_daily_config where service_id=$1 and date >= $2 and date <= $3`,
       [req.service.id, license.start_date, license.end_date]);
   }
-  const result = await query(`update service_licenses set status='refunded', refunded_at=now() where id=$1 returning *`, [license.id]);
+  const result = await query(`update service_licenses set status='refunded', refunded_at=${nowSql()} where id=$1 returning *`, [license.id]);
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `License refunded for "${req.service.name}" — ${license.plan_label}, £${license.price}`]);
   res.json({ license: result.rows[0] });
@@ -787,12 +802,12 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   // staff covering the same service calling "next" at the same moment can't both land on the
   // same ticket — the loser just sees the next one in line instead.
   const result = await query(
-    `update tickets set status='serving', called_at=now(), finished_at=null, called_room=$7, called_by_staff_id=$8, called_by_name=$9
+    `update tickets set status='serving', called_at=${nowSql()}, finished_at=null, called_room=$7, called_by_staff_id=$8, called_by_name=$9
      where id = (
        select id from tickets
        where service_id=$1 and tenant_id=$2 and visit_date=$3
          and (($5 and type='walk_in' and status='waiting') or ($6 and type='booked' and status='booked' and slot_time <= $4))
-       order by (case when type='booked' then slot_time else extract(epoch from created_at)::int end) asc
+       order by (case when type='booked' then slot_time else extract(epoch from created_at) end) asc
        limit 1
        for update skip locked
      )
@@ -815,7 +830,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
 router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   const roomLabel = parseRoom(req.body.roomLabel);
   const result = await query(
-    `update tickets set status='serving', called_at=now(), finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
+    `update tickets set status='serving', called_at=${nowSql()}, finished_at=null, called_room=$3, called_by_staff_id=$4, called_by_name=$5 where id=$1 and tenant_id=$2 and status in ('waiting','booked') returning *`,
     [req.params.id, req.tenant.id, roomLabel, req.staff?.id || null, staffName(req)]
   );
   if (result.rows.length === 0) return res.status(409).json({ error: "That ticket has already been called or is no longer waiting." });
@@ -843,6 +858,8 @@ router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
   if (ticket.status !== "serving") throw conflict("Only a ticket that has been called can be called again.");
   const roomText = `Please come to ${roomLabel}.`;
   const body = callMessage(roomLabel);
+  // The patient's screen shows the room on the ticket, so a different room on "call again" must replace it.
+  await query(`update tickets set called_room=$1 where id=$2 and status='serving'`, [roomLabel, ticket.id]);
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called again — WhatsApp ping sent: "${roomText}"`]);
@@ -900,6 +917,9 @@ router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
     : null;
   if (!newService) return res.status(404).json({ error: "Target service not found." });
   if (!["waiting", "booked", "serving"].includes(ticket.status)) throw conflict("This ticket has already ended, so it can't be sent to another service.");
+  // An archived service (or one at an archived location) is closed to everyone: nobody would ever call the patient.
+  const targetLoc = (await query(`select archived from locations where id=$1`, [newService.location_id])).rows[0];
+  if (newService.archived || targetLoc?.archived) throw conflict("That service is archived, so it can't take patients. Pick another service.");
 
   const day = (await query(`select * from service_daily_config where service_id=$1 and date=$2`, [newService.id, ticket.visit_date])).rows[0];
   let hourBlock = null;
@@ -921,7 +941,7 @@ router.post("/tickets/:id/route", asyncHandler(async (req, res) => {
 router.post("/tickets/:id/close", asyncHandler(async (req, res) => {
   const ticket = await loadOwnTicket(req);
   if (ticket.status === "completed") return res.json({ ok: true }); // repeating a close is harmless
-  const r = await query(`update tickets set status='completed', finished_at=coalesce(finished_at, now()) where id=$1 and status='serving' returning id`, [ticket.id]);
+  const r = await query(`update tickets set status='completed', finished_at=coalesce(finished_at, ${nowSql()}) where id=$1 and status='serving' returning id`, [ticket.id]);
   if (!r.rows[0]) throw conflict("Only a ticket that has been called can be closed.");
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} closed — finished serving for ${(await serviceName(ticket.service_id)) || "service"}`]);

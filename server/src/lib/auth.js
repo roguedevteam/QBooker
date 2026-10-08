@@ -4,7 +4,7 @@ import "dotenv/config";
 const SECRET = process.env.JWT_SECRET;
 
 export function signSession(payload, expiresIn = "12h") {
-  return jwt.sign(payload, SECRET, { expiresIn });
+  return jwt.sign(payload, SECRET, { expiresIn, algorithm: "HS256" });
 }
 
 export function requireAuth(...allowedRoles) {
@@ -13,7 +13,8 @@ export function requireAuth(...allowedRoles) {
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
     if (!token) return res.status(401).json({ error: "Not signed in." });
     try {
-      const payload = jwt.verify(token, SECRET);
+      // Algorithm pinned: never trust the token header to choose how it is verified (alg:none / key confusion).
+      const payload = jwt.verify(token, SECRET, { algorithms: ["HS256"] });
       if (allowedRoles.length && !allowedRoles.includes(payload.role)) {
         return res.status(403).json({ error: "Not allowed for this role." });
       }

@@ -118,3 +118,16 @@ export function parseHours(v) {
   if (new Set(v).size !== v.length) throw badRequest("hours must not contain duplicates.");
   return [...v].sort((a, b) => a - b);
 }
+
+// A business website: only http(s) links are ever stored (a "javascript:" or "data:" URL rendered as a link would run
+// script). A bare "example.org" gets https:// in front. undefined/null -> undefined; blank -> "" (clears it).
+export function optWebUrl(v, name = "Website", { max = 300 } = {}) {
+  const s = optString(v, name, { max, allowEmpty: true });
+  if (s === undefined || s === "") return s;
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`;
+  let u;
+  try { u = new URL(withScheme); } catch { throw badRequest(`${name} must be a web address starting with http:// or https://.`); }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw badRequest(`${name} must be a web address starting with http:// or https://.`);
+  if (!u.hostname || u.username || u.password) throw badRequest(`${name} must be a web address starting with http:// or https://.`);
+  return withScheme;
+}

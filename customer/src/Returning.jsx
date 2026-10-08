@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "./lib/api.js";
 import { alertPref } from "./lib/storage.js";
+import { nowMinutes } from "./lib/clock.js";
 import Shell, { Bubble, POWERED_BY } from "./Shell.jsx";
 
 const POLL_MS = 10000;
@@ -191,7 +192,7 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
   const booked = data.type === "booked";
   const ahead = data.peopleAhead;
   const mins = data.estimatedMinutes;
-  const minsToGo = booked && typeof data.slotTime === "number" ? data.slotTime - (new Date(now).getHours() * 60 + new Date(now).getMinutes()) : null;
+  const minsToGo = booked && typeof data.slotTime === "number" ? data.slotTime - nowMinutes() : null;
   const soon = minsToGo != null && minsToGo > 0 && minsToGo <= 15;
   const subtitle = called ? "It's your turn" : booked ? "Your appointment" : "You're in the queue";
   const waNotedNow = data.whatsappUpdatesRequested || waNoted;

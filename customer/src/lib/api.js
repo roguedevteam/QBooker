@@ -25,7 +25,7 @@ async function requestOrNetwork(path, opts) {
 }
 
 export const api = {
-  getClock: () => request("/api/public/clock"),
+  getClock: () => request("/api/public/time"),
 
   getInfo: (tenantId) => request(`/api/public/tenant/${tenantId}/info`),
   getLocations: (tenantId) => request(`/api/public/tenant/${tenantId}/locations`),

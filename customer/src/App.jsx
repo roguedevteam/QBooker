@@ -1,14 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "./lib/api.js";
-import { todayIso, refreshClock } from "./lib/clock.js";
+import { todayIso, nowMinutes, refreshClock } from "./lib/clock.js";
 import { getSavedToken, saveToken, clearSavedToken, setUrlToken, urlParam, getDeviceId } from "./lib/storage.js";
 import Returning from "./Returning.jsx";
 import Shell, { Bubble, Choices, POWERED_BY } from "./Shell.jsx";
 
-function nowMinutes() {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
 function formatTime(min) {
   let h = Math.floor(min / 60);
   const m = min % 60;
@@ -261,7 +257,8 @@ function Patient({ tenantId }) {
         openTicket(r.publicToken);
       } catch (err) { bot(`Sorry — ${err.message}`, startAgain.map((o) => ({ ...o, variant: "secondary" }))); }
     } else if (action === "website") {
-      window.open(payload, "_blank", "noopener");
+      // Only ever open web links: a stored "javascript:" / "data:" address must not run script.
+      try { const u = new URL(payload); if (u.protocol === "http:" || u.protocol === "https:") window.open(u.href, "_blank", "noopener,noreferrer"); } catch { /* not a URL: ignore */ }
     } else if (action === "restart") {
       beginChat(startLoc ?? null);
     }

@@ -36,7 +36,7 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
 }
 
 export const api = {
-  getClock: () => request("/api/public/clock", { auth: false }),
+  getClock: () => request("/api/public/time", { auth: false }),
 
   requestStaffOtp: (email) => request("/api/auth/staff/request-otp", { method: "POST", body: { email }, auth: false }),
   verifyStaffOtp: (email, code) => request("/api/auth/staff/verify-otp", { method: "POST", body: { email, code }, auth: false }),

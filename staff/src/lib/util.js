@@ -1,10 +1,7 @@
 // Small shared helpers for the staff kiosk.
-export function nowMinutes() {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
+export { nowMinutes } from "./clock.js"; // London wall-clock minutes (the clinic's time, whatever the device says)
 export function formatClock(iso) {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 }
 export function formatTime(min) {
   let h = Math.floor(min / 60);

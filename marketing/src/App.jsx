@@ -185,7 +185,7 @@ function ShotsSection() {
 
 function HybridTimeline() {
   return (
-    <div className="lp-timeline-card" role="img" aria-label="A one-day clinic from 9am to 5pm. At 10:40am, patients on site join the queue as tickets 14, 15 and 16. Patients at work have reserved slots at 2pm, 3pm and 4pm. Both appear in the same queue.">
+    <div className="lp-timeline-card" tabIndex={0} role="img" aria-label="A one-day clinic from 9am to 5pm. At 10:40am, patients on site join the queue as tickets 14, 15 and 16. Patients at work have reserved slots at 2pm, 3pm and 4pm. Both appear in the same queue.">
       <div className="lp-tl" aria-hidden="true">
         <div />
         <div className="lp-tl-axis">

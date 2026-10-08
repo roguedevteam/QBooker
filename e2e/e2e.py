@@ -34,6 +34,14 @@ def log(*a):
     print(*a, flush=True)
 
 
+def london_minutes_now():
+    """Wall-clock minutes since midnight in London right now (real clock)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    n = datetime.now(ZoneInfo("Europe/London"))
+    return n.hour * 60 + n.minute
+
+
 # ----------------------------------------------------------------------------------------------------------
 # Infrastructure: ports, builds, static servers, private API instance
 # ----------------------------------------------------------------------------------------------------------
@@ -67,6 +75,7 @@ class Infra:
         self.args = args
         self.servers, self.proc, self.log_path = [], None, OUT / "api.log"
         self.urls = {}
+        self.test_clock, self.base_now = False, None
 
     def start(self):
         a = self.args
@@ -75,7 +84,8 @@ class Infra:
             self.urls = {k: v.rstrip("/") for k, v in given.items()}
             log("using running instances:", self.urls)
             return
-        ports = dict(api=free_port(4210), marketing=free_port(4211), admin=free_port(4212), staff=free_port(4213), customer=free_port(4214), sysadmin=free_port(4215))
+        base = int(os.environ.get("E2E_BASE_PORT", "4210"))   # set E2E_BASE_PORT to run next to another suite
+        ports = dict(api=free_port(base), marketing=free_port(base + 1), admin=free_port(base + 2), staff=free_port(base + 3), customer=free_port(base + 4), sysadmin=free_port(base + 5))
         urls = {k: f"http://localhost:{p}" for k, p in ports.items()}
         for k, v in given.items():
             if v:
@@ -131,6 +141,16 @@ class Infra:
                                capture_output=True, text=True).stdout.strip()
         env = {**os.environ, "DATABASE_URL": DB_URL, "DATABASE_SSL": "false", "JWT_SECRET": "testsecret", "PORT": str(port),
                "CORS_ORIGIN": origins, "SYSTEM_ADMIN_PASSWORD_HASH": hash_}
+        env.pop("QB_TEST_NOW", None)
+        env.pop("NODE_ENV", None)
+        self.test_clock = not self.args.real_clock
+        if self.test_clock:
+            # The private API runs on a TEST CLOCK (honoured only with NODE_ENV=test / QB_TEST_NOW): midday UTC today, so the
+            # "closed / after hours" states are deterministic whatever time the suite is run, and journey T can move the
+            # server to 00:30 BST, the DST nights... It keeps ticking from there, so the run still behaves like real time.
+            env["NODE_ENV"] = "test"
+            env["QB_TEST_NOW"] = self.args.now or time.strftime("%Y-%m-%dT12:00:00Z", time.gmtime())
+            self.base_now = env["QB_TEST_NOW"]
         lf = open(self.log_path, "w")
         self.proc = subprocess.Popen(["node", "--import", str(HERE / "dns-stub.mjs"), "src/index.js"], cwd=ROOT / "server", env=env,
                                      stdout=lf, stderr=subprocess.STDOUT)
@@ -184,10 +204,23 @@ class Api:
     def clock_today(self):
         return self.ok("GET", "/api/public/clock")["today"]
 
+    def sys_token(self):
+        if not getattr(self, "_sys", None):
+            self._sys = self.ok("POST", "/api/auth/system/login", dict(password="adminpass"))["token"]
+        return self._sys
+
+    def reset_limits(self):
+        """Forget the private API's per-IP rate-limit counters (test instance only; a no-op elsewhere)."""
+        self.req("POST", "/api/system/test-reset-limits", {}, self.sys_token())
+
+    def set_now(self, iso, frozen=False):
+        """Move the private API's TEST CLOCK (only exists on the suite's own API instance)."""
+        return self.ok("POST", "/api/system/test-now", dict(now=iso, frozen=frozen), self.sys_token())
+
     def make_tenant(self, name, locations, services, website=None, license_today=True, hours="all", staff=4, booking=2, walkin=2):
         """locations: [name]; services: [(name, mode, locationIndex)].  Every service gets a licence starting today
         (first one uses the free trial licence).  hours: 'all' (whole day) | list of minute starts | None (no hours)."""
-        email = f"e2e-{RUN}-{re.sub('[^a-z0-9]', '', name.lower())[:18]}@example.com"
+        email = f"e2e-{RUN}-{re.sub('[^a-z0-9]', '', name.lower())[:40]}@example.com"
         st = self.ok("POST", "/api/auth/signup", dict(
             businessName=name, firstName="E2E", lastName="Fixture", email=email,
             locations=[{"name": n} for n in locations],
@@ -409,6 +442,31 @@ JS_FOCUS = r"""
 """
 
 
+# axe-core (WCAG 2.1 A/AA rules) is injected into every scanned screen. It is not vendored: `npm install --no-save axe-core` in e2e/
+# (or set E2E_AXE to the path of axe.min.js). Without it the axe checks are skipped once and the rest of the suite runs as before.
+AXE_CANDIDATES = [os.environ.get("E2E_AXE", ""), str(HERE / "node_modules/axe-core/axe.min.js"), "/tmp/e2e-axe/node_modules/axe-core/axe.min.js"]
+_AXE = {"src": None, "warned": False}
+
+
+def axe_source():
+    if _AXE["src"] is None:
+        _AXE["src"] = ""
+        for c in AXE_CANDIDATES:
+            if c and Path(c).exists():
+                _AXE["src"] = Path(c).read_text()
+                break
+    return _AXE["src"]
+
+
+JS_AXE = r"""
+async () => {
+  const r = await axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']}, resultTypes: ['violations']});
+  return r.violations.map((v) => ({id: v.id, impact: v.impact, n: v.nodes.length,
+    where: v.nodes.slice(0, 3).map((n) => n.target.join(' ').slice(0, 70) + ((n.any[0] || n.all[0] || n.none[0] || {}).message ? ' [' + (n.any[0] || n.all[0] || n.none[0]).message.slice(0, 90) + ']' : ''))}));
+}
+"""
+
+
 class Actor:
     """One browser context + page with monitoring (a patient's phone, the admin's laptop, a staff tablet...)."""
 
@@ -427,7 +485,7 @@ class Actor:
     def goto(self, url):
         self.page.goto(url, wait_until="load")
 
-    def scan(self, area, label, focus=False, touch=True, allow=()):
+    def scan(self, area, label, focus=False, touch=True, allow=(), axe=True, allow_rules=()):
         """Generic checks that apply to every screen."""
         T, p = self.env.T, self.page
         time.sleep(0.25)
@@ -448,8 +506,28 @@ class Actor:
         if self.phone and touch:
             T.add(area, f"{label}: touch targets >= 44px high", not r["small"], "; ".join(r["small"][:8]) + (f" (+{len(r['small']) - 8} more)" if len(r["small"]) > 8 else ""), p)
         T.add(area, f"{label}: basic a11y (h1, alt, labels, names)", not r["a11y"], "; ".join(r["a11y"][:6]), p)
+        if axe:
+            self.axe_check(area, label, allow_rules)
         if focus:
             self.check_focus(area, label)
+
+    def axe_check(self, area, label, allow_rules=()):
+        T, p = self.env.T, self.page
+        src = axe_source()
+        if not src:
+            if not _AXE["warned"]:
+                _AXE["warned"] = True
+                T.skip("X", "axe-core WCAG 2.1 AA checks", "axe-core not installed: run `npm install --no-save axe-core` in e2e/")
+            return
+        try:
+            if not p.evaluate("typeof window.axe !== 'undefined'"):
+                p.add_script_tag(content=src)
+            viol = [v for v in p.evaluate(JS_AXE) if v["id"] not in allow_rules]
+        except Exception as e:  # navigated away mid-run
+            T.add(area, f"{label}: axe WCAG 2.1 AA", False, f"axe could not run: {str(e)[:160]}", p)
+            return
+        T.add(area, f"{label}: axe WCAG 2.1 AA (no violations)", not viol,
+              " || ".join(f"{v['id']} ({v['impact']}, {v['n']}x): " + " ; ".join(v["where"][:2]) for v in viol[:4]), p)
 
     def check_focus(self, area, label, tabs=6):
         T, p = self.env.T, self.page
@@ -930,7 +1008,8 @@ def journey_C(env):
     T, S, api, C = env.T, env.S, env.api, "C"
     cust, tid, biz = env.urls["customer"], S["tenant_id"], S["biz"]
     fx = env.fx
-    late_night = time.localtime().tm_hour == 0
+    # With the suite's own API on a test clock (midday) the after-hours states are deterministic; on a real clock they need London time after 00:30.
+    late_night = (not env.infra.test_clock) and london_minutes_now() <= 30
     # ---- multi-location chooser ---------------------------------------------------------------------------------
     p1 = env.actor()
     p = p1.page
@@ -1132,7 +1211,7 @@ def journey_C(env):
         a.scan(C, label)
         return a
     if late_night:
-        T.skip(C, "closed / after-hours states", "needs the local time to be after 00:30 (fixture hours end at 00:30)")
+        T.skip(C, "closed / after-hours states", "real clock before 00:30 (fixture hours end at 00:30): run without --real-clock for the deterministic test clock")
     else:
         closed_case("after hours (last opening block has ended): welcome to the location + 'Visit our website'", fx["closed"],
                     "Welcome to e2e Closed Site.", "We're not open right now", True, "patient: after hours with website")
@@ -1471,6 +1550,476 @@ def journey_E(env):
 
 
 # ==========================================================================================================
+# helpers shared by the G / H / T journeys
+# ==========================================================================================================
+def add_staff_member(env, tenant, first="Night", last="Nurse", tag="x"):
+    email = f"e2e-{RUN}-{env.vp}-{tag}@example.com"
+    env.api.ok("POST", "/api/tenant/staff", dict(firstName=first, lastName=last, email=email), tenant["token"])
+    return email
+
+
+def start_shift(a, email, room, services, S, location=None):
+    """Staff kiosk: sign in with the demo code, pick a location when asked, tick services, Start."""
+    p = a.page
+    a.goto(a.env.urls["staff"])
+    wait_text(p, "Email me a code")
+    p.get_by_label("Email address").fill(email)
+    btn(p, "Email me a code").click()
+    wait_text(p, "Demo code:")
+    code = p.locator(".help-card strong.mono").inner_text().strip()
+    p.get_by_label("Digit 1 of 6").click()
+    p.keyboard.type(code, delay=25)
+    btn(p, "Sign in", exact=True).click()
+    wait_text(p, "Where are you working today?")
+    if location:
+        p.get_by_role("button", name=location).click()
+    p.get_by_label("Room or desk").wait_for()
+    p.get_by_label("Room or desk").fill(room)
+    for svc in services:
+        lab = p.locator("label.opt").filter(has_text=svc)
+        if lab.count() and not lab.first.locator("input").is_checked():
+            lab.first.click()
+    btn(p, "Start", exact=True).click()
+    p.locator(".kiosk-bar").wait_for()
+
+
+def inject_admin_session(a, token):
+    """Open customer-admin already signed in (the sign-in flow itself is covered by journey A)."""
+    p = a.page
+    a.goto(a.env.urls["admin"])
+    p.evaluate("(t) => sessionStorage.setItem('qf_admin_token', t)", token)
+    p.reload()
+    wait_text(p, "Customer admin")
+
+
+def staff_sees(p, number, timeout=20000):
+    p.locator(".wrow").filter(has_text=number).first.wait_for(timeout=timeout)
+
+
+def staff_sees_not(p, number, timeout=20000):
+    p.locator(".wrow").filter(has_text=number).first.wait_for(state="detached", timeout=timeout)
+
+
+def db_ticket(tenant_id, number):
+    r = psql(f"select visit_date::text||'|'||coalesce(hour_block::text,'')||'|'||status from tickets where tenant_id='{tenant_id}' and ticket_number='{number}' order by created_at desc limit 1")
+    d, hb, st = (r.split("|") + ["", ""])[:3]
+    return d, hb, st
+
+
+# ==========================================================================================================
+# H. Multi-location business: 3 locations, several services each (chooser, isolation, archive mid-day)
+# ==========================================================================================================
+def journey_H(env):
+    T, api, H = env.T, env.api, "H"
+    cust = env.urls["customer"]
+    fx = api.make_tenant(f"e2e-{RUN}-{env.vp}-Multi", ["e2e Alpha", "e2e Beta", "e2e Gamma"],
+                         [("Alpha Desk", "queue", 0), ("Alpha Clinic", "hybrid", 0), ("Beta Desk", "queue", 1), ("Gamma Desk", "queue", 2)], hours=None)
+    tok, tid = fx["token"], fx["id"]
+    svc = {s["name"]: s for s in fx["services"]}
+    loc = {l["name"]: l for l in fx["locations"]}
+    for n, s_ in svc.items():                               # Gamma is closed at midday, the rest open all day
+        api.set_hours(tok, s_, [0, 30] if n == "Gamma Desk" else "all")
+    ca = env.actor()
+    p = ca.page
+    with T.step(H, "chooser lists all three locations: two open, the closed one visible but not tappable", p, critical=True):
+        ca.goto(f"{cust}/?t={tid}")
+        wait_text(p, "Which location are you at?")
+        for n, open_ in (("e2e Alpha", True), ("e2e Beta", True), ("e2e Gamma", False)):
+            b = p.get_by_role("button", name=re.compile(re.escape(n) + ".*" + ("Open now" if open_ else "Not available")))
+            b.wait_for()
+            assert b.is_enabled() == open_, (n, open_)
+    ca.scan(H, "patient: three-location chooser", focus=True)
+    with T.step(H, "Alpha lists only Alpha's own two services", p, critical=True):
+        choice(p, "e2e Alpha").click()
+        wait_text(p, "Which service do you need today?")
+        names = sorted(x.strip() for x in p.locator(".choices button").all_inner_texts() if "another" not in x.lower())
+        assert names[:2] == ["Alpha Clinic", "Alpha Desk"] and not any("Beta" in n or "Gamma" in n for n in names), names
+    ca.scan(H, "patient: Alpha services")
+    with T.step(H, "a single open service skips the picker (Beta) and a join lands in Beta's queue", p):
+        cb = env.actor()
+        cb.goto(f"{cust}/?t={tid}")
+        wait_text(cb.page, "Which location are you at?")
+        choice(cb.page, "e2e Beta").click()
+        wait_text(cb.page, "Ready to join the queue?")
+        choice(cb.page, "Join the queue now").click()
+        cb.page.locator(".ticket-band-num").wait_for()
+        n_beta = ticket_number(cb.page)
+        beta_tok = re.search(r"[?&]k=([^&]+)", cb.page.url).group(1)
+        assert has_text(cb.page, "Your ticket · Beta Desk")
+    with T.step(H, "a ?l= location link skips the chooser and lands on that location", p):
+        cc = env.actor()
+        cc.goto(f"{cust}/?t={tid}&l={loc['e2e Alpha']['id']}")
+        wait_text(cc.page, "Which service do you need today?")
+        assert not has_text(cc.page, "Which location are you at?")
+        cc.close()
+    with T.step(H, "closed Gamma via its own link says nothing is available (no join offered)", p):
+        cg = env.actor()
+        cg.goto(f"{cust}/?t={tid}&l={loc['e2e Gamma']['id']}")
+        wait_text(cg.page, "not open right now")
+        assert not has_text(cg.page, "Join the queue now")
+        cg.scan(H, "patient: closed location", touch=True)
+        cg.close()
+    a1 = api.join_walkin(tid, svc["Alpha Desk"]["id"])["ticket"]
+    b1 = api.join_walkin(tid, svc["Beta Desk"]["id"])["ticket"]
+    with T.step(H, "ticket numbers and rows are per location in the database", p):
+        rows = psql(f"select s.name||'|'||l.name from tickets t join services s on s.id=t.service_id join locations l on l.id=s.location_id where t.tenant_id='{tid}' and t.ticket_number in ('{a1['ticket_number']}','{b1['ticket_number']}','{n_beta}') order by 1")
+        assert "Alpha Desk|e2e Alpha" in rows and "Beta Desk|e2e Beta" in rows, rows
+    # ---- staff at Alpha only sees Alpha ---------------------------------------------------------------------------
+    email = add_staff_member(env, fx, first="Alpha", last="Nurse", tag="multi")
+    sa = env.actor()
+    sp = sa.page
+    with T.step(H, "staff at Alpha is offered only Alpha's services and sees only Alpha's queue", sp, critical=True):
+        sa.goto(env.urls["staff"])
+        wait_text(sp, "Email me a code")
+        sp.get_by_label("Email address").fill(email)
+        btn(sp, "Email me a code").click()
+        wait_text(sp, "Demo code:")
+        code = sp.locator(".help-card strong.mono").inner_text().strip()
+        sp.get_by_label("Digit 1 of 6").click()
+        sp.keyboard.type(code, delay=25)
+        btn(sp, "Sign in", exact=True).click()
+        wait_text(sp, "Where are you working today?")
+        for n in ("e2e Alpha", "e2e Beta", "e2e Gamma"):
+            sp.get_by_role("button", name=n).wait_for()
+        sp.get_by_role("button", name="e2e Alpha").click()
+        sp.get_by_label("Room or desk").wait_for()
+        labs = sp.locator("label.opt").all_inner_texts()
+        assert any("Alpha Desk" in x for x in labs) and any("Alpha Clinic" in x for x in labs), labs
+        assert not any("Beta" in x or "Gamma" in x for x in labs), labs
+        sp.get_by_label("Room or desk").fill("Room A")
+        for n in ("Alpha Desk", "Alpha Clinic"):
+            sp.locator("label.opt").filter(has_text=n).click()
+        btn(sp, "Start", exact=True).click()
+        sp.locator(".kiosk-bar").wait_for()
+        staff_tab(sa, "Waiting")
+        staff_sees(sp, a1["ticket_number"])
+        time.sleep(1)
+        assert sp.locator(".wrow").filter(has_text="Beta Desk").count() == 0, "Beta's ticket leaked into Alpha's list"
+    sa.scan(H, "staff: kiosk covering two services at one location", focus=True)
+    # ---- archive Beta mid-day --------------------------------------------------------------------------------------
+    with T.step(H, "patient already at Beta's join screen, then Beta is archived: joining is refused with a clear message", p):
+        cd = env.actor()
+        cd.goto(f"{cust}/?t={tid}")
+        wait_text(cd.page, "Which location are you at?")
+        choice(cd.page, "e2e Beta").click()
+        wait_text(cd.page, "Ready to join the queue?")
+        api.ok("PATCH", f"/api/tenant/locations/{loc['e2e Beta']['id']}", dict(archived=True), tok)
+        with cd.mon.expect("409", "Failed to load resource"):
+            choice(cd.page, "Join the queue now").click()
+            wait_text(cd.page, "not taking bookings")
+        assert cd.page.locator(".ticket-band-num").count() == 0
+        cd.close()
+    with T.step(H, "after archiving, a fresh chooser no longer lists Beta; Alpha and Gamma remain", p):
+        ce = env.actor()
+        ce.goto(f"{cust}/?t={tid}")
+        wait_text(ce.page, "Which location are you at?")
+        assert not has_text(ce.page, "e2e Beta")
+        assert has_text(ce.page, "e2e Alpha") and has_text(ce.page, "e2e Gamma")
+        ce.close()
+    with T.step(H, "the Beta patient who already had a ticket still sees it after the archive", cb.page):
+        cb.page.reload()
+        cb.page.locator(".ticket-band-num").wait_for()
+        assert ticket_number(cb.page) == n_beta
+        assert api.ok("GET", f"/api/public/ticket/{beta_tok}")["state"] in ("waiting", "called")
+    with T.step(H, "a ticket cannot be routed into the archived location's service", p):
+        st, js = api.req("POST", f"/api/tenant/tickets/{a1['id']}/route", dict(serviceId=svc["Beta Desk"]["id"]), tok)
+        assert st in (404, 409), (st, js)
+    with T.step(H, "Alpha's staff list is unchanged and still shows only Alpha's ticket", sp):
+        assert sp.locator(".wrow").filter(has_text=a1["ticket_number"]).count() == 1
+
+
+# ==========================================================================================================
+# G. Accessibility: contrast of the brand colours, keyboard-only flows, live regions, reflow
+# ==========================================================================================================
+def _lum(h):
+    h = h.lstrip("#")
+    c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def contrast(a, b):
+    la, lb = sorted((_lum(a), _lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+JS_ACTIVE = r"""
+() => { const e = document.activeElement; if (!e || e === document.body) return null;
+  const n = (e.getAttribute('aria-label') || e.innerText || e.value || e.id || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  return {tag: e.tagName.toLowerCase(), role: e.getAttribute('role'), name: n, cls: (e.getAttribute('class') || '').slice(0, 30)}; }
+"""
+
+JS_FAKE_BUTTONS = r"""
+() => [...document.querySelectorAll('div[onclick], span[onclick], [role=button]:not(button):not(a):not(input), div[tabindex], span[tabindex]')]
+  .filter((e) => e.checkVisibility && e.checkVisibility() && !(e.getAttribute('tabindex') === '-1') && !e.matches('[role=tab],[role=radio],[role=switch],[role=log],main,section,[class*=timeline-card]'))
+  .map((e) => e.tagName.toLowerCase() + '.' + (e.getAttribute('class') || '').slice(0, 20)).slice(0, 6)
+"""
+
+JS_LIVE = r"""
+() => { window.__live = []; const seen = (n) => { let e = n.nodeType === 1 ? n : n.parentElement; while (e) { const r = e.getAttribute && e.getAttribute('role'); const l = e.getAttribute && e.getAttribute('aria-live'); if (r === 'alert' || r === 'status' || r === 'log' || (l && l !== 'off')) return true; e = e.parentElement; } return false; };
+  window.__mo = new MutationObserver((ms) => { for (const m of ms) { const t = m.target; if (seen(t) || [...m.addedNodes].some((n) => seen(n))) window.__live.push((t.textContent || '').trim().slice(0, 60)); } });
+  window.__mo.observe(document.body, {childList: true, subtree: true, characterData: true}); }
+"""
+
+
+def tab_to(p, pred, limit=40):
+    """Press Tab until the focused element satisfies pred; return the visited list (or None if never reached)."""
+    visited = []
+    for _ in range(limit):
+        p.keyboard.press("Tab")
+        f = p.evaluate(JS_ACTIVE)
+        if f:
+            visited.append(f)
+            if pred(f):
+                return visited
+    return None
+
+
+def journey_G(env):
+    T, api, S, G = env.T, env.api, env.S, "G"
+    cust = env.urls["customer"]
+    # ---- brand colours ---------------------------------------------------------------------------------------------
+    pairs = [("navy text on page", "#122B40", "#F7F7F4", 4.5), ("blue text on page", "#1D5C8A", "#F7F7F4", 4.5),
+             ("amber-strong text on page", "#A8570A", "#F7F7F4", 4.5), ("white on navy", "#FFFFFF", "#122B40", 4.5),
+             ("white on blue", "#FFFFFF", "#1D5C8A", 4.5), ("white on amber-strong", "#FFFFFF", "#A8570A", 4.5),
+             ("amber #C8690D as non-text (borders, icons)", "#C8690D", "#F7F7F4", 3.0)]
+    for name, fg, bg, need in pairs:
+        r = contrast(fg, bg)
+        T.add(G, f"brand contrast: {name} = {r:.2f}:1 (need {need})", r >= need, f"{fg} on {bg}")
+    r = contrast("#C8690D", "#F7F7F4")
+    T.add(G, f"brand contrast: bright amber #C8690D is NOT used for body text ({r:.2f}:1 < 4.5)", True, "documented: use #A8570A for amber text")
+
+    # ---- fixture ---------------------------------------------------------------------------------------------------
+    fx = api.make_tenant(f"e2e-{RUN}-{env.vp}-A11y", ["e2e A11y Site"], [("Access Desk", "queue", 0)], hours="all", staff=4, booking=0, walkin=4)
+    svc, tok, tid = fx["services"][0], fx["token"], fx["id"]
+    # ---- patient join by keyboard only --------------------------------------------------------------------------------
+    pa = env.actor()
+    p = pa.page
+    with T.step(G, "patient join flow works with the keyboard alone (Tab to 'Join the queue now', Enter)", p, critical=True):
+        pa.goto(f"{cust}/?t={tid}")
+        wait_text(p, "Ready to join the queue?")
+        v = tab_to(p, lambda f: "Join the queue now" in f["name"])
+        assert v, "'Join the queue now' not reachable by Tab"
+        assert v[-1]["tag"] == "button", v[-1]
+        assert all(x["tag"] in ("button", "a", "input", "select", "textarea", "summary") for x in v), [x for x in v if x["tag"] not in ("button", "a", "input")]
+        p.evaluate(JS_LIVE)
+        p.keyboard.press("Enter")
+        p.locator(".ticket-band-num").wait_for()
+    with T.step(G, "after joining, focus is not dumped on <body> (it lands on the page or a control)", p):
+        time.sleep(0.4)
+        f = p.evaluate(JS_ACTIVE)
+        p.keyboard.press("Tab")
+        f2 = p.evaluate(JS_ACTIVE)
+        assert f or f2, "focus lost to body after the ticket appeared and Tab reached nothing"
+    with T.step(G, "no fake buttons (div/span with click handler or tabindex) on the patient screens", p):
+        fake = p.evaluate(JS_FAKE_BUTTONS)
+        assert not fake, fake
+    pa.scan(G, "patient: ticket (keyboard flow)", focus=True)
+    # ---- live region: ticket called ---------------------------------------------------------------------------------------
+    sb = env.actor()
+    email = add_staff_member(env, fx, first="Kay", last="Board", tag="a11y")
+    with T.step(G, "staff signs in and starts a shift using only the keyboard", sb.page, critical=True):
+        sp = sb.page
+        sb.goto(env.urls["staff"])
+        wait_text(sp, "Email me a code")
+        sp.get_by_label("Email address").focus()
+        sp.keyboard.type(email, delay=10)
+        sp.keyboard.press("Enter")
+        wait_text(sp, "Demo code:")
+        code = sp.locator(".help-card strong.mono").inner_text().strip()
+        sp.get_by_label("Digit 1 of 6").focus()
+        sp.keyboard.type(code, delay=25)
+        v = tab_to(sp, lambda f: f["name"] == "Sign in" and f["tag"] == "button")
+        assert v, "Sign in not reachable by Tab"
+        sp.keyboard.press("Enter")
+        wait_text(sp, "Where are you working today?")
+        sp.get_by_label("Room or desk").wait_for()
+        sp.get_by_label("Room or desk").focus()
+        sp.keyboard.type("Room K", delay=10)
+        lab = sp.locator("label.opt").filter(has_text="Access Desk").first
+        if not lab.locator("input").is_checked():
+            sp.locator("label.opt").filter(has_text="Access Desk").locator("input").focus()
+            sp.keyboard.press("Space")
+        v = tab_to(sp, lambda f: f["name"] == "Start" and f["tag"] == "button")
+        assert v, "Start not reachable by Tab"
+        sp.keyboard.press("Enter")
+        sp.locator(".kiosk-bar").wait_for()
+    with T.step(G, "staff 'Call next patient' by keyboard; focus stays inside the page (not on <body>) and the ticket card appears", sp, critical=True):
+        staff_tab(sb, "With you")
+        sp.locator(".call-btn").wait_for()
+        sp.locator(".call-btn").focus()
+        assert sp.evaluate(JS_ACTIVE)["tag"] == "button"
+        sp.keyboard.press("Enter")
+        sp.locator(".scard").wait_for()
+        time.sleep(0.4)
+        f = sp.evaluate(JS_ACTIVE)
+        sp.keyboard.press("Tab")
+        f2 = sp.evaluate(JS_ACTIVE)
+        T.add(G, "staff: focus after calling a patient is not lost to <body>", bool(f or f2), "activeElement is body and Tab reaches nothing" if not (f or f2) else (f2 or f)["name"], sp, kind="check")
+    with T.step(G, "patient page announces the call through a live region (role=alert / aria-live)", p):
+        poke(p)
+        p.locator("section.ticket-called").wait_for(timeout=20000)
+        assert p.locator("section.ticket-called").get_attribute("role") == "alert"
+        assert p.locator("section.ticket-called").get_attribute("aria-live") == "assertive"
+    pa.scan(G, "patient: ticket called", focus=True)
+    sb.scan(G, "staff: serving a patient (keyboard flow)", focus=True)
+    with T.step(G, "staff Finish by keyboard returns focus into the page and announces via the polite status region", sp):
+        fin = btn(sp, "Finish this patient")
+        fin.focus()
+        sp.evaluate(JS_LIVE)
+        sp.keyboard.press("Enter")
+        sp.locator(".scard").wait_for(state="detached")
+        time.sleep(0.5)
+        f = sp.evaluate(JS_ACTIVE)
+        sp.keyboard.press("Tab")
+        f2 = sp.evaluate(JS_ACTIVE)
+        assert f or f2, "focus lost to <body> after finishing a patient"
+    # ---- live region: errors --------------------------------------------------------------------------------------------------
+    sc = env.actor()
+    with T.step(G, "sign-in error is announced: role=alert and linked to the field", sc.page):
+        sc.goto(env.urls["staff"])
+        wait_text(sc.page, "Email me a code")
+        sc.page.get_by_label("Email address").fill("not-an-email")
+        sc.page.evaluate(JS_LIVE)
+        btn(sc.page, "Email me a code").click()
+        al = sc.page.locator("#auth-error")
+        al.wait_for()
+        assert al.get_attribute("role") == "alert"
+        assert sc.page.evaluate("window.__live.length") > 0, "no live-region mutation recorded"
+    sc.scan(G, "staff: sign-in error state")
+    # ---- axe over each app's main screens (the per-journey scans in A-E cover the rest) -----------------------------------------
+    ad = env.actor()
+    with T.step(G, "customer-admin screens: axe + keyboard focus", ad.page):
+        inject_admin_session(ad, tok)
+        for label in ("Dashboard", "Services", "Staff", "Locations", "Settings"):
+            try:
+                nav(ad, label)
+            except Exception:
+                continue
+            ad.scan(G, f"customer-admin: {label}")
+    mk = env.actor()
+    with T.step(G, "marketing landing page", mk.page):
+        mk.goto(env.urls["marketing"])
+        mk.page.get_by_role("heading", level=1).first.wait_for()
+    mk.scan(G, "marketing: landing", focus=True)
+    # ---- reflow at 320 css px (WCAG 1.4.10) -----------------------------------------------------------------------------------------------
+    for name, url in (("patient", f"{cust}/?t={tid}"), ("staff sign-in", env.urls["staff"]), ("marketing", env.urls["marketing"])):
+        rf = env.actor(kind=None, viewport={"width": 320, "height": 640})
+        with T.step(G, f"reflow at 320px: {name} has no horizontal scrolling", rf.page):
+            rf.goto(url)
+            time.sleep(0.8)
+            r = rf.page.evaluate(JS_SCAN, False)
+            assert r["overflow"] is None, r["overflow"]
+        rf.close()
+
+
+# ==========================================================================================================
+# T. Midnight, British Summer Time and the DST nights - through the real apps (server on its TEST CLOCK)
+# ==========================================================================================================
+def journey_T(env):
+    T, api, TT = env.T, env.api, "T"
+    if not env.infra.test_clock:
+        T.skip(TT, "midnight / DST journey", "needs the suite's own API on its test clock (not --api-url / --real-clock)")
+        return
+    base = env.infra.base_now
+    cust = env.urls["customer"]
+    try:
+        # Fixture built just before midnight on Sat 24 Oct 2026 (BST). The 2-day trial covers the 24th and 25th.
+        api.set_now("2026-10-24T22:50:00Z")
+        fx = api.make_tenant(f"e2e-{RUN}-{env.vp}-Midnight", ["e2e Midnight Site"], [("Night Desk", "queue", 0)], hours="all", staff=6, booking=0, walkin=6)
+        svc, tok = fx["services"][0], fx["token"]
+        assert api.clock_today() == "2026-10-24"
+        api.set_hours(tok, svc, "all", 6, 0, 6, date="2026-10-25")
+        email = add_staff_member(env, fx, tag="night")
+        a_old = api.join_walkin(fx["id"], svc["id"])
+        n_old = a_old["ticket"]["ticket_number"]
+        assert a_old["ticket"]["visit_date"] == "2026-10-24"
+
+        sa = env.actor()
+        sp = sa.page
+        with T.step(TT, "23:50 BST on the 24th: staff kiosk shows the evening's waiting patient", sp, critical=True):
+            start_shift(sa, email, "Room N", ["Night Desk"], env.S)
+            if sa.phone:
+                staff_tab(sa, "Waiting")
+            staff_sees(sp, n_old)
+
+        # --- crossing midnight BST with the kiosk left open --------------------------------------------------------
+        api.set_now("2026-10-24T23:05:00Z")          # 00:05 BST on the 25th; the UTC date is still the 24th
+        assert api.clock_today() == "2026-10-25"
+        b = api.join_walkin(fx["id"], svc["id"])
+        n_b = b["ticket"]["ticket_number"]
+        n_b2 = api.join_walkin(fx["id"], svc["id"])["ticket"]["ticket_number"]   # -002: only exists on the new day (-001 repeats every day)
+        with T.step(TT, "00:05 BST: the server's business day is the 25th (UTC date is still the 24th); a join lands on the 25th, numbering restarts", sp):
+            assert b["ticket"]["visit_date"] == "2026-10-25", b["ticket"]
+            assert b["ticket"]["hour_block"] == 0, b["ticket"]
+            assert n_b.endswith("-001"), n_b
+        sp.evaluate("window.dispatchEvent(new Event('focus'))")   # a tablet waking up re-reads the server clock
+        with T.step(TT, "the staff kiosk that was open before midnight moves to the new day by itself: new patient appears, yesterday's disappears", sp):
+            staff_sees(sp, n_b2, timeout=25000)
+            assert sp.locator(".wrow").count() == 2, sp.locator(".wrow").count()   # yesterday's -001 is gone: only the two of the 25th
+
+        # --- patient at 00:05 BST, in the browser -------------------------------------------------------------------
+        pa = env.actor()
+        pp = pa.page
+        with T.step(TT, "00:05 BST: the patient app is open for business and joining lands on the 25th, block 00:00", pp, critical=True):
+            pa.goto(f"{cust}/?t={fx['id']}")
+            wait_text(pp, "Ready to join the queue?")
+            choice(pp, "Join the queue now").click()
+            pp.locator(".ticket-band-num").wait_for()
+            n_c = ticket_number(pp)
+            d, hb, st = db_ticket(fx["id"], n_c)
+            assert (d, hb, st) == ("2026-10-25", "0", "waiting"), (d, hb, st)
+            assert n_c.endswith("-003"), n_c
+        pa.scan(TT, "patient: ticket at 00:05 BST")
+        with T.step(TT, "staff sees the patient who joined on the phone", sp):
+            staff_sees(sp, n_c, timeout=25000)
+
+        # --- admin dashboard ----------------------------------------------------------------------------------------
+        ad = env.actor()
+        with T.step(TT, "customer-admin dashboard counts today's (the 25th's) tickets, not yesterday's", ad.page):
+            inject_admin_session(ad, tok)
+            nav(ad, "Dashboard")
+            wait_text(ad.page, "Today's tickets")
+            btn(ad.page, "Refresh").click()
+            rows = (ad.page.locator(".t-card") if ad.phone else ad.page.locator("tbody tr")).filter(visible=True)
+            rows.filter(has_text=n_c).first.wait_for()
+            assert rows.count() == 3, f"{rows.count()} tickets listed; want the 3 of the 25th (yesterday's must not count)"
+        ad.scan(TT, "customer-admin: dashboard after midnight BST")
+
+        # --- the repeated hour and the 25-hour day --------------------------------------------------------------------
+        api.set_now("2026-10-25T01:30:00Z")          # 01:30 GMT, the second 01:30 of the night
+        pb = env.actor()
+        with T.step(TT, "01:30 GMT (second pass of the repeated hour): patient can still join; block 01:30", pb.page):
+            pb.goto(f"{cust}/?t={fx['id']}")
+            wait_text(pb.page, "Ready to join the queue?")
+            choice(pb.page, "Join the queue now").click()
+            pb.page.locator(".ticket-band-num").wait_for()
+            n_d = ticket_number(pb.page)
+            d, hb, st = db_ticket(fx["id"], n_d)
+            assert (d, hb) == ("2026-10-25", "90"), (d, hb)
+        api.set_now("2026-10-25T23:30:00Z")          # 23:30 GMT: still the 25th (a 25-hour day)
+        pc = env.actor()
+        with T.step(TT, "23:30 GMT on the 25-hour day is still the 25th: service open, licence active", pc.page):
+            assert api.clock_today() == "2026-10-25"
+            pc.goto(f"{cust}/?t={fx['id']}")
+            wait_text(pc.page, "Ready to join the queue?")
+        api.set_now("2026-10-26T00:00:30Z")          # 00:00:30 GMT on the 26th: the 2-day trial is over
+        pd = env.actor()
+        with T.step(TT, "00:00:30 on the 26th: the trial licence has expired and the patient app says nothing is available", pd.page):
+            assert api.clock_today() == "2026-10-26"
+            pd.goto(f"{cust}/?t={fx['id']}")
+            wait_text(pd.page, "license doesn't cover today's date")
+        pd.scan(TT, "patient: licence expired at midnight")
+        with T.step(TT, "the patient who joined on the 25th now sees their ticket has expired (end of day), not 'waiting'", pb.page):
+            pb.page.reload()
+            tok_b = re.search(r"[?&]k=([^&]+)", pb.page.url).group(1)
+            assert api.ok("GET", f"/api/public/ticket/{tok_b}")["state"] == "expired"
+    finally:
+        if base:
+            api.set_now(base)
+
+
+# ==========================================================================================================
 # main
 # ==========================================================================================================
 def journey_F(env):
@@ -1497,13 +2046,15 @@ def make_fixture_tenants(env):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vp", default="phone,desktop", help="comma list of viewports: phone,desktop")
-    ap.add_argument("--only", default="A,B,C,D,E,F", help="journeys to run (they build on each other; A is always needed first)")
+    ap.add_argument("--only", default="A,B,C,D,E,F,G,H,T", help="journeys to run (they build on each other; A is always needed first)")
     ap.add_argument("--api-url"); ap.add_argument("--marketing-url"); ap.add_argument("--admin-url")
     ap.add_argument("--staff-url"); ap.add_argument("--customer-url"); ap.add_argument("--sysadmin-url")
     ap.add_argument("--skip-build", action="store_true", help="reuse the previous build in $E2E_OUT (same ports)")
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--screens", action="store_true", help="save a screenshot of every scanned screen to $E2E_OUT/screens")
     ap.add_argument("--timeout", type=int, default=9000, help="per-action timeout (ms)")
+    ap.add_argument("--now", help="start the private API's TEST CLOCK at this ISO instant (default: today 12:00Z)")
+    ap.add_argument("--real-clock", action="store_true", help="run the private API on the real clock (after-hours checks are skipped between 00:00 and 00:30)")
     args = ap.parse_args()
     global SAVE_SCREENS
     SAVE_SCREENS = args.screens
@@ -1518,7 +2069,7 @@ def main():
     try:
         infra.start()
         api = Api(infra.urls["api"])
-        log("run id", RUN, "| today (server)", api.clock_today(), "| local time", time.strftime("%H:%M:%S"))
+        log("run id", RUN, "| today (server)", api.clock_today(), "| local time", time.strftime("%H:%M:%S"), "| test clock", infra.base_now or "off (real clock)")
         journeys = [j for j in args.only.split(",") if j]
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=not args.headed, args=["--no-sandbox"])
@@ -1536,6 +2087,8 @@ def main():
                         if not fn:
                             continue
                         log(f"-- journey {j}")
+                        if True:
+                            api.reset_limits()
                         try:
                             fn(env)
                         except Abort as e:

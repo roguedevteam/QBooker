@@ -2,6 +2,9 @@
 // instances) — fine as a brake on casual abuse, not a substitute for a gateway/WAF limit.
 const buckets = new Map();
 
+// Test helper (exposed only where the test clock is enabled): forget all counters.
+export function resetRateLimits() { buckets.clear(); }
+
 export function rateLimit({ windowMs, max, keyFn, message = "Too many requests — please wait a moment and try again." }) {
   return (req, res, next) => {
     const now = Date.now();

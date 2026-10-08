@@ -2,13 +2,13 @@
 // staff/src (no cross-app imports) — keep the two files (and today.css) in sync.
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "./lib/api.js";
+import { nowMinutes as localMinutes } from "./lib/clock.js";
 import "./today.css";
 
 const NO_HOURS = "No hours set for today. Set them in the location's service settings.";
 const NO_LICENCE = "This service isn't licensed for today. Check its licences in the location's service settings.";
 const WIDE_PX = 520; // panel width at which the 30-minute ribbon replaces the hourly rows
 
-function localMinutes() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 function clock(min) { return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`; }
 function fmt(min) {
   const h = Math.floor(min / 60), m = min % 60;

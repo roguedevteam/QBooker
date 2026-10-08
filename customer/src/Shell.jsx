@@ -12,7 +12,7 @@ export function Mark() {
 export const POWERED_BY = "Powered by QBooker · No sign-up, no app to install";
 
 function clockText(at) {
-  try { return new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
+  try { return new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }); } catch { return ""; }
 }
 
 // A chat bubble. "bot" = the clinic (left, white); "user" = the patient's reply (right, blue, ticked).

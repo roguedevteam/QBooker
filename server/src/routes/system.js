@@ -1,8 +1,9 @@
 import { Router } from "express";
+import { resetRateLimits } from "../lib/rateLimit.js";
 import { query } from "../db/pool.js";
 import { requireAuth } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday } from "../lib/clock.js";
+import { getToday, isSimulated, setSimulatedToday, clearSimulatedToday, nowSql, now as clockNow, testClockEnabled, setTestNow, clearTestNow, isTestClockActive } from "../lib/clock.js";
 import { resolveServiceLicenses, resolveServiceLicense, resolvePlan, planPricing, effectivePricing } from "../lib/serviceLicense.js";
 import { snapshotAndDeleteTenant } from "../lib/tenantDeletion.js";
 import {
@@ -224,8 +225,8 @@ router.post("/tenants/:id/services/:svcId/licenses/annual", asyncHandler(async (
   const service = (await query(`select * from services where id=$1 and tenant_id=$2`, [req.params.svcId, req.params.id])).rows[0];
   if (!service) return res.status(404).json({ error: "Service not found." });
   const result = await query(
-    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid)
-     values ($1,$2,'year','Year (agreed price)',365,$3,'available','invoice',false) returning *`,
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, payment_method, paid, purchased_at)
+     values ($1,$2,'year','Year (agreed price)',365,$3,'available','invoice',false,${nowSql()}) returning *`,
     [req.params.id, service.id, price.toFixed(2)]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -243,8 +244,8 @@ router.post("/tenants/:id/services/:svcId/licenses/free", asyncHandler(async (re
   if (!plan) return res.status(400).json({ error: "Unknown plan type." });
 
   const result = await query(
-    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status)
-     values ($1,$2,$3,$4,$5,0,'available') returning *`,
+    `insert into service_licenses (tenant_id, service_id, plan_id, plan_label, plan_days, price, status, purchased_at)
+     values ($1,$2,$3,$4,$5,0,'available',${nowSql()}) returning *`,
     [req.params.id, service.id, plan.planId, `${plan.planLabel} (free — granted)`, plan.planDays]
   );
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
@@ -272,7 +273,7 @@ router.post("/tenants/:id/licenses/:licenseId/mark-paid", asyncHandler(async (re
     return res.status(409).json({ error: "This is a pay-later license — it stays unpaid until the customer pays by card or chooses invoice." });
   }
   const result = await query(
-    `update service_licenses set paid=true, paid_at=now() where id=$1 and tenant_id=$2 and paid=false and status != 'refunded' returning *`,
+    `update service_licenses set paid=true, paid_at=${nowSql()} where id=$1 and tenant_id=$2 and paid=false and status != 'refunded' returning *`,
     [req.params.licenseId, req.params.id]
   );
   if (!result.rows[0]) {
@@ -305,7 +306,7 @@ router.post("/tenants/:id/services/:svcId/licenses/:licenseId/refund", asyncHand
   }
 
   const result = await query(
-    `update service_licenses set status='refunded', refunded_at=now() where id=$1 and status in ('available','scheduled') returning *`,
+    `update service_licenses set status='refunded', refunded_at=${nowSql()} where id=$1 and status in ('available','scheduled') returning *`,
     [license.id]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "This license has just changed state (refunded or gone live) — reload and check it." });
@@ -439,6 +440,29 @@ router.delete("/clock", (req, res) => {
   res.json({ today: getToday(), simulated: isSimulated() });
 });
 
+// --- Test clock (automated tests only) ---------------------------------------
+// Moves the server's idea of "now" (date AND time of day). Exists only when NODE_ENV=test or QB_TEST_NOW
+// is set; in any other deployment these routes answer 404 as if they did not exist.
+router.use("/test-now", (req, res, next) => (testClockEnabled() ? next() : res.status(404).json({ error: "Not found." })));
+router.get("/test-now", (req, res) => res.json({ now: clockNow().toISOString(), active: isTestClockActive(), today: getToday() }));
+router.post("/test-now", (req, res) => {
+  const { now, frozen } = req.body;
+  if (typeof now !== "string") return res.status(400).json({ error: "now must be an ISO instant, e.g. 2026-10-24T23:30:00Z." });
+  try { setTestNow(now, { frozen: frozen === true }); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json({ now: clockNow().toISOString(), active: isTestClockActive(), today: getToday() });
+});
+router.delete("/test-now", (req, res) => {
+  clearTestNow();
+  res.json({ now: clockNow().toISOString(), active: isTestClockActive(), today: getToday() });
+});
+
+// Test suites only: forget the per-IP rate-limit counters (one machine plays hundreds of patients).
+router.post("/test-reset-limits", (req, res) => {
+  if (!testClockEnabled()) return res.status(404).json({ error: "Not found." });
+  resetRateLimits();
+  res.json({ ok: true });
+});
+
 // Public (unauthenticated) pricing lookup, used by the signup screen.
 export const publicRouter = Router();
 publicRouter.get("/pricing", asyncHandler(async (req, res) => {
@@ -448,6 +472,12 @@ publicRouter.get("/pricing", asyncHandler(async (req, res) => {
 // (which may be a simulated date set from System Admin for testing).
 publicRouter.get("/clock", (req, res) => {
   res.json({ today: getToday(), simulated: isSimulated() });
+});
+// The same plus the server's current instant, so the apps agree with the server about "now" (a phone with a wrong
+// clock or time zone, or a test clock) and can work out London's date and wall-clock minutes from it.
+publicRouter.get("/time", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ today: getToday(), simulated: isSimulated(), now: clockNow().toISOString() });
 });
 
 export default router;
