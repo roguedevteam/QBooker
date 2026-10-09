@@ -55,7 +55,6 @@ export default function Privacy() {
             <strong>Customer account data.</strong> For the people who sign up to QBooker on behalf of an organisation, and the staff
             they add, QBooker is the controller of the account details described below.
           </p>
-          <p>Operator details: [QBooker legal entity name, registered address and company number to be added].</p>
         </Section>
 
         <Section title="2. Patient and visitor queue data">

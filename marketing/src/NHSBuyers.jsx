@@ -2,10 +2,9 @@ import { useEffect } from "react";
 import { SUPPORT_EMAIL, mailto } from "./lib/config.js";
 
 // Information for NHS and healthcare buyers. Only statements that are true of the product today go here.
-// TO ADD AT OFFICIAL GO-LIVE (left out of the public text for now): the operator's company name, registered address and company number;
-// a data processing agreement; independent security testing / certifications (e.g. Cyber Essentials); the data protection impact
-// assessment, security summary and DTAC answers; the clinical safety position (e.g. DCB0129); and a check that the retention periods
-// below still match what is configured on the server (lib/retention.js).
+// BEFORE THE FIRST REAL CUSTOMER: the documents this page says we provide must exist (data processing agreement, data protection impact
+// assessment, security summary, DTAC answers); add the company details and any certifications (e.g. Cyber Essentials) once they are real;
+// and check the retention periods below still match what is configured on the server (lib/retention.js).
 function Section({ title, children }) {
   return (
     <section className="pv-section">
@@ -73,6 +72,7 @@ export default function NHSBuyers() {
           <p>
             The clinic decides why and how queue data is used, so it is the controller. QBooker is its processor and acts on the clinic's instructions.
             For the staff and administrators who sign up, QBooker is the controller of their name and work email address.
+            Every customer is given a data processing agreement setting out these roles.
            
           </p>
         </Section>
@@ -98,11 +98,12 @@ export default function NHSBuyers() {
         <Section title="Clinical safety">
           <p>
             QBooker does not hold clinical information and does not make or influence clinical decisions. It tells a patient where they are in a queue and when they are called.
+            Because of that, we expect its clinical risk to be low. We will work with your clinical safety officer on any assessment your organisation requires, including under DCB0129 where it applies.
           </p>
         </Section>
 
         <Section title="Documents and contact">
-          <p>To ask a question, or to talk through what your organisation needs, email <a href={mailto("NHS buyer enquiry")}>{SUPPORT_EMAIL}</a>.</p>
+          <p>On request we provide a data protection impact assessment covering the data described on this page, a security summary, and answers to the DTAC questionnaire. To ask a question, or to talk through what your organisation needs, email <a href={mailto("NHS buyer enquiry")}>{SUPPORT_EMAIL}</a>.</p>
         </Section>
       </main>
     </div>
