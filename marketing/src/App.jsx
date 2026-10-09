@@ -278,6 +278,7 @@ function Landing({ onStart, simulatedBadge }) {
             <a href="#who">Use cases</a>
             <a href="#hybrid">Hybrid queue</a>
             <a href="#trust">Compliance</a>
+            <a href="/nhs-buyers">For NHS buyers</a>
             <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
           </nav>
@@ -529,6 +530,7 @@ function Landing({ onStart, simulatedBadge }) {
           <div className="stack" style={{ gap: 10 }}>
             <strong style={{ fontSize: 13 }}>Company</strong>
             <a href="#trust" className="muted">Compliance</a>
+            <a href="/nhs-buyers" className="muted">For NHS buyers</a>
             <a href="/privacy" className="muted">Privacy</a>
             <a href={mailto()} className="muted">Support</a>
             <a href={ADMIN_APP_URL} className="muted">Log in</a>
