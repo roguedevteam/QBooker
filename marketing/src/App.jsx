@@ -5,6 +5,7 @@ import { api } from "./lib/api.js";
 import { todayIso, isSimulatedToday, refreshClock } from "./lib/clock.js";
 import { mailto } from "./lib/config.js";
 import Privacy from "./Privacy.jsx";
+import NHSBuyers from "./NHSBuyers.jsx";
 
 // --- Public claims: flip these once the underlying fact is verified ---------------------------
 // Nothing here can be checked from the code, so the safe wording is the default.
@@ -127,6 +128,7 @@ function NotFound() {
 export default function App() {
   const path = (window.location.pathname.replace(/\/+$/, "") || "/").toLowerCase();
   if (path === "/privacy") return <Privacy />;
+  if (path === "/nhs-buyers") return <NHSBuyers />;
   if (path === "/" || path === "/index.html") return <MarketingApp />;
   return <NotFound />;
 }

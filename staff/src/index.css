@@ -1,6 +1,5 @@
 /* QBooker staff kiosk. Square corners, navy header with an orange rule, filled orange primary
    buttons (#A8570A, white text), blue for Finish. Mobile first; the three-step board starts at 768px. */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 :root{
   --surface-page:#F7F7F4;

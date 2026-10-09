@@ -1,3 +1,4 @@
+import QRCode from "qrcode";
 import TimezoneSelect from "./TimezoneSelect.jsx";
 import { useState, useEffect, useRef } from "react";
 import { priceText, exMoney, incVat, vatLabel, vatPercent, setBilling } from "./lib/money.js";
@@ -90,9 +91,11 @@ function BackIcon({ size = 22 }) {
 }
 const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-// Shared printable QR page (service and location QR codes). All text is HTML-escaped.
-function openPrintableQR({ link, pageTitle, businessName, heading, cta, sub }) {
-  const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&color=1D5C8A&data=${encodeURIComponent(link)}`;
+// Shared printable QR page (service and location QR codes). All text is HTML-escaped. The QR code is drawn here in the browser,
+// so the join link is never sent to an outside service. The tab is opened first (inside the tap) so pop-up blockers allow it.
+async function openPrintableQR({ link, pageTitle, businessName, heading, cta, sub }) {
+  const w = window.open("", "_blank");
+  const qrImg = await QRCode.toDataURL(link, { width: 320, margin: 2, color: { dark: "#1D5C8A", light: "#FFFFFF" } });
   const html = `<!doctype html><html><head><title>${escHtml(pageTitle)}</title>
       <meta charset="utf-8" />
       <style>
@@ -122,8 +125,7 @@ function openPrintableQR({ link, pageTitle, businessName, heading, cta, sub }) {
       </body></html>`;
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
-  const w = window.open(url, "_blank");
-  if (w) w.onload = () => w.print();
+  if (w) { w.location.href = url; w.onload = () => w.print(); }
 }
 
 function QrIcon({ size = 20 }) {
@@ -1566,8 +1568,7 @@ function printLicenseReceipt(lic, serviceName, businessName, businessAddress) {
     </body></html>`;
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
-  const w = window.open(url, "_blank");
-  if (w) w.onload = () => w.print();
+  if (w) { w.location.href = url; w.onload = () => w.print(); }
 }
 
 function shortDate(dateStr) {

@@ -1,7 +1,6 @@
 /* QBooker Design System — "Minimal, ticket-inspired". Square by default, mobile first.
    Phones (<768px): top bar + bottom tab bar, cards instead of tables, 44px touch targets.
    >=768px: left sidebar, tables, denser controls. */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 :root{
   --surface-page:#F7F7F4;

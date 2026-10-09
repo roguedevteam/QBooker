@@ -12,6 +12,7 @@ import whatsappRoutes from "./routes/whatsapp.js";
 import { closeStaleTickets } from "./lib/closeStaleTickets.js";
 import { sweepLicences } from "./lib/serviceLicense.js";
 import { purgeWhatsAppNumbers } from "./lib/whatsappLinks.js";
+import { purgeOldData } from "./lib/retention.js";
 import { HttpError } from "./lib/validate.js";
 import { reportEmailConfig } from "./lib/email.js";
 
@@ -143,6 +144,9 @@ closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err
 // WhatsApp numbers are short-lived: cleared when a ticket ends, on STOP, at the end of the day and after 24 hours at the latest.
 setInterval(() => { purgeWhatsAppNumbers().catch((err) => console.error("purgeWhatsAppNumbers failed", err)); }, 60 * 1000);
 purgeWhatsAppNumbers().catch((err) => console.error("purgeWhatsAppNumbers failed", err));
+// Old records (tickets, logs, scrambled identifiers, sign-in codes) are deleted once past their retention period (lib/retention.js). Hourly is plenty.
+setInterval(() => { purgeOldData().catch((err) => console.error("purgeOldData failed", err)); }, 60 * 60 * 1000);
+setTimeout(() => { purgeOldData().catch((err) => console.error("purgeOldData failed", err)); }, 30 * 1000);
 // Licence status sweep: scheduled/active licences are moved on (expired, activated, or returned to Available) per location time zone,
 // so the stored status never goes stale just because nobody opened a screen. Cheap: it only touches licences that are due.
 setInterval(() => { sweepLicences().catch((err) => console.error("sweepLicences failed", err)); }, 5 * 60 * 1000);

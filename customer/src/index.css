@@ -1,6 +1,5 @@
 /* QBooker patient app. A chat-style conversation in the QBooker brand: navy header, square
    buttons and cards, rounded chat bubbles only. */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 :root{
   --page:#F4F4EF;

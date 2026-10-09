@@ -1,7 +1,6 @@
 /* QBooker Design System — "Minimal, ticket-inspired". Square by default, one accent
    spent only on the live-status dot/badge. See the QBooker Design System artifact
    for the full token set, principles and rationale. */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 :root{
   --surface-page:#F7F7F4;

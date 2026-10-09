@@ -11,8 +11,6 @@ const SUBPROCESSORS = [
   { name: "Render", purpose: "Hosts the QBooker web apps (static files only, no patient data is stored there)", location: "Global content delivery network" },
   { name: "Resend", purpose: "Sends sign-in codes and service emails to staff and administrators", location: "Ireland (EU West)" },
   { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Carries the optional WhatsApp updates, and sees the mobile number and message. Only where you choose WhatsApp. Not yet in live use", location: "To be confirmed" },
-  { name: "QR code image service (api.qrserver.com)", purpose: "Draws the QR code on printable posters. Receives the public join link for a service, never patient data. We intend to replace this with in-house generation", location: "To be confirmed" },
-  { name: "Google Fonts", purpose: "Delivers the typefaces used by our web pages. Your browser contacts Google when a page loads", location: "Global" },
 ];
 
 function Section({ title, children }) {
@@ -112,14 +110,15 @@ export default function Privacy() {
         </Section>
 
         <Section title="5. How long we keep data">
-          <p>
-            Retention schedule to be confirmed. At present QBooker does not automatically delete queue tickets, activity logs or
-            sign-in records after a set period. Data is removed when an organisation deletes its account, which permanently removes
-            its locations, services, tickets and logs (we keep only an anonymised revenue summary with no names or emails).
-            WhatsApp mobile numbers are different: they are deleted as soon as a visit ends, and always by the end of the day (see section 2).
-            Before launch we will set and publish fixed periods for queue tickets (we expect these to be short, measured in days or weeks),
-            activity logs and sign-in records.
-          </p>
+          <p>Old records are deleted automatically. [Periods to be confirmed before launch.]</p>
+          <ul>
+            <li>WhatsApp mobile numbers: deleted as soon as a visit ends, on STOP, and always by the end of the day (see section 2).</li>
+            <li>The scrambled device and connection identifiers used to stop abuse: 48 hours.</li>
+            <li>Queue tickets (ticket number, service, location, status and times): 30 days.</li>
+            <li>Organisation activity logs: 90 days.</li>
+            <li>Sign-in codes: deleted one day after they expire. The message log: 7 days.</li>
+            <li>Account details: kept while the account is open. When an organisation deletes its account, its locations, services, tickets and logs are permanently removed (we keep only an anonymised revenue summary with no names or emails).</li>
+          </ul>
         </Section>
 
         <Section title="6. Who we share data with (sub-processors)">
