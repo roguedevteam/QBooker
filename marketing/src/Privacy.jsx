@@ -6,8 +6,8 @@ export const SHOW_DRAFT_BANNER = true;
 
 // Locations were checked against the live hosting settings. Items still marked "to be confirmed" need the founder's input before launch.
 const SUBPROCESSORS = [
-  { name: "Railway", purpose: "Runs the QBooker API (the server that handles queue and account requests)", location: "United States (San Francisco)" },
-  { name: "Supabase", purpose: "Stores account and queue data (the database)", location: "Ireland (EU West)" },
+  { name: "Railway", purpose: "Runs the QBooker API (the server that handles queue and account requests)", location: "United Kingdom" },
+  { name: "Supabase", purpose: "Stores account and queue data (the database)", location: "United Kingdom" },
   { name: "Render", purpose: "Hosts the QBooker web apps (static files only, no patient data is stored there)", location: "Global content delivery network" },
   { name: "Resend", purpose: "Sends sign-in codes and service emails to staff and administrators", location: "Ireland (EU West)" },
   { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Carries the optional WhatsApp updates, and sees the mobile number and message. Only where you choose WhatsApp. Not yet in live use", location: "To be confirmed" },
@@ -138,9 +138,9 @@ export default function Privacy() {
 
         <Section title="7. International transfers">
           <p>
-            Our database and email provider are in Ireland. Our API host currently runs in the United States, so queue and account data is processed there
-            when you use the service. We rely on a lawful transfer mechanism, such as an adequacy decision or approved standard contractual clauses [adviser to confirm],
-            and we intend to move the API to a UK or EU region. Locations are listed in the table above.
+            Our database and servers run in the United Kingdom, so queue and account data stays here. Our email provider is based in Ireland and only handles sign-in codes and service emails for staff and administrators;
+            the UK recognises the EU as providing adequate protection. WhatsApp / Meta carries messages for patients who choose WhatsApp updates, under its own privacy policy, and may process them outside the UK.
+            Where personal data is transferred internationally we use a lawful transfer mechanism, such as an adequacy decision or approved standard contractual clauses.
           </p>
         </Section>
 

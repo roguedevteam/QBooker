@@ -78,7 +78,7 @@ export default function NHSBuyers() {
           <p>
             The clinic decides why and how queue data is used, so it is the controller. QBooker is its processor and acts on the clinic's instructions.
             For the staff and administrators who sign up, QBooker is the controller of their name and work email address.
-            [Data processing agreement available on request.] Operator details: [company name, registered address and company number].
+           
           </p>
         </Section>
 
@@ -91,11 +91,13 @@ export default function NHSBuyers() {
             <li>The WhatsApp connection only accepts messages that WhatsApp has digitally signed.</li>
             <li>A WhatsApp number can be attached to a ticket only by sending that ticket's code, and a second number cannot take it over.</li>
           </ul>
-          <p>[Independent security testing and certifications, such as Cyber Essentials: to be added when completed.]</p>
         </Section>
 
         <Section title="Where data is hosted">
-          <p>[All production hosting will be in UK data centres before any NHS use. Provider names and regions to be listed here once the move is complete.] The current list of providers is in our <a href="/privacy">privacy notice</a>.</p>
+          <p>
+            QBooker's database and servers run in UK data centres, so patient queue data stays in the UK. Sign-in codes for staff and administrators are sent by an email provider based in Ireland.
+            The full list of providers and where they operate is in our <a href="/privacy">privacy notice</a>.
+          </p>
         </Section>
 
         <Section title="Clinical safety">
