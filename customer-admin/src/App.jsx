@@ -7,7 +7,7 @@ import { todayIso, nowMinutes, isSimulatedToday, refreshClock, setDefaultTimezon
 import TodayPanel from "./TodayPanel.jsx";
 
 // Contact address for enquiry emails; set VITE_SUPPORT_EMAIL on the static service (placeholder default).
-const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim() || "hello@qbooker.example";
+const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim() || "support@qbooker.co.uk";
 
 // --- Date & time helpers -----------------------------------------------------
 function formatClock(min) {

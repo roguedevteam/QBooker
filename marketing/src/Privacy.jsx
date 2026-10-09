@@ -4,13 +4,13 @@ import { SUPPORT_EMAIL, mailto } from "./lib/config.js";
 // Set to false to remove the "Draft" banner once the notice has been reviewed by a qualified adviser.
 export const SHOW_DRAFT_BANNER = true;
 
-// Items marked TBC are things the founder must confirm before launch (see the hand-over notes).
+// Locations were checked against the live hosting settings. Items still marked "to be confirmed" need the founder's input before launch.
 const SUBPROCESSORS = [
-  { name: "Railway (or the host actually used for the API and database connection)", purpose: "Runs the QBooker API", location: "Region to be confirmed" },
-  { name: "Supabase (or the host actually used for the database)", purpose: "Stores account and queue data", location: "Region to be confirmed" },
-  { name: "Render", purpose: "Hosts the QBooker web apps (static files)", location: "Region to be confirmed" },
-  { name: "Email delivery provider (for example Resend)", purpose: "Sends sign-in codes and service emails to staff and administrators", location: "To be confirmed" },
-  { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Optional patient updates over WhatsApp, only where the WhatsApp channel is enabled", location: "To be confirmed" },
+  { name: "Railway", purpose: "Runs the QBooker API (the server that handles queue and account requests)", location: "United States (San Francisco)" },
+  { name: "Supabase", purpose: "Stores account and queue data (the database)", location: "Ireland (EU West)" },
+  { name: "Render", purpose: "Hosts the QBooker web apps (static files only, no patient data is stored there)", location: "Global content delivery network" },
+  { name: "Resend", purpose: "Sends sign-in codes and service emails to staff and administrators", location: "Ireland (EU West)" },
+  { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Optional patient updates over WhatsApp, only where the WhatsApp channel is enabled. Not yet in live use", location: "To be confirmed" },
   { name: "QR code image service (api.qrserver.com)", purpose: "Draws the QR code on printable posters. Receives the public join link for a service, never patient data. We intend to replace this with in-house generation", location: "To be confirmed" },
   { name: "Google Fonts", purpose: "Delivers the typefaces used by our web pages. Your browser contacts Google when a page loads", location: "Global" },
 ];
@@ -72,9 +72,10 @@ export default function Privacy() {
           </ul>
           <p><strong>What we do not store:</strong> patient names, dates of birth, NHS or other health numbers, addresses, appointment reasons, symptoms, test results or any clinical record. QBooker does not ask for them. Organisations should not type this information into any QBooker field.</p>
           <p>
-            <strong>WhatsApp.</strong> The WhatsApp channel is optional. Where it is enabled, the phone number a patient messages from is held to
-            route the conversation to the right location, and messages pass through WhatsApp / Meta and our messaging provider. Patients who use only the web
-            version are not asked for a phone number. [Confirm the exact WhatsApp data flow before enabling it.]
+            <strong>WhatsApp.</strong> The WhatsApp channel is optional and is not yet in live use. When it is switched on for a service, the phone number
+            a patient messages from will be held only to send the updates they asked for, and messages pass through WhatsApp / Meta and our messaging provider.
+            Patients will be able to stop messages at any time, and their number will be deleted when the visit ends. Patients who use only the web
+            version are never asked for a phone number. [Confirm the final WhatsApp data flow and retention before enabling it.]
           </p>
         </Section>
 
@@ -124,8 +125,9 @@ export default function Privacy() {
 
         <Section title="7. International transfers">
           <p>
-            Some of our providers may process data outside your own country. Where personal data is transferred internationally we will use
-            a lawful transfer mechanism, such as an adequacy decision or approved standard contractual clauses, and we list the locations above once confirmed.
+            Our database and email provider are in Ireland. Our API host currently runs in the United States, so queue and account data is processed there
+            when you use the service. We rely on a lawful transfer mechanism, such as an adequacy decision or approved standard contractual clauses [adviser to confirm],
+            and we intend to move the API to a UK or EU region. Locations are listed in the table above.
           </p>
         </Section>
 

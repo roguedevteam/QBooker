@@ -2,7 +2,7 @@
 
 // The single contact address used everywhere on the site (mailto links, privacy notice).
 // Set VITE_SUPPORT_EMAIL on the static service; the default is a placeholder so nothing breaks.
-export const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim() || "hello@qbooker.example";
+export const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim() || "support@qbooker.co.uk";
 
 export function mailto(subject) {
   return `mailto:${SUPPORT_EMAIL}${subject ? `?subject=${encodeURIComponent(subject)}` : ""}`;
