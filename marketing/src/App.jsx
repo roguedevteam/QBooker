@@ -21,7 +21,10 @@ const CE_CLAIM = CERTIFICATIONS.cyberEssentials
   : "Built to Cyber Essentials-aligned practices (certification to be confirmed).";
 const UK = CERTIFICATIONS.ukServersAndSupport;
 
-const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_APP_URL || "http://localhost:5173";
+// Where "Log in" and "Sign in" lead: the customer admin app. Set VITE_ADMIN_APP_URL on the static service; if it is ever missing, a page served
+// from qbooker.co.uk still goes to app.qbooker.co.uk rather than to a developer address.
+const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_APP_URL
+  || (/(^|\.)qbooker\.co\.uk$/i.test(window.location.hostname) ? "https://app.qbooker.co.uk" : "http://localhost:5173");
 
 const PLAN_META = [
   { id: "day", label: "Day", days: 1, desc: "One day of access, until midnight." },
