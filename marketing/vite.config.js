@@ -8,7 +8,7 @@ import path from "node:path";
 //  - sitemap.xml and a robots.txt that points at it, written into dist/
 // With the variable unset the tags are omitted and robots.txt stays generic (no sitemap).
 function seoPlugin(siteUrl) {
-  const pages = ["/", "/privacy"];
+  const pages = ["/", "/privacy", "/nhs-buyers"];
   return {
     name: "qbooker-seo",
     transformIndexHtml(html) {

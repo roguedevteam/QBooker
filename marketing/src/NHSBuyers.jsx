@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { SUPPORT_EMAIL, mailto } from "./lib/config.js";
-import { SHOW_DRAFT_BANNER } from "./Privacy.jsx";
 
-// Information for NHS and healthcare buyers. Only statements that are true of the product today go here; anything still to be
-// confirmed is in [square brackets] and the page carries the draft banner. It is not linked from the menu or the sitemap, and is
-// marked noindex, until the bracketed items are settled.
+// Information for NHS and healthcare buyers. Only statements that are true of the product today go here.
+// TO ADD AT OFFICIAL GO-LIVE (left out of the public text for now): the operator's company name, registered address and company number;
+// a data processing agreement; independent security testing / certifications (e.g. Cyber Essentials); the data protection impact
+// assessment, security summary and DTAC answers; the clinical safety position (e.g. DCB0129); and a check that the retention periods
+// below still match what is configured on the server (lib/retention.js).
 function Section({ title, children }) {
   return (
     <section className="pv-section">
@@ -26,17 +27,11 @@ const RETENTION = [
 export default function NHSBuyers() {
   useEffect(() => {
     document.title = "Information for NHS and healthcare buyers — QBooker";
-    const meta = document.createElement("meta");
-    meta.name = "robots"; meta.content = "noindex";
-    document.head.appendChild(meta);
-    return () => { document.head.removeChild(meta); };
+    return () => {};
   }, []);
 
   return (
     <div className="pv">
-      {SHOW_DRAFT_BANNER && (
-        <div className="pv-banner" role="note"><strong>Draft</strong> — details in [square brackets] are still to be confirmed.</div>
-      )}
       <header className="pv-head"><div className="pv-wrap"><a href="/" className="pv-back">← QBooker home</a></div></header>
       <main id="main" className="pv-wrap pv-main">
         <h1>Information for NHS and healthcare buyers</h1>
@@ -71,7 +66,7 @@ export default function NHSBuyers() {
               <tbody>{RETENTION.map(([a, b]) => <tr key={a}><td>{a}</td><td>{b}</td></tr>)}</tbody>
             </table>
           </div>
-          <p>Deletion is automatic. [Periods to be confirmed with the first customers.] When an organisation closes its account, its locations, services, tickets and logs are permanently removed.</p>
+          <p>Deletion is automatic. When an organisation closes its account, its locations, services, tickets and logs are permanently removed.</p>
         </Section>
 
         <Section title="Roles under data protection law">
@@ -103,12 +98,11 @@ export default function NHSBuyers() {
         <Section title="Clinical safety">
           <p>
             QBooker does not hold clinical information and does not make or influence clinical decisions. It tells a patient where they are in a queue and when they are called.
-            [Clinical safety standards (such as DCB0129) and the DTAC questionnaire: applicability and answers to be confirmed with an adviser.]
           </p>
         </Section>
 
         <Section title="Documents and contact">
-          <p>[Data protection impact assessment, security summary and DTAC answers: to be prepared.] To ask a question or request documents, email <a href={mailto("NHS buyer enquiry")}>{SUPPORT_EMAIL}</a>.</p>
+          <p>To ask a question, or to talk through what your organisation needs, email <a href={mailto("NHS buyer enquiry")}>{SUPPORT_EMAIL}</a>.</p>
         </Section>
       </main>
     </div>
