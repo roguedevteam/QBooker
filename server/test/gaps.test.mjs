@@ -1308,7 +1308,7 @@ describe('E. security', () => {
     });
     it('the token view reveals only ticket details: no account, staff, e-mail, pricing or other-ticket data; never cached', async () => {
       const r = await pubTicket(tokens[1]);
-      assert.deepEqual(Object.keys(r.json).sort(), ['arrived', 'businessName', 'calledRoom', 'estimatedMinutes', 'locationName', 'peopleAhead', 'serviceName', 'slotTime', 'state', 'ticketNumber', 'timezone', 'type', 'updatedAt', 'whatsappUpdatesOffer', 'whatsappUpdatesRequested']);
+      assert.deepEqual(Object.keys(r.json).sort(), ['arrived', 'businessName', 'calledRoom', 'estimatedMinutes', 'locationName', 'peopleAhead', 'serviceName', 'slotTime', 'state', 'ticketNumber', 'timezone', 'type', 'updatedAt', 'whatsappConnected', 'whatsappLinkCode', 'whatsappUpdatesOffer', 'whatsappUpdatesRequested']);
       assert.match(r.headers.get('cache-control'), /no-store/);
       assert.doesNotMatch(r.text, new RegExp(`${t.id}|${t.email}|tenant_id|access_code`));
     });

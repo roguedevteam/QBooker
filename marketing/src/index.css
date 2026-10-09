@@ -394,6 +394,7 @@ html { scroll-padding-top: 80px; }
 .pv p, .pv li { font-size: 15.5px; line-height: 1.65; }
 .pv ul { padding-left: 20px; }
 .pv a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+.pv-callout { margin: 16px 0; padding: 4px 20px 8px; border: 2px solid var(--blue); background: var(--blue-weak); }
 .pv-table-wrap { overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); background: var(--surface-card); }
 .pv-table th, .pv-table td { text-align: left; vertical-align: top; padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--line); }
 .pv-table th { background: var(--blue-weak); font-weight: 600; }

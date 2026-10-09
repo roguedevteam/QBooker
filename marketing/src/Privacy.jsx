@@ -10,7 +10,7 @@ const SUBPROCESSORS = [
   { name: "Supabase", purpose: "Stores account and queue data (the database)", location: "Ireland (EU West)" },
   { name: "Render", purpose: "Hosts the QBooker web apps (static files only, no patient data is stored there)", location: "Global content delivery network" },
   { name: "Resend", purpose: "Sends sign-in codes and service emails to staff and administrators", location: "Ireland (EU West)" },
-  { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Optional patient updates over WhatsApp, only where the WhatsApp channel is enabled. Not yet in live use", location: "To be confirmed" },
+  { name: "WhatsApp / Meta (and any messaging provider)", purpose: "Carries the optional WhatsApp updates, and sees the mobile number and message. Only where you choose WhatsApp. Not yet in live use", location: "To be confirmed" },
   { name: "QR code image service (api.qrserver.com)", purpose: "Draws the QR code on printable posters. Receives the public join link for a service, never patient data. We intend to replace this with in-house generation", location: "To be confirmed" },
   { name: "Google Fonts", purpose: "Delivers the typefaces used by our web pages. Your browser contacts Google when a page loads", location: "Global" },
 ];
@@ -67,16 +67,29 @@ export default function Privacy() {
             <li>The name and room of the staff member who called the ticket, where that happens.</li>
             <li>A random access key that lets your phone show your ticket again. It is kept in your browser's storage and in the page address.</li>
             <li>To stop abuse (one phone taking many places): a one-way scrambled "hash" of a random identifier held in your browser, and a one-way hash of your internet connection address (IP address). We do not keep the readable identifier or address, but a hash is still treated as personal data because it can single out a device.</li>
-            <li>Whether you asked for optional WhatsApp updates (a yes/no flag and when you asked).</li>
+            <li>Whether you asked for optional WhatsApp updates (a yes/no flag and when you asked), and, only if you connect WhatsApp, the mobile number you messaged from. See the box below.</li>
             <li>A line in the organisation's activity log, for example "Ticket BT-014 joined the queue". Logs record ticket numbers, not names.</li>
           </ul>
           <p><strong>What we do not store:</strong> patient names, dates of birth, NHS or other health numbers, addresses, appointment reasons, symptoms, test results or any clinical record. QBooker does not ask for them. Organisations should not type this information into any QBooker field.</p>
-          <p>
-            <strong>WhatsApp.</strong> The WhatsApp channel is optional and is not yet in live use. When it is switched on for a service, the phone number
-            a patient messages from will be held only to send the updates they asked for, and messages pass through WhatsApp / Meta and our messaging provider.
-            Patients will be able to stop messages at any time, and their number will be deleted when the visit ends. Patients who use only the web
-            version are never asked for a phone number. [Confirm the final WhatsApp data flow and retention before enabling it.]
-          </p>
+          <div className="pv-callout">
+            <p>
+              <strong>WhatsApp updates (optional): the only thing we hold is your mobile number.</strong> We never ask you to type your number in.
+              If you tap "Get updates on WhatsApp", WhatsApp opens with a short code already written. When you press Send, WhatsApp tells us which mobile
+              number sent it, and we attach that number to your ticket so we can message you when you are nearly up and when it is your turn.
+            </p>
+            <ul>
+              <li>No name, date of birth, NHS number, address, reason for visit, symptoms or any other health or personal detail is collected or stored. Not at any stage.</li>
+              <li>We do not read or store your WhatsApp profile name, photo or contacts, and we do not keep the text of your messages. We only look for the ticket code, or the word STOP.</li>
+              <li>Our messages contain only your ticket number and, when you are called, the room.</li>
+              <li><strong>When your number is deleted:</strong> straight away if you reply STOP; when your ticket is completed, seen or cancelled; and in any case at the end of the same day (midnight at the location) and no later than 24 hours after you connected. If you were marked as not turning up, we keep the number until the end of the day so the clinic can put you back in the queue.</li>
+              <li>You can stop at any time by replying STOP. Your place in the queue is not affected, and you can still follow your ticket on the web page.</li>
+              <li>This service is for same-day queues only. We do not send reminders for future days.</li>
+            </ul>
+            <p>
+              Your message is carried by WhatsApp / Meta, which handles it under its own privacy policy. We have no control over what they keep.
+              [Confirm the final WhatsApp provider and its data location before enabling this.]
+            </p>
+          </div>
         </Section>
 
         <Section title="3. Account and staff data">
@@ -103,6 +116,7 @@ export default function Privacy() {
             Retention schedule to be confirmed. At present QBooker does not automatically delete queue tickets, activity logs or
             sign-in records after a set period. Data is removed when an organisation deletes its account, which permanently removes
             its locations, services, tickets and logs (we keep only an anonymised revenue summary with no names or emails).
+            WhatsApp mobile numbers are different: they are deleted as soon as a visit ends, and always by the end of the day (see section 2).
             Before launch we will set and publish fixed periods for queue tickets (we expect these to be short, measured in days or weeks),
             activity logs and sign-in records.
           </p>

@@ -6,10 +6,12 @@ import Shell, { Bubble, POWERED_BY } from "./Shell.jsx";
 
 const POLL_MS = 10000;
 
-// The WhatsApp business number isn't connected yet. Set VITE_WHATSAPP_NUMBER (digits only, with
-// country code, e.g. 447700900123) once it exists; until then the button only records the request.
+// The WhatsApp business number. Set VITE_WHATSAPP_NUMBER (digits only, with country code, e.g. 447700900123) once it exists;
+// until then the button only records the request. Nobody is asked for their own number: the button opens WhatsApp with a code
+// already typed (the server gave us the code with the ticket), the patient presses Send, and WhatsApp tells us who sent it.
 const WA_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER || "").replace(/\D/g, "");
 const waHref = (text) => (WA_NUMBER ? `https://wa.me/${WA_NUMBER}${text ? `?text=${encodeURIComponent(text)}` : ""}` : null);
+const waLink = (d) => (d?.whatsappLinkCode ? waHref(`QBooker code: ${d.whatsappLinkCode}`) : null);
 
 function formatTime(min) {
   let h = Math.floor(min / 60); const m = min % 60;
@@ -141,7 +143,7 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
 
   function wantWhatsApp() {
     // Open WhatsApp first (inside the tap, so popup blockers allow it), then record the request.
-    const href = waHref(`Ticket ${data?.ticketNumber || ""}`.trim());
+    const href = waLink(data);
     if (href) window.open(href, "_blank", "noopener,noreferrer");
     setWaBusy(true);
     api.whatsappIntent(token)
@@ -250,12 +252,21 @@ export default function Returning({ token, onSeen, onEnded, onRestart }) {
 
     {!called && soon && <Bubble>Your appointment is in {minsToGo} minute{minsToGo === 1 ? "" : "s"}.</Bubble>}
 
-    {!called && (waNotedNow ? (
+    {data.whatsappConnected ? (
+      <Bubble><strong>You're connected on WhatsApp.</strong> We'll message you there when you're nearly up and when it's your turn. You can reply STOP at any time. Keep this page open too.</Bubble>
+    ) : !called && (waNotedNow && WA_NUMBER ? (
+      <>
+        <Bubble><strong>Nearly there.</strong> WhatsApp should have opened with your code ready. Just tap Send. If it didn't open, use the button below.</Bubble>
+        <div className="choices"><a className="choice choice-secondary" href={waLink(data) || undefined} target="_blank" rel="noopener noreferrer"><span className="choice-label">Open WhatsApp again</span></a></div>
+        <p className="ret-fine">We only receive your mobile number, from your message. We delete it when your visit ends.</p>
+      </>
+    ) : waNotedNow ? (
       <Bubble><strong>Noted.</strong> You asked for WhatsApp updates, but they aren't switched on yet. Please keep this page open to see when you're called.</Bubble>
     ) : (
       <>
-        <Bubble>Want a message when you're nearly up? Then you can put your phone away.</Bubble>
+        <Bubble>Want a message when you're nearly up? Then you can put your phone away. WhatsApp will open with a code ready. You just tap Send.</Bubble>
         <div className="choices"><button type="button" className="choice choice-secondary" disabled={waBusy} onClick={wantWhatsApp}><span className="choice-label">Get updates on WhatsApp</span></button></div>
+        <p className="ret-fine">We never ask for your number. We only receive the mobile number you message from, and delete it when your visit ends.</p>
       </>
     ))}
 

@@ -19,7 +19,9 @@ const logProvider = {
   name: "log",
   isReady: () => true,
   async send({ to, text }, ctx = {}) {
-    await query(`insert into simulated_messages (tenant_id, channel, to_reference, body) values ($1, 'whatsapp', $2, $3)`, [ctx.tenantId || null, to, text]);
+    // Only the last four digits are logged: the simulated log is not allowed to become a second copy of a patient's number.
+    const masked = `whatsapp:...${String(to).replace(/\D/g, "").slice(-4)}`;
+    await query(`insert into simulated_messages (tenant_id, channel, to_reference, body) values ($1, 'whatsapp', $2, $3)`, [ctx.tenantId || null, masked, text]);
   },
 };
 

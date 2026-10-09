@@ -21,6 +21,10 @@ const CATALOGUE = {
     "whatsapp.call": "It's your turn! Please come to {room}.",
     "whatsapp.noSession": "Hi! To get started, scan the QR code at the location you're visiting.",
     "whatsapp.connected": "Thanks, you're connected.",
+    "whatsapp.linked": "You're connected. Ticket {ticket} will get its updates here, including a message when you're nearly up. Reply STOP at any time to stop.",
+    "whatsapp.next": "You're next. Ticket {ticket}, please be ready to come through.",
+    "whatsapp.stopped": "Done. We've stopped messaging you and deleted your number. Your place in the queue is not affected.",
+    "whatsapp.linkExpired": "Sorry, that ticket has ended. To join again, scan the QR code at the location.",
   },
 };
 

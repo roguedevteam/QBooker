@@ -3,6 +3,7 @@ import { query, pool } from "../db/pool.js";
 import { requireAuth, tokenVersionOk, slideSession } from "../lib/auth.js";
 import { t as tr, resolveLang } from "../lib/i18n.js";
 import { genAccessCode, logSimulatedMessage } from "../lib/simulate.js";
+import { notifyTicket, notifyNextInLine } from "../lib/whatsappLinks.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { createLocationCode } from "../lib/codes.js";
 import {
@@ -881,6 +882,7 @@ router.post("/services/:id/call-next", asyncHandler(async (req, res) => {
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward — WhatsApp ping sent: "${roomText}"`]);
+  void notifyTicket(ticket.id, req.tenant.id, body).then(() => notifyNextInLine({ serviceId: ticket.service_id, tenantId: req.tenant.id, visitDate: ticket.visit_date }));
   res.json({ ticket: { ...ticket, status: "serving" }, message: body });
 }));
 
@@ -900,6 +902,7 @@ router.post("/tickets/:id/call", asyncHandler(async (req, res) => {
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called forward out of turn — WhatsApp ping sent: "${roomText}"`]);
+  void notifyTicket(ticket.id, req.tenant.id, body).then(() => notifyNextInLine({ serviceId: ticket.service_id, tenantId: req.tenant.id, visitDate: ticket.visit_date }));
   res.json({ ticket, message: body });
 }));
 
@@ -923,6 +926,7 @@ router.post("/tickets/:id/call-again", asyncHandler(async (req, res) => {
   await logSimulatedMessage({ tenantId: req.tenant.id, channel: "whatsapp", toReference: ticket.ticket_number, body });
   await query(`insert into audit_log (tenant_id, message) values ($1,$2)`,
     [req.tenant.id, `Ticket ${ticket.ticket_number} called again — WhatsApp ping sent: "${roomText}"`]);
+  void notifyTicket(ticket.id, req.tenant.id, body);
   res.json({ ok: true, message: body });
 }));
 

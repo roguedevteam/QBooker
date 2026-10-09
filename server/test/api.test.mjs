@@ -1504,7 +1504,7 @@ describe('4. Patient journey (public API)', () => {
     it('whatsapp-intent records the request without delivering anything', async () => {
       assert.equal((await tk(wTok)).json.whatsappUpdatesRequested, false);
       const r = await post(`/api/public/ticket/${wTok}/whatsapp-intent`, {});
-      assert.equal(r.status, 200); assert.deepEqual(r.json, { ok: true, delivered: false });
+      assert.equal(r.status, 200); assert.equal(r.json.ok, true); assert.equal(r.json.delivered, false); assert.equal(r.json.connected, false); assert.match(r.json.linkCode, /^QT-[A-Z2-9]{6}$/);
       assert.equal((await tk(wTok)).json.whatsappUpdatesRequested, true);
       assert.equal((await post(`/api/public/ticket/${'z'.repeat(30)}/whatsapp-intent`, {})).status, 404);
     });

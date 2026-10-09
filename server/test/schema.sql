@@ -168,3 +168,7 @@ from upd;
 create unique index if not exists idx_tickets_location_day_number on tickets (location_id, visit_date, ticket_number);
 create table signup_otp (id uuid primary key default gen_random_uuid(), email text not null, code text not null, expires_at timestamptz not null, consumed boolean not null default false, attempts integer not null default 0, created_at timestamptz not null default now());
 create index idx_signup_otp_email on signup_otp (lower(email), created_at desc);
+
+-- 0021: per-ticket WhatsApp links
+create table ticket_whatsapp_links (ticket_id uuid primary key references tickets(id) on delete cascade, tenant_id uuid not null references tenants(id) on delete cascade, link_code text not null unique, phone_number text, connected_at timestamptz, next_notified_at timestamptz, created_at timestamptz not null default now());
+create index idx_ticket_whatsapp_links_phone on ticket_whatsapp_links (phone_number) where phone_number is not null;

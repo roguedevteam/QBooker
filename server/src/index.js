@@ -11,6 +11,7 @@ import publicCodesRoutes from "./routes/publicCodes.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { closeStaleTickets } from "./lib/closeStaleTickets.js";
 import { sweepLicences } from "./lib/serviceLicense.js";
+import { purgeWhatsAppNumbers } from "./lib/whatsappLinks.js";
 import { HttpError } from "./lib/validate.js";
 import { reportEmailConfig } from "./lib/email.js";
 
@@ -139,6 +140,9 @@ server.listen(port, () => console.log(`QBooker API listening on port ${port}`));
 // End-of-day sweep: tickets still in progress after their day are system-closed.
 setInterval(() => { closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err)); }, 10 * 60 * 1000);
 closeStaleTickets().catch((err) => console.error("closeStaleTickets failed", err));
+// WhatsApp numbers are short-lived: cleared when a ticket ends, on STOP, at the end of the day and after 24 hours at the latest.
+setInterval(() => { purgeWhatsAppNumbers().catch((err) => console.error("purgeWhatsAppNumbers failed", err)); }, 60 * 1000);
+purgeWhatsAppNumbers().catch((err) => console.error("purgeWhatsAppNumbers failed", err));
 // Licence status sweep: scheduled/active licences are moved on (expired, activated, or returned to Available) per location time zone,
 // so the stored status never goes stale just because nobody opened a screen. Cheap: it only touches licences that are due.
 setInterval(() => { sweepLicences().catch((err) => console.error("sweepLicences failed", err)); }, 5 * 60 * 1000);

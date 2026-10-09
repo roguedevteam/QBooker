@@ -8,6 +8,7 @@ import { estimateWalkInWaitMinutes } from "../lib/scheduling.js";
 import { loadService, getAvailability } from "../lib/availability.js";
 import { createTicket, parseTicketRequest } from "../lib/tickets.js";
 import { uuidParams } from "../lib/validate.js";
+import { ensureLink } from "../lib/whatsappLinks.js";
 
 const router = Router();
 uuidParams(router, "tenantId", "serviceId", "ticketId");
@@ -208,10 +209,11 @@ publicTicketRouter.use(tokenMisses.guard);
 async function loadByToken(req, res, next) {
   if (!TOKEN_RE.test(req.params.token)) { tokenMisses.fail(req); return res.status(404).json({ error: "Ticket not found.", state: "unknown" }); }
   const row = (await query(
-    `select t.*, a.whatsapp_updates_requested, s.name as service_name, l.name as location_name, l.timezone as location_timezone, te.whatsapp_updates_offer, te.business_name
+    `select t.*, a.whatsapp_updates_requested, k.link_code as whatsapp_link_code, (k.phone_number is not null) as whatsapp_connected, s.name as service_name, l.name as location_name, l.timezone as location_timezone, te.whatsapp_updates_offer, te.business_name
      from ticket_web_access a
      join tickets t on t.id = a.ticket_id
      join tenants te on te.id = t.tenant_id
+     left join ticket_whatsapp_links k on k.ticket_id = t.id
      left join services s on s.id = t.service_id
      left join locations l on l.id = t.location_id
      where a.token=$1`,
@@ -237,6 +239,10 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
   const t = req.ticketRow;
   const state = publicState(t);
   const queue = state === "waiting" ? await getQueueInfo(t) : null;
+  // The code the "Get updates on WhatsApp" button pre-types. Made on first view of a live ticket, so the tap can open WhatsApp at once.
+  // It carries no personal data; a phone number is attached only when the patient sends the code from WhatsApp.
+  let whatsappLinkCode = null;
+  if (state === "waiting" || state === "called") whatsappLinkCode = t.whatsapp_link_code || (await ensureLink(t.id, t.tenant_id))?.link_code || null;
   res.json({
     state,
     ticketNumber: t.ticket_number,
@@ -252,6 +258,8 @@ publicTicketRouter.get("/:token", asyncHandler(loadByToken), asyncHandler(async 
     arrived: !!t.arrived_at,
     whatsappUpdatesOffer: true, // every patient can opt in to WhatsApp updates
     whatsappUpdatesRequested: !!t.whatsapp_updates_requested,
+    whatsappLinkCode,
+    whatsappConnected: !!t.whatsapp_connected,
     updatedAt: clockNow().toISOString(),
   });
 }));
@@ -278,14 +286,15 @@ publicTicketRouter.post("/:token/leave", asyncHandler(loadByToken), asyncHandler
   res.json({ state: "cancelled" });
 }));
 
-// STUB: records that the patient would like WhatsApp updates. Sends nothing and collects no
-// phone number — the WhatsApp business number isn't connected yet.
+// Records that the patient asked for WhatsApp updates (the link code itself comes with the ticket; the number is attached
+// only when the patient sends that code from WhatsApp, see routes/whatsapp.js). No phone number is asked for or accepted here.
 publicTicketRouter.post("/:token/whatsapp-intent", asyncHandler(loadByToken), asyncHandler(async (req, res) => {
   await query(
     `update ticket_web_access set whatsapp_updates_requested=true, whatsapp_updates_requested_at=coalesce(whatsapp_updates_requested_at, now()) where token=$1`,
     [req.params.token]
   );
-  res.json({ ok: true, delivered: false });
+  const link = ["waiting", "booked", "serving"].includes(req.ticketRow.status) ? await ensureLink(req.ticketRow.id, req.ticketRow.tenant_id) : null;
+  res.json({ ok: true, delivered: false, linkCode: link?.link_code || null, connected: !!link?.phone_number });
 }));
 
 export default router;

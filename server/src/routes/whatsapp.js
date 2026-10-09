@@ -7,6 +7,7 @@ import { rateLimit } from "../lib/rateLimit.js";
 import { isProduction } from "../lib/email.js";
 import { sendWhatsApp, whatsappStatus } from "../lib/whatsapp.js";
 import { t, resolveLang } from "../lib/i18n.js";
+import { LINK_CODE_RE, linkPhoneToTicket, forgetPhone } from "../lib/whatsappLinks.js";
 
 const router = Router();
 
@@ -18,8 +19,9 @@ const router = Router();
 //                   the app secret, WHATSAPP_APP_SECRET); unsigned or wrongly signed calls are refused. With no secret configured
 //                   it only runs outside production (development and the test suites); in production it answers 503.
 //
-// The conversation itself (service menus etc.) is not built yet: a message carrying a location code (QB-XXXXXX) links that phone
-// to the business/location, and the reply tells people how to start. Replies go through lib/whatsapp.js.
+// Patients are never asked for their number. A message carrying a ticket code (QT-XXXXXX, pre-typed by the "Get updates on WhatsApp" button)
+// attaches the sender's number to that one ticket; STOP deletes it. A message carrying a location code (QB-XXXXXX) links that phone to the
+// business/location. The full conversation (service menus etc.) is not built yet. Replies go through lib/whatsapp.js.
 const env = (name) => (process.env[name] === undefined ? "" : String(process.env[name]).trim());
 const webhookLimit = rateLimit({ windowMs: 60 * 1000, max: Number(env("WHATSAPP_WEBHOOK_RATE_PER_MIN")) > 0 ? Number(env("WHATSAPP_WEBHOOK_RATE_PER_MIN")) : 600, message: "Too many requests." });
 
@@ -67,8 +69,28 @@ function reply(phone, key, tenantId) {
   sendWhatsApp({ to: phone, text: t(resolveLang(), key), tenantId }).catch((err) => console.warn(`[whatsapp] reply not sent: ${err.message}`));
 }
 
+// Replies that answer something the patient just did (connect, stop) are always sent; only the generic replies are rate limited.
+function replyNow(phone, key, vars, tenantId) {
+  if (!whatsappStatus().ready) return;
+  sendWhatsApp({ to: phone, text: t(resolveLang(), key, vars), tenantId }).catch((err) => console.warn(`[whatsapp] reply not sent: ${err.message}`));
+}
+const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "STOP ALL", "STOPALL"]);
+
 // Handles one inbound text. Returns the (debug) outcome; the HTTP layer decides how much of it to show.
 async function handleText(from, text) {
+  if (STOP_WORDS.has(text.trim().toUpperCase().replace(/[.!\s]+$/g, ""))) {
+    const { tenantId } = await forgetPhone(from);
+    replyNow(from, "whatsapp.stopped", {}, tenantId);
+    return { ok: true, stopped: true };
+  }
+  const ticketCode = text.toUpperCase().match(LINK_CODE_RE);
+  if (ticketCode) {
+    const linked = await linkPhoneToTicket(ticketCode[0], from);
+    if (linked.result === "linked") { replyNow(from, "whatsapp.linked", { ticket: linked.ticketNumber }, linked.tenantId); return { ok: true, linked: true }; }
+    if (linked.result === "expired") { replyNow(from, "whatsapp.linkExpired", {}, linked.tenantId); return { ok: true, linkExpired: true }; }
+    if (linked.result === "taken") return { ok: true, linkTaken: true }; // stay silent: a second number must not learn anything about this ticket
+    // unknown code: fall through to the normal handling below
+  }
   const codeMatch = text.trim().toUpperCase().match(/QB-[A-Z0-9]{6}/);
   if (codeMatch) {
     const lookup = await query(`select tenant_id, location_id from location_codes where code = $1`, [codeMatch[0]]);
